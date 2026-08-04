@@ -254,7 +254,9 @@ func TestCurrentAlpha25V4GoldenLockContract(t *testing.T) {
 	}
 	sourceRoot := filepath.Dir(manifestPath)
 	provider := acquisition.NewLocalProvider()
-	resolved, err := provider.Resolve(
+	// This golden locks directory-source content semantics. Ignore any ambient
+	// parent Git checkout so the lock remains stable across repository commits.
+	resolved, err := provider.ResolveCommandFree(
 		context.Background(),
 		domain.SourceRef{Kind: "local", Value: sourceRoot},
 	)

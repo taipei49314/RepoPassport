@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `minimal-public-v1alpha3` accepts specification-valid
+  `git:<40-lower-hex>` source identities so attestations can be built from Git
+  worktrees. The base and derived frozen ruleset identities are advanced; this
+  source change is not covered by the Alpha.33 canonical qualification.
+- Keep the directory-source golden lock independent of an ambient parent Git
+  checkout.
+
 ## 0.1.0-alpha.33 - 2026-08-04
 
 Alpha.33 adds a bounded canonical two-through-eight-hop transition chain for

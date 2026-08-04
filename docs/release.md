@@ -365,7 +365,7 @@ currentness, establish producer identity, or upgrade any original verdict.
 ## Alpha.14 M3-c minimal-public gate contract
 
 Release candidates report `minimal-public`, policy
-`minimal-public-v1alpha2`, the compiled ruleset digest, and a passed privacy
+`minimal-public-v1alpha3`, the compiled ruleset digest, and a passed privacy
 evaluation for build and replay. Rejection occurs before private-key access on
 build and after signature validity but before optional trust-key access on
 replay. It publishes no output and echoes no matched content or private path.

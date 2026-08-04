@@ -241,7 +241,7 @@ coverage never becomes a pass.
 >
 > Alpha.14 adds one bounded M3-c publication control. Every current
 > `minimal-public` attestation is evaluated by deterministic, fail-closed
-> policy `minimal-public-v1alpha2` before signing/publication; replay repeats
+> policy `minimal-public-v1alpha3` before signing/publication; replay repeats
 > that decision after signature validity but before optional trust-key access.
 > Rejection is non-echoing `EVIDENCE_PRIVACY_BLOCKED` (exit 7). Success reports
 > the exact profile, policy, ruleset digest, and `passed` decision. This is

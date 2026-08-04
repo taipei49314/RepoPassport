@@ -478,8 +478,11 @@ limited to 1 MiB. The controller uses the resolved `bodyContains` value for
 matching but never copies that repository-controlled substring into public
 assertion evidence. Public evidence records only fixed configured/value-not-
 published metadata and typed match/truncation booleans. Exact typed exemptions
-for those booleans and the lower-case response-schema digest belong to frozen
-`minimal-public-v1alpha2`; raw or wrong-typed body fields still fail closed.
+for those booleans and the lower-case response-schema digest were introduced
+by frozen `minimal-public-v1alpha2`; raw or wrong-typed body fields still fail
+closed. `minimal-public-v1alpha3` additionally exempts only a schema-valid
+`git:<40-lower-hex>` value at `subject.identity`, matching the existing
+canonical Git source contract and typed `subject.commit` exemption.
 
 `fileExists` is an ordered assertion. When that step is reached, a trusted
 in-container helper validates a normalized UTF-8 `/outputs` path no longer than

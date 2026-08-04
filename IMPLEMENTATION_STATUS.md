@@ -9,6 +9,10 @@ those results. Alpha.32 and earlier evidence remain historical and do not
 qualify or repackage this changed source. This is not a complete implementation
 of every milestone in the project plan.
 
+The public source branch additionally carries an unreleased Git-worktree
+identity compatibility fix with a new frozen privacy ruleset. It is not
+byte-identical to, or qualified by, the Alpha.33 canonical release evidence.
+
 ## Alpha.33 bounded offline policy-authority transition chain
 
 Alpha.33 composes 2..8 existing Alpha.32 transition envelopes in one canonical
@@ -407,7 +411,7 @@ checking, execution, and verification.
 An SBOM-selected authoritative run requires exactly one `attest --spdx FILE`.
 The source is read through a bounded no-link, same-handle double-read contract,
 then validated as RepoPassport's strict SPDX 2.3 JSON subset. The canonical
-derivative—not the raw transport—is checked by `minimal-public-v1alpha2` and
+derivative—not the raw transport—is checked by `minimal-public-v1alpha3` and
 bound into an exact six-member USTAR. Manifest order/digest/size, the in-toto
 predicate's exact four-field `sbom` object, DSSE, and flattened public
 `sbomPresent`/`sbomFormat`/`sbomDigest` metadata agree on that derivative.
@@ -430,7 +434,7 @@ verdict; capability may remain `incomplete` and overall `inconclusive`.
 ## Alpha.14 M3-c bounded minimal-public gate
 
 The canonical public verification payload is evaluated by frozen policy
-`minimal-public-v1alpha2` before signing and publication. CLI evaluation
+`minimal-public-v1alpha3` before signing and publication. CLI evaluation
 precedes working-directory/private-key access; `Build` repeats the pure check
 before key normalization. Replay evaluates after canonical bundle, integrity,
 statement, DSSE, and Ed25519 validity and before optional trust-key processing.

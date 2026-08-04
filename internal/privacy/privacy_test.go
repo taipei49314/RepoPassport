@@ -16,8 +16,8 @@ import (
 )
 
 func TestFrozenPolicyDescriptorAndOrderedRules(t *testing.T) {
-	const expectedDescriptor = `{"candidatePolicy":{"base64MinDistinct":8,"base64MinEntropyBitsPerByte":4,"base64MinLength":24,"hexMinEntropyBitsPerByte":3,"hexMinLength":32,"maxSeparatorsBeforeSplit":2,"windowLength":64,"windowStride":16},"limits":{"maxDepth":64,"maxFindings":100,"maxNodes":65536,"maxStringBytes":65536},"patternSetVersion":"minimal-public-patterns-2026-08-01.11","policy":"minimal-public-v1alpha2","profile":"minimal-public","rules":["PRIVATE_KEY_PEM","AUTHORIZATION_CREDENTIAL","CREDENTIAL_ASSIGNMENT","KNOWN_PROVIDER_CREDENTIAL","JWT_COMPACT","URL_CREDENTIAL_OR_QUERY","EMAIL_ADDRESS","HOST_PRIVATE_PATH","SENSITIVE_DYNAMIC_FIELD","HIGH_ENTROPY_CANDIDATE","PUBLIC_RESOURCE_CONTRACT","PRIVACY_SCAN_LIMIT"]}`
-	const expectedDigest = "sha256:b77ef257f122a975bb033637dfcc1aab3872ab894cd73066565141e7de773db4"
+	const expectedDescriptor = `{"candidatePolicy":{"base64MinDistinct":8,"base64MinEntropyBitsPerByte":4,"base64MinLength":24,"hexMinEntropyBitsPerByte":3,"hexMinLength":32,"maxSeparatorsBeforeSplit":2,"windowLength":64,"windowStride":16},"limits":{"maxDepth":64,"maxFindings":100,"maxNodes":65536,"maxStringBytes":65536},"patternSetVersion":"minimal-public-patterns-2026-08-04.12","policy":"minimal-public-v1alpha3","profile":"minimal-public","rules":["PRIVATE_KEY_PEM","AUTHORIZATION_CREDENTIAL","CREDENTIAL_ASSIGNMENT","KNOWN_PROVIDER_CREDENTIAL","JWT_COMPACT","URL_CREDENTIAL_OR_QUERY","EMAIL_ADDRESS","HOST_PRIVATE_PATH","SENSITIVE_DYNAMIC_FIELD","HIGH_ENTROPY_CANDIDATE","PUBLIC_RESOURCE_CONTRACT","PRIVACY_SCAN_LIMIT"]}`
+	const expectedDigest = "sha256:b837a6758185671c7eff7463ac1cc72b6e29cdf44324fe0d84ec29158c4c88a9"
 	if Descriptor() != expectedDescriptor || RulesetDigest != expectedDigest {
 		t.Fatalf("frozen descriptor drift: descriptorEqual=%v digest=%q", Descriptor() == expectedDescriptor, RulesetDigest)
 	}
@@ -122,6 +122,7 @@ func TestVariableSurfacesAndTypedExemptions(t *testing.T) {
 
 	allowed := []string{
 		`{"subject":{"treeDigest":"sha256:` + strings.Repeat("a", 64) + `","commit":"` + strings.Repeat("b", 40) + `","identity":"sha256:` + strings.Repeat("c", 64) + `"}}`,
+		`{"subject":{"treeDigest":"sha256:` + strings.Repeat("a", 64) + `","commit":"0123456789abcdef0123456789abcdef01234567","identity":"git:0123456789abcdef0123456789abcdef01234567"}}`,
 		`{"runId":"run_opaque_0123456789","verificationId":"vrf_opaque_0123456789"}`,
 		`{"startedAt":"2026-08-01T00:00:00Z","completedAt":"2026-08-01T00:00:01Z"}`,
 		`{"observations":[{"timestamp":"2026-08-01T00:00:00Z","details":{"opaqueInventoryToken":"hmac-sha256:` + strings.Repeat("d", 64) + `"}}]}`,

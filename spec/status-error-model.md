@@ -185,7 +185,7 @@ profile mismatch. Source, plan, runner, or cancellation uncertainty is
 reported stale. Without opt-in, freshness remains `not-evaluated`.
 
 Alpha.14 additionally defines `EVIDENCE_PRIVACY_BLOCKED` for the bounded
-`minimal-public-v1alpha2` gate. It is severity `high`, exits 7, publishes no
+`minimal-public-v1alpha3` gate. It is severity `high`, exits 7, publishes no
 artifact, and serializes only fixed-safe policy/rule/surface/count metadata.
 Signature/protected-content failure retains precedence as
 `ATTESTATION_INVALID`; privacy evaluation precedes either optional trust

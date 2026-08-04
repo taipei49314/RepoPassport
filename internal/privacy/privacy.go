@@ -22,9 +22,9 @@ import (
 
 const (
 	Profile            = "minimal-public"
-	Policy             = "minimal-public-v1alpha2"
+	Policy             = "minimal-public-v1alpha3"
 	EvaluationPassed   = "passed"
-	RulesetDigest      = "sha256:b77ef257f122a975bb033637dfcc1aab3872ab894cd73066565141e7de773db4"
+	RulesetDigest      = "sha256:b837a6758185671c7eff7463ac1cc72b6e29cdf44324fe0d84ec29158c4c88a9"
 	maxDepth           = 64
 	maxNodes           = 65_536
 	maxStringBytes     = 65_536
@@ -32,7 +32,7 @@ const (
 	maxVerificationRaw = 16 << 20
 )
 
-const policyDescriptor = `{"candidatePolicy":{"base64MinDistinct":8,"base64MinEntropyBitsPerByte":4,"base64MinLength":24,"hexMinEntropyBitsPerByte":3,"hexMinLength":32,"maxSeparatorsBeforeSplit":2,"windowLength":64,"windowStride":16},"limits":{"maxDepth":64,"maxFindings":100,"maxNodes":65536,"maxStringBytes":65536},"patternSetVersion":"minimal-public-patterns-2026-08-01.11","policy":"minimal-public-v1alpha2","profile":"minimal-public","rules":["PRIVATE_KEY_PEM","AUTHORIZATION_CREDENTIAL","CREDENTIAL_ASSIGNMENT","KNOWN_PROVIDER_CREDENTIAL","JWT_COMPACT","URL_CREDENTIAL_OR_QUERY","EMAIL_ADDRESS","HOST_PRIVATE_PATH","SENSITIVE_DYNAMIC_FIELD","HIGH_ENTROPY_CANDIDATE","PUBLIC_RESOURCE_CONTRACT","PRIVACY_SCAN_LIMIT"]}`
+const policyDescriptor = `{"candidatePolicy":{"base64MinDistinct":8,"base64MinEntropyBitsPerByte":4,"base64MinLength":24,"hexMinEntropyBitsPerByte":3,"hexMinLength":32,"maxSeparatorsBeforeSplit":2,"windowLength":64,"windowStride":16},"limits":{"maxDepth":64,"maxFindings":100,"maxNodes":65536,"maxStringBytes":65536},"patternSetVersion":"minimal-public-patterns-2026-08-04.12","policy":"minimal-public-v1alpha3","profile":"minimal-public","rules":["PRIVATE_KEY_PEM","AUTHORIZATION_CREDENTIAL","CREDENTIAL_ASSIGNMENT","KNOWN_PROVIDER_CREDENTIAL","JWT_COMPACT","URL_CREDENTIAL_OR_QUERY","EMAIL_ADDRESS","HOST_PRIVATE_PATH","SENSITIVE_DYNAMIC_FIELD","HIGH_ENTROPY_CANDIDATE","PUBLIC_RESOURCE_CONTRACT","PRIVACY_SCAN_LIMIT"]}`
 
 var orderedRuleIDs = []string{
 	"PRIVATE_KEY_PEM",
@@ -611,7 +611,8 @@ func opaqueID(value string) bool {
 }
 
 func canonicalIdentity(value string) bool {
-	return strings.HasPrefix(value, "sha256:") && lowerHex(value[len("sha256:"):], 64)
+	return strings.HasPrefix(value, "sha256:") && lowerHex(value[len("sha256:"):], 64) ||
+		strings.HasPrefix(value, "git:") && lowerHex(value[len("git:"):], 40)
 }
 
 func blocked(findings []finding, truncated bool) error {

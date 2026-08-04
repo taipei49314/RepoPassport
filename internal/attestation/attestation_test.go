@@ -575,7 +575,7 @@ func TestBuildPrivacyGatePrecedesSigningAndReportsPassedMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build valid: %v", err)
 	}
-	if built.PrivacyProfile != "minimal-public" || built.PrivacyPolicy != "minimal-public-v1alpha2" ||
+	if built.PrivacyProfile != "minimal-public" || built.PrivacyPolicy != "minimal-public-v1alpha3" ||
 		built.PrivacyRulesetDigest == "" || built.PrivacyEvaluation != "passed" {
 		t.Fatalf("privacy build metadata = %#v", built)
 	}

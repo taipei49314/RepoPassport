@@ -9,11 +9,11 @@ import (
 const (
 	DerivedProjectionProfile        = "minimal-public-derived-projection-v1"
 	DerivedProjectionPolicy         = "minimal-public-derived-projection-v1"
-	DerivedProjectionRulesetDigest  = "sha256:2843165f0a7c5ebf01a534b05a0a691ec400054f6667a1d0a177c8f549387db7"
-	DerivedBasePrivacyRulesetDigest = "sha256:b77ef257f122a975bb033637dfcc1aab3872ab894cd73066565141e7de773db4"
+	DerivedProjectionRulesetDigest  = "sha256:e90d00114edcf5f47f5276414f1e092f8a8276c3eed54a0f1f3cb83fb4fa78a8"
+	DerivedBasePrivacyRulesetDigest = "sha256:b837a6758185671c7eff7463ac1cc72b6e29cdf44324fe0d84ec29158c4c88a9"
 )
 
-const derivedProjectionDescriptor = `{"basePrivacyRulesetDigest":"sha256:b77ef257f122a975bb033637dfcc1aab3872ab894cd73066565141e7de773db4","profile":"minimal-public-derived-projection-v1","repositoryStrings":["package.name","package.versionInfo"],"structuralFieldsExcluded":["derivation-digests","fixed-enumerations","fixed-relative-paths","ids","namespace","sizes"],"validatedLockChecksumExcluded":{"field":"package.checksums","registryArtifactVerified":false,"repositoryControlledPossible":true,"source":"repository-package-lock-integrity","validation":"sha512-shape-only"},"version":"1"}`
+const derivedProjectionDescriptor = `{"basePrivacyRulesetDigest":"sha256:b837a6758185671c7eff7463ac1cc72b6e29cdf44324fe0d84ec29158c4c88a9","profile":"minimal-public-derived-projection-v1","repositoryStrings":["package.name","package.versionInfo"],"structuralFieldsExcluded":["derivation-digests","fixed-enumerations","fixed-relative-paths","ids","namespace","sizes"],"validatedLockChecksumExcluded":{"field":"package.checksums","registryArtifactVerified":false,"repositoryControlledPossible":true,"source":"repository-package-lock-integrity","validation":"sha512-shape-only"},"version":"1"}`
 
 type DerivedEvaluation struct {
 	PrivacyProfile       string `json:"privacyProfile"`

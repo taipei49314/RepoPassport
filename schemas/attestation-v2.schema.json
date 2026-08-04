@@ -107,7 +107,7 @@
         "provenanceDigest": {"$ref": "#/$defs/digest"},
         "privacyProfile": {"const": "minimal-public-derived-projection-v1"},
         "privacyPolicy": {"const": "minimal-public-derived-projection-v1"},
-        "privacyRulesetDigest": {"const": "sha256:2843165f0a7c5ebf01a534b05a0a691ec400054f6667a1d0a177c8f549387db7"}
+        "privacyRulesetDigest": {"const": "sha256:e90d00114edcf5f47f5276414f1e092f8a8276c3eed54a0f1f3cb83fb4fa78a8"}
       },
       "additionalProperties": false
     }

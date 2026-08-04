@@ -1182,7 +1182,7 @@ func TestAttestAndVerifyAttestationCLITrustDeterminismAndOutputs(t *testing.T) {
 	decodeJSON(t, firstEnvelope.Data, &attestData)
 	if attestData.RunID != runID || attestData.OriginalResults.Evidence != domain.EvidenceUnsigned ||
 		attestData.SignerKeyID == "" || attestData.ManifestDigest == "" || attestData.BundleDigest == "" ||
-		attestData.PrivacyProfile != "minimal-public" || attestData.PrivacyPolicy != "minimal-public-v1alpha2" ||
+		attestData.PrivacyProfile != "minimal-public" || attestData.PrivacyPolicy != "minimal-public-v1alpha3" ||
 		attestData.PrivacyRulesetDigest == "" || attestData.PrivacyEvaluation != "passed" ||
 		attestData.SBOMPresent || attestData.SBOMFormat != "" || attestData.SBOMDigest != "" {
 		t.Fatalf("attest data = %#v", attestData)
@@ -1304,7 +1304,7 @@ func TestAttestAndVerifyAttestationCLITrustDeterminismAndOutputs(t *testing.T) {
 		"Trust decision:       ACCEPTED",
 		"Freshness evaluation: NOT-EVALUATED",
 		"Privacy profile:      minimal-public",
-		"Privacy policy:       minimal-public-v1alpha2",
+		"Privacy policy:       minimal-public-v1alpha3",
 		"Privacy evaluation:   PASSED",
 		"SPDX attachment:      ABSENT",
 		"Evidence:         UNSIGNED",
