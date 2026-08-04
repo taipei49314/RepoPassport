@@ -1,0 +1,412 @@
+//go:build windows
+
+package truststate
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+const (
+	moveFileReplaceExisting = 0x1
+	moveFileWriteThrough    = 0x8
+)
+
+var (
+	kernel32           = syscall.NewLazyDLL("kernel32.dll")
+	moveFileExProc     = kernel32.NewProc("MoveFileExW")
+	afterPrivateCreate = func(string) {}
+)
+
+func safeNativePath(value string) bool {
+	if !safeNativeInput(value) {
+		return false
+	}
+	volume := filepath.VolumeName(value)
+	if volume == "" || !strings.HasSuffix(volume, `:`) {
+		return false
+	}
+	return true
+}
+
+func safeNativeInput(value string) bool {
+	if value == "" || containsNUL(value) {
+		return false
+	}
+	upper := strings.ToUpper(value)
+	if strings.HasPrefix(upper, `\\?\`) || strings.HasPrefix(upper, `\\.\`) || strings.HasPrefix(value, `\\`) {
+		return false
+	}
+	volume := filepath.VolumeName(value)
+	rest := value
+	if volume != "" {
+		rest = value[len(volume):]
+	}
+	if strings.Contains(rest, `:`) {
+		return false
+	}
+	for _, component := range strings.FieldsFunc(rest, func(r rune) bool { return r == '\\' || r == '/' }) {
+		if component == "" || strings.HasSuffix(component, ".") || strings.HasSuffix(component, " ") {
+			return false
+		}
+	}
+	return true
+}
+
+func isReparsePoint(path string) bool {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return true
+	}
+	attributes, err := windows.GetFileAttributes(pointer)
+	return err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+func createPrivateDirectory(path string) (bool, error) {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return false, err
+	}
+	attributes, descriptor, err := privateSecurityAttributes()
+	if err != nil {
+		return false, err
+	}
+	err = windows.CreateDirectory(pointer, attributes)
+	if err == nil {
+		afterPrivateCreate(path)
+	}
+	runtime.KeepAlive(attributes)
+	runtime.KeepAlive(descriptor)
+	if err == nil {
+		return true, nil
+	}
+	if err == windows.ERROR_ALREADY_EXISTS || err == windows.ERROR_FILE_EXISTS {
+		return false, nil
+	}
+	return false, err
+}
+
+func createPrivateLock(path string) (*os.File, bool, error) {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, false, err
+	}
+	attributes, descriptor, err := privateSecurityAttributes()
+	if err != nil {
+		return nil, false, err
+	}
+	handle, err := windows.CreateFile(
+		pointer,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		attributes,
+		windows.CREATE_NEW,
+		windows.FILE_ATTRIBUTE_NORMAL,
+		0,
+	)
+	if err == nil {
+		afterPrivateCreate(path)
+	}
+	runtime.KeepAlive(attributes)
+	runtime.KeepAlive(descriptor)
+	if err == nil {
+		file := os.NewFile(uintptr(handle), path)
+		if file == nil {
+			_ = windows.CloseHandle(handle)
+			return nil, false, ErrUnavailable
+		}
+		return file, true, nil
+	}
+	if err == windows.ERROR_ALREADY_EXISTS || err == windows.ERROR_FILE_EXISTS {
+		return nil, false, nil
+	}
+	return nil, false, err
+}
+
+func openExistingPrivateLock(path string) (*os.File, error) {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(
+		pointer,
+		windows.GENERIC_READ|windows.GENERIC_WRITE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, err
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, ErrUnavailable
+	}
+	return file, nil
+}
+
+func privateSecurityAttributes() (*windows.SecurityAttributes, *windows.SECURITY_DESCRIPTOR, error) {
+	token, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || token == nil || token.User.Sid == nil {
+		return nil, nil, ErrUnavailable
+	}
+	owner := token.User.Sid.String()
+	if owner == "" {
+		return nil, nil, ErrUnavailable
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(privateDACLSDDL(owner))
+	if err != nil || descriptor == nil {
+		return nil, nil, ErrUnavailable
+	}
+	return &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: descriptor,
+		InheritHandle:      0,
+	}, descriptor, nil
+}
+
+func privateDACLSDDL(owner string) string {
+	entries := []string{"(A;;FA;;;" + owner + ")"}
+	if owner != "S-1-5-18" {
+		entries = append(entries, "(A;;FA;;;SY)")
+	}
+	if owner != "S-1-5-32-544" {
+		entries = append(entries, "(A;;FA;;;BA)")
+	}
+	return "O:" + owner + "D:P" + strings.Join(entries, "")
+}
+
+func validateDirectoryPlatform(path string, info os.FileInfo) error {
+	if !info.IsDir() || isReparsePoint(path) {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func validatePrivateStateDirectoryPlatform(path string, info os.FileInfo) error {
+	if err := validateDirectoryPlatform(path, info); err != nil {
+		return err
+	}
+	handle, err := openDirectoryHandle(path, windows.READ_CONTROL)
+	if err != nil {
+		return ErrUnavailable
+	}
+	defer windows.CloseHandle(handle)
+	if err := validateFinalHandlePath(handle, path); err != nil {
+		return ErrUnavailable
+	}
+	return validatePrivateDACL(handle)
+}
+
+func openDirectoryHandle(path string, access uint32) (windows.Handle, error) {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return windows.InvalidHandle, err
+	}
+	return windows.CreateFile(
+		pointer,
+		access,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS,
+		0,
+	)
+}
+
+func convergePrivateFile(file *os.File, path string) error {
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)")
+	if err != nil || descriptor == nil {
+		return ErrUnavailable
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		return ErrUnavailable
+	}
+	if err := windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		dacl,
+		nil,
+	); err != nil {
+		return ErrUnavailable
+	}
+	runtime.KeepAlive(descriptor)
+	return validatePrivateDACL(windows.Handle(file.Fd()))
+}
+
+func validateOpenedRegularFile(file *os.File, expectedPath string, singleLink bool) error {
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return ErrUnavailable
+	}
+	pathInfo, err := os.Lstat(expectedPath)
+	if err != nil || !pathInfo.Mode().IsRegular() || pathInfo.Mode()&os.ModeSymlink != 0 || isReparsePoint(expectedPath) || !os.SameFile(info, pathInfo) {
+		return ErrUnavailable
+	}
+	handle := windows.Handle(file.Fd())
+	if err := validateFinalHandlePath(handle, expectedPath); err != nil {
+		return ErrUnavailable
+	}
+	if singleLink {
+		var information windows.ByHandleFileInformation
+		if err := windows.GetFileInformationByHandle(handle, &information); err != nil || information.NumberOfLinks != 1 || information.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return ErrUnavailable
+		}
+	}
+	if err := validatePrivateDACL(handle); err != nil {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func validatePrivateDACL(handle windows.Handle) error {
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil || descriptor == nil || !descriptor.IsValid() {
+		return ErrUnavailable
+	}
+	defer runtime.KeepAlive(descriptor)
+	control, _, err := descriptor.Control()
+	if err != nil || control&(windows.SE_DACL_PRESENT|windows.SE_DACL_PROTECTED) != windows.SE_DACL_PRESENT|windows.SE_DACL_PROTECTED {
+		return ErrUnavailable
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil || !owner.IsValid() {
+		return ErrUnavailable
+	}
+	currentUser, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || currentUser == nil || currentUser.User.Sid == nil || !owner.Equals(currentUser.User.Sid) {
+		return ErrUnavailable
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil || dacl.AceCount == 0 {
+		return ErrUnavailable
+	}
+	principals := make([]string, 0, dacl.AceCount)
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil || ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+			ace.Header.AceFlags != 0 || ace.Header.AceSize < uint16(unsafe.Offsetof(ace.SidStart)+unsafe.Sizeof(ace.SidStart)) {
+			return ErrUnavailable
+		}
+		if ace.Mask != 0x1f01ff { // FILE_ALL_ACCESS, the value represented by SDDL FA.
+			return ErrUnavailable
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !sid.IsValid() {
+			return ErrUnavailable
+		}
+		principal := sid.String()
+		if principal == "" {
+			return ErrUnavailable
+		}
+		principals = append(principals, principal)
+	}
+	if !validPrivateDACLPrincipals(owner.String(), principals) {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func validPrivateDACLPrincipals(owner string, principals []string) bool {
+	const (
+		system         = "S-1-5-18"
+		administrators = "S-1-5-32-544"
+		ownerRights    = "S-1-3-4"
+	)
+	if owner == "" || len(principals) == 0 {
+		return false
+	}
+	actual := make(map[string]struct{}, len(principals))
+	for _, principal := range principals {
+		if principal != owner && principal != system && principal != administrators && principal != ownerRights {
+			return false
+		}
+		if _, duplicate := actual[principal]; duplicate {
+			return false
+		}
+		actual[principal] = struct{}{}
+	}
+	if _, legacy := actual[ownerRights]; legacy {
+		return len(actual) == 3 && hasPrivateDACLPrincipal(actual, ownerRights) && hasPrivateDACLPrincipal(actual, system) && hasPrivateDACLPrincipal(actual, administrators)
+	}
+	expected := map[string]struct{}{owner: {}, system: {}, administrators: {}}
+	if len(actual) != len(expected) {
+		return false
+	}
+	for principal := range expected {
+		if !hasPrivateDACLPrincipal(actual, principal) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasPrivateDACLPrincipal(principals map[string]struct{}, principal string) bool {
+	_, present := principals[principal]
+	return present
+}
+
+func validateFinalHandlePath(handle windows.Handle, expectedPath string) error {
+	buffer := make([]uint16, windows.MAX_LONG_PATH)
+	length, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
+	if err != nil || length == 0 || length >= uint32(len(buffer)) {
+		return ErrUnavailable
+	}
+	actual := windows.UTF16ToString(buffer[:length])
+	upper := strings.ToUpper(actual)
+	if strings.HasPrefix(upper, `\\?\UNC\`) {
+		return ErrUnavailable
+	}
+	if strings.HasPrefix(upper, `\\?\`) {
+		actual = actual[len(`\\?\`):]
+	}
+	expected, err := filepath.Abs(expectedPath)
+	if err != nil || !strings.EqualFold(filepath.Clean(actual), filepath.Clean(expected)) {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+func atomicReplace(source, destination string) error {
+	sourcePointer, err := windows.UTF16PtrFromString(source)
+	if err != nil {
+		return err
+	}
+	destinationPointer, err := windows.UTF16PtrFromString(destination)
+	if err != nil {
+		return err
+	}
+	result, _, callErr := moveFileExProc.Call(
+		uintptr(unsafe.Pointer(sourcePointer)),
+		uintptr(unsafe.Pointer(destinationPointer)),
+		uintptr(moveFileReplaceExisting|moveFileWriteThrough),
+	)
+	if result == 0 {
+		if callErr != nil && callErr != syscall.Errno(0) {
+			return callErr
+		}
+		return syscall.EINVAL
+	}
+	return nil
+}
+
+func syncDirectory(string) error {
+	// MoveFileExW with MOVEFILE_WRITE_THROUGH provides the applicable Windows
+	// flush boundary. Windows does not expose a portable directory fsync.
+	return nil
+}
+
+func samePathPlatform(left, right string) bool { return strings.EqualFold(left, right) }

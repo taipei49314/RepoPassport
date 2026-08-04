@@ -1,0 +1,4 @@
+interface:
+  display_name: "RepoPassport Workflow"
+  short_description: "Run trustworthy local repository verification"
+  default_prompt: "Use $repopass-workflow to inspect, plan, verify, and report on this repository safely."

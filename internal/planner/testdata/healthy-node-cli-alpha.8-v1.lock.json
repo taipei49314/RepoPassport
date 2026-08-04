@@ -1,0 +1,152 @@
+{
+  "adapterVersions": {
+    "node": "0.1.0"
+  },
+  "baseImageDigest": "sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3",
+  "baseImageReference": "docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3",
+  "capabilities": {
+    "build": {
+      "filesystem": {},
+      "network": {
+        "deny": true
+      },
+      "ports": {},
+      "process": {}
+    },
+    "cleanup": {
+      "filesystem": {},
+      "network": {
+        "deny": true
+      },
+      "ports": {},
+      "process": {}
+    },
+    "exercise": {
+      "filesystem": {
+        "read": [
+          "/inputs/**",
+          "/workspace/**"
+        ],
+        "write": [
+          "/outputs/**"
+        ]
+      },
+      "network": {
+        "deny": true
+      },
+      "ports": {},
+      "process": {}
+    },
+    "prepare": {
+      "filesystem": {},
+      "network": {
+        "deny": true
+      },
+      "ports": {},
+      "process": {}
+    },
+    "run": {
+      "filesystem": {},
+      "network": {
+        "deny": true
+      },
+      "ports": {},
+      "process": {}
+    },
+    "setup": {
+      "filesystem": {},
+      "network": {
+        "deny": true
+      },
+      "ports": {},
+      "process": {}
+    }
+  },
+  "commands": [
+    {
+      "argv": [
+        "node",
+        "/workspace/cli.mjs",
+        "/inputs/message.txt",
+        "/outputs/result.json"
+      ],
+      "id": "journey-cli",
+      "phase": "exercise",
+      "role": "journey",
+      "timeout": "30s"
+    }
+  ],
+  "environment": "linux-node",
+  "inputs": [
+    {
+      "fixture": "fixtures/message.txt",
+      "mountPath": "/inputs/message.txt",
+      "name": "message",
+      "readOnly": true,
+      "type": "file"
+    }
+  ],
+  "journeyAssertions": [
+    {
+      "exitCode": 0,
+      "id": "process-exited"
+    },
+    {
+      "id": "process-reported",
+      "stdoutContains": "processed:hello repopass"
+    },
+    {
+      "fileExists": "/outputs/result.json",
+      "id": "result-created"
+    }
+  ],
+  "journeyDriver": "cli",
+  "journeyDriverVersion": "0.1.0",
+  "manifestDigest": "sha256:3d80dea31aaab384a31b0197a8837eb4d164e4e2bdba3e591be16243d3c89115",
+  "observerSet": [
+    "filesystem-write",
+    "network-enforcement",
+    "port-listen",
+    "process-exec",
+    "resource-usage"
+  ],
+  "observerVersions": {
+    "filesystem-write": "0.4.0",
+    "network-enforcement": "0.1.0",
+    "port-listen": "0.2.0",
+    "process-exec": "0.1.0",
+    "resource-usage": "0.2.0"
+  },
+  "planDigest": "sha256:4066c8f0cd5caf17473677ce4e8955c6c9c76d4a2dd5ba5dbfc94dcd0461390a",
+  "policyBundleDigest": "sha256:626f056739415f3eaea101c01334d4820d6f6a6ac10591dbe15b3cd033780c90",
+  "repeatCount": 3,
+  "requiredRunnerFeatures": [
+    "bounded-logs",
+    "isolated-workspace",
+    "linux-container",
+    "network-deny",
+    "observer:filesystem-write",
+    "observer:network-enforcement",
+    "observer:port-listen",
+    "observer:process-exec",
+    "observer:resource-usage",
+    "platform:linux/amd64",
+    "process-cleanup",
+    "read-only-source"
+  ],
+  "resources": {
+    "cpuMillis": 1000,
+    "diskBytes": 1073741824,
+    "memoryBytes": 268435456,
+    "pids": 64
+  },
+  "runtimeAdapter": "node",
+  "runtimeVersion": "22.23.1",
+  "scenario": "quickstart",
+  "schemaVersion": "1",
+  "source": {
+    "identity": "sha256:4792433eed36ac2b686717262ac7b0e4054fb9f979d8f93990ce00324881461a",
+    "treeDigest": "sha256:4792433eed36ac2b686717262ac7b0e4054fb9f979d8f93990ce00324881461a"
+  },
+  "successThreshold": 3
+}

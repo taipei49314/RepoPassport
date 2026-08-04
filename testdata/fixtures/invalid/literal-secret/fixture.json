@@ -1,0 +1,10 @@
+{
+  "name": "literal-secret",
+  "class": "invalid",
+  "expected": {
+    "validation": "FAIL",
+    "errorCode": "MANIFEST_LITERAL_SECRET",
+    "exitCode": 2,
+    "field": "spec.scenarios.quickstart.secrets.api-key.source"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "unknown-field",
+  "class": "invalid",
+  "expected": {
+    "validation": "FAIL",
+    "errorCode": "MANIFEST_UNKNOWN_FIELD",
+    "exitCode": 2,
+    "field": "spec.project.definitelyUnknown"
+  }
+}

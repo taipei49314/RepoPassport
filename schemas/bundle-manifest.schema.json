@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/bundle-manifest.schema.json",
+  "title": "RepoPassport Attestation Bundle Manifest",
+  "description": "Strict manifest for the deterministic minimal-public RepoPassport USTAR attestation bundle.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "bundleFormat",
+    "privacyProfile",
+    "files"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "bundleFormat": {
+      "const": "repopass.attestation.bundle.v1"
+    },
+    "privacyProfile": {
+      "const": "minimal-public"
+    },
+    "files": {
+      "type": "array",
+      "oneOf": [
+        {
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/verificationFile"
+            },
+            {
+              "$ref": "#/$defs/publicKeyFile"
+            }
+          ],
+          "items": false
+        },
+        {
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {
+              "$ref": "#/$defs/verificationFile"
+            },
+            {
+              "$ref": "#/$defs/sbomFile"
+            },
+            {
+              "$ref": "#/$defs/publicKeyFile"
+            }
+          ],
+          "items": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "verificationFile": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "properties": {
+        "path": {
+          "const": "payload/verification.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        }
+      },
+      "additionalProperties": false
+    },
+    "publicKeyFile": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "properties": {
+        "path": {
+          "const": "signer-public-key.pem"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16384
+        }
+      },
+      "additionalProperties": false
+    },
+    "sbomFile": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "size"
+      ],
+      "properties": {
+        "path": {
+          "const": "payload/sbom.spdx.json"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1048576
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

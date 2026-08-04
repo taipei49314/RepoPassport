@@ -1,0 +1,17 @@
+{
+  "name": "http-term-resistant-child",
+  "class": "malicious",
+  "language": "python",
+  "scenario": "quickstart",
+  "schemaValid": true,
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "capability": "INCOMPLETE",
+    "cleanup": "CLEAN",
+    "overall": "INCONCLUSIVE",
+    "containerResidue": "NONE"
+  }
+}

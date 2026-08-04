@@ -1,0 +1,15 @@
+{
+  "name": "healthy-python-cli",
+  "class": "healthy",
+  "language": "python",
+  "scenario": "quickstart",
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "repeats": 2,
+    "persistedSetupOutput": "/outputs/state.json",
+    "output": "/outputs/result.json"
+  }
+}

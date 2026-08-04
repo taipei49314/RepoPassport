@@ -1,0 +1,75 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: invalid-literal-secret
+  displayName: Invalid Literal Secret
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-node:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: node
+        version: ">=22 <23"
+      baseImage:
+        reference: ghcr.io/repopass/fixtures/node@sha256:c19a7e5d3b1f86420c9e7a5d3b1f86420c9e7a5d3b1f86420c9e7a5d3b1f8642
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      environment: linux-node
+      secrets:
+        api-key:
+          source: literal
+          scope:
+            phases:
+              - exercise
+          exposeAs:
+            env: API_KEY
+      phases:
+        exercise:
+          timeout: 10s
+          driver:
+            type: cli
+            command:
+              - node
+              - --version
+            assertions:
+              - id: version-exited
+                exitCode: 0
+      capabilities:
+        exercise:
+          network:
+            deny: true
+      verification:
+        repeats: 1
+        successThreshold: 1
+        requiredObservers:
+          - network-enforcement
+        cleanup:
+          allowedResidue: []
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+    exclude:
+      - raw-stdout
+      - raw-stderr

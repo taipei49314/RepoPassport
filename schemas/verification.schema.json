@@ -1,0 +1,604 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/verification.schema.json",
+  "title": "RepoPassport Verification Result",
+  "description": "Strict public schema for authoritative verification.json emitted outside the workload.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "verificationId",
+    "runId",
+    "startedAt",
+    "completedAt",
+    "subject",
+    "plan",
+    "runner",
+    "results",
+    "observerCoverage",
+    "observations",
+    "assertions",
+    "policyDecisions",
+    "repeats",
+    "resources",
+    "digests"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "verificationId": {
+      "type": "string",
+      "pattern": "^vrf_[a-z0-9]+$"
+    },
+    "runId": {
+      "type": "string",
+      "pattern": "^run_[a-z0-9]+$"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "subject": {
+      "$ref": "#/$defs/source"
+    },
+    "plan": {
+      "$ref": "#/$defs/plan"
+    },
+    "runner": {
+      "$ref": "#/$defs/runner"
+    },
+    "results": {
+      "$ref": "#/$defs/results"
+    },
+    "observerCoverage": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observerCoverage"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "observation.schema.json#/$defs/observationEvent"
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "items": {
+        "$ref": "assertion.schema.json#/$defs/assertionResult"
+      }
+    },
+    "policyDecisions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/policyDecision"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "$ref": "error.schema.json#/$defs/error"
+      }
+    },
+    "repeats": {
+      "$ref": "#/$defs/repeats"
+    },
+    "resources": {
+      "$ref": "#/$defs/resources"
+    },
+    "digests": {
+      "$ref": "#/$defs/digests"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "identity",
+        "treeDigest"
+      ],
+      "properties": {
+        "identity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "string",
+              "pattern": "^git:[a-f0-9]{40}$"
+            }
+          ]
+        },
+        "commit": {
+          "$ref": "#/$defs/commit"
+        },
+        "treeDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "object",
+      "required": [
+        "scenario",
+        "environment",
+        "planDigest",
+        "policyBundleDigest",
+        "repeatCount",
+        "successThreshold",
+        "resolvedPlanSchemaVersion",
+        "evidence"
+      ],
+      "properties": {
+        "scenario": {
+          "$ref": "#/$defs/identifier"
+        },
+        "environment": {
+          "$ref": "#/$defs/identifier"
+        },
+        "planDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyBundleDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "repeatCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "successThreshold": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "resolvedPlanSchemaVersion": {
+          "const": "4"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "profile",
+        "include",
+        "exclude"
+      ],
+      "properties": {
+        "profile": {
+          "const": "minimal-public"
+        },
+        "include": {
+          "oneOf": [
+            {
+              "const": [
+                "normalized-observations",
+                "verification-summary"
+              ]
+            },
+            {
+              "const": [
+                "normalized-observations",
+                "sbom",
+                "verification-summary"
+              ]
+            }
+          ]
+        },
+        "exclude": {
+          "const": [
+            "raw-stderr",
+            "raw-stdout",
+            "raw-syscall-trace"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "runner": {
+      "type": "object",
+      "required": [
+        "backend",
+        "available",
+        "controllerOS",
+        "workloadOS",
+        "rootless",
+        "networkDeny",
+        "networkAttemptObservation",
+        "processExecObservation",
+        "filesystemWriteObservation",
+        "filesystemReadObservation",
+        "portObservation",
+        "resourceUsage"
+      ],
+      "properties": {
+        "backend": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "controllerOS": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "workloadOS": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]*$"
+        },
+        "rootless": {
+          "enum": [
+            "yes",
+            "no",
+            "unknown"
+          ]
+        },
+        "networkDeny": {
+          "type": "boolean"
+        },
+        "networkAttemptObservation": {
+          "$ref": "#/$defs/coverage"
+        },
+        "processExecObservation": {
+          "$ref": "#/$defs/observationCoverage"
+        },
+        "filesystemWriteObservation": {
+          "$ref": "#/$defs/observationCoverage"
+        },
+        "filesystemReadObservation": {
+          "$ref": "#/$defs/observationCoverage"
+        },
+        "portObservation": {
+          "$ref": "#/$defs/observationCoverage"
+        },
+        "resourceUsage": {
+          "$ref": "#/$defs/observationCoverage"
+        },
+        "resourceLimitEnforcement": {
+          "type": "boolean"
+        },
+        "engineVersion": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "enum": [
+        "full",
+        "high",
+        "best-effort",
+        "enforcement-only",
+        "unavailable"
+      ]
+    },
+    "observationCoverage": {
+      "enum": [
+        "full",
+        "high",
+        "best-effort",
+        "unavailable"
+      ]
+    },
+    "results": {
+      "type": "object",
+      "required": [
+        "functional",
+        "capability",
+        "reproducibility",
+        "cleanup",
+        "evidence",
+        "freshness",
+        "overall"
+      ],
+      "properties": {
+        "functional": {
+          "enum": [
+            "pass",
+            "fail",
+            "blocked",
+            "inconclusive"
+          ]
+        },
+        "capability": {
+          "enum": [
+            "conforming",
+            "warning",
+            "nonconforming",
+            "incomplete"
+          ]
+        },
+        "reproducibility": {
+          "enum": [
+            "stable",
+            "flaky",
+            "not-reproducible",
+            "not-tested"
+          ]
+        },
+        "cleanup": {
+          "enum": [
+            "clean",
+            "allowed-residue",
+            "undeclared-residue",
+            "not-tested"
+          ]
+        },
+        "evidence": {
+          "enum": [
+            "none",
+            "unsigned",
+            "self-signed",
+            "maintainer-ci-signed",
+            "public-runner-signed",
+            "enterprise-signed",
+            "tampered",
+            "untrusted-signer"
+          ]
+        },
+        "freshness": {
+          "enum": [
+            "current",
+            "source-changed",
+            "plan-changed",
+            "policy-changed",
+            "runner-changed",
+            "expired"
+          ]
+        },
+        "overall": {
+          "enum": [
+            "verified",
+            "verified-with-warnings",
+            "nonconforming",
+            "failed",
+            "blocked",
+            "inconclusive",
+            "stale"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "observerCoverage": {
+      "type": "object",
+      "required": [
+        "observer",
+        "feature",
+        "coverage",
+        "required"
+      ],
+      "properties": {
+        "observer": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9.-]*$"
+        },
+        "feature": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9:.-]*$"
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "policyDecision": {
+      "type": "object",
+      "required": [
+        "policyId",
+        "policyBundleDigest",
+        "decision",
+        "severity",
+        "message"
+      ],
+      "properties": {
+        "policyId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]*$"
+        },
+        "policyBundleDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "decision": {
+          "enum": [
+            "allow",
+            "deny",
+            "warn"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "repeats": {
+      "type": "object",
+      "required": [
+        "requested",
+        "completed",
+        "matching"
+      ],
+      "properties": {
+        "requested": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "completed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "matching": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "durationMillis"
+      ],
+      "properties": {
+        "peakMemoryBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cpuTimeMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "durationMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxProcesses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "logBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sandboxPeakMemoryBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sandboxCPUTimeMillis": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxTasks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "writableBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputBytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observedFields": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "maxTasks",
+              "outputBytes",
+              "sandboxCPUTimeMillis",
+              "sandboxPeakMemoryBytes",
+              "writableBytes"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "dependentRequired": {
+        "sandboxPeakMemoryBytes": [
+          "observedFields"
+        ],
+        "sandboxCPUTimeMillis": [
+          "observedFields"
+        ],
+        "maxTasks": [
+          "observedFields"
+        ],
+        "writableBytes": [
+          "observedFields"
+        ],
+        "outputBytes": [
+          "observedFields"
+        ]
+      }
+    },
+    "digests": {
+      "type": "object",
+      "required": [
+        "observations",
+        "assertions",
+        "policyDecisions",
+        "verification"
+      ],
+      "properties": {
+        "observations": {
+          "$ref": "#/$defs/digest"
+        },
+        "assertions": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyDecisions": {
+          "$ref": "#/$defs/digest"
+        },
+        "verification": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

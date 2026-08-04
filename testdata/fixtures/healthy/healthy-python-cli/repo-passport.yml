@@ -1,0 +1,119 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: healthy-python-cli
+  displayName: Healthy Python CLI
+  description: Verifies dependency-free Python output persistence across phases.
+  labels:
+    fixture: healthy
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-python:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: python
+        version: "3.12.13"
+      baseImage:
+        reference: docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Persist Python output across phases
+      description: Setup writes state that the CLI journey reads in the same sandbox.
+      environment: linux-python
+      inputs:
+        message:
+          type: file
+          required: true
+          fixture: fixtures/message.txt
+          mount:
+            path: /inputs/message.txt
+            readOnly: true
+      phases:
+        setup:
+          timeout: 30s
+          steps:
+            - id: seed-state
+              run:
+                command:
+                  - python
+                  - /workspace/cli.py
+                  - seed
+                  - /inputs/message.txt
+                  - /outputs/state.json
+        exercise:
+          timeout: 30s
+          driver:
+            type: cli
+            command:
+              - python
+              - /workspace/cli.py
+              - process
+              - /outputs/state.json
+              - /outputs/result.json
+            assertions:
+              - id: process-exited
+                exitCode: 0
+              - id: process-reported
+                stdoutContains: "processed:hello python repopass"
+              - id: result-created
+                fileExists: /outputs/result.json
+      capabilities:
+        setup:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+              - /inputs/**
+            write:
+              - /outputs/**
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+              - /outputs/**
+            write:
+              - /outputs/**
+      verification:
+        repeats: 2
+        successThreshold: 2
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

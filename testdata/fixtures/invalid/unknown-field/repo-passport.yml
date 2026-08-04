@@ -1,0 +1,68 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: invalid-unknown-field
+  displayName: Invalid Unknown Field
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+    definitelyUnknown: true
+
+  environments:
+    linux-node:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: node
+        version: ">=22 <23"
+      baseImage:
+        reference: ghcr.io/repopass/fixtures/node@sha256:b7e4d2c8a1f609357e4b2d8c1a5f90367b4e2d8c0a1f63597e4b2d8c1a5f9036
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      environment: linux-node
+      phases:
+        exercise:
+          timeout: 10s
+          driver:
+            type: cli
+            command:
+              - node
+              - --version
+            assertions:
+              - id: version-exited
+                exitCode: 0
+      capabilities:
+        exercise:
+          network:
+            deny: true
+      verification:
+        repeats: 1
+        successThreshold: 1
+        requiredObservers:
+          - network-enforcement
+        cleanup:
+          allowedResidue: []
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+    exclude:
+      - raw-stdout
+      - raw-stderr

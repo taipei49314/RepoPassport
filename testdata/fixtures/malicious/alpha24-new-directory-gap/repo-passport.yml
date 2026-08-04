@@ -1,0 +1,87 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: alpha24-new-directory-gap
+  displayName: Alpha.24 New Directory Gap
+  description: A declared synchronous mutation creates a directory whose recursive watch cannot be installed without a race.
+  labels:
+    fixture: malicious
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-python:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: python
+        version: "3.12.13"
+      baseImage:
+        reference: docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Fail closed on a new-directory recursive-watch race
+      description: All mutations are declared, but a new directory makes complete recursive notification coverage unavailable.
+      environment: linux-python
+      phases:
+        exercise:
+          timeout: 30s
+          driver:
+            type: cli
+            command:
+              - python
+              - /workspace/fixture.py
+            assertions:
+              - id: process-exited
+                exitCode: 0
+              - id: process-reported
+                stdoutContains: "completed:new-directory-gap"
+              - id: result-created
+                fileExists: /outputs/result.json
+      capabilities:
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+            write:
+              - /outputs/**
+      verification:
+        repeats: 1
+        successThreshold: 1
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

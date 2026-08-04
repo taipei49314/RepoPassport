@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/bundle-manifest-v2.schema.json",
+  "title": "RepoPassport Repository-Derived Attestation Bundle Manifest v2",
+  "type": "object",
+  "required": [
+    "schemaVersion", "bundleFormat", "privacyProfile", "privacyPolicy",
+    "privacyRulesetDigest", "files"
+  ],
+  "properties": {
+    "schemaVersion": {"const": "2"},
+    "bundleFormat": {"const": "repopass.attestation.bundle.v2"},
+    "privacyProfile": {"const": "minimal-public-derived-projection-v1"},
+    "privacyPolicy": {"const": "minimal-public-derived-projection-v1"},
+    "privacyRulesetDigest": {"const": "sha256:2843165f0a7c5ebf01a534b05a0a691ec400054f6667a1d0a177c8f549387db7"},
+    "files": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {"$ref": "#/$defs/verificationFile"},
+        {"$ref": "#/$defs/sbomFile"},
+        {"$ref": "#/$defs/provenanceFile"},
+        {"$ref": "#/$defs/publicKeyFile"}
+      ],
+      "items": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256", "size"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "verificationFile": {
+      "allOf": [
+        {"$ref": "#/$defs/file"},
+        {"properties": {"path": {"const": "payload/verification.json"}, "size": {"maximum": 16777216}}}
+      ]
+    },
+    "sbomFile": {
+      "allOf": [
+        {"$ref": "#/$defs/file"},
+        {"properties": {"path": {"const": "payload/sbom.spdx.json"}, "size": {"maximum": 1048576}}}
+      ]
+    },
+    "provenanceFile": {
+      "allOf": [
+        {"$ref": "#/$defs/file"},
+        {"properties": {"path": {"const": "payload/sbom-provenance.json"}, "size": {"maximum": 16384}}}
+      ]
+    },
+    "publicKeyFile": {
+      "allOf": [
+        {"$ref": "#/$defs/file"},
+        {"properties": {"path": {"const": "signer-public-key.pem"}, "size": {"maximum": 16384}}}
+      ]
+    }
+  }
+}

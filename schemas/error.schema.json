@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/error.schema.json",
+  "title": "RepoPassport Error",
+  "description": "Stable machine-readable error shared by CLI, JSON reports and integrations.",
+  "$ref": "#/$defs/error",
+  "$defs": {
+    "error": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "code",
+        "severity",
+        "message",
+        "evidenceRefs",
+        "retryable"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1"
+        },
+        "code": {
+          "$ref": "#/$defs/errorCode"
+        },
+        "phase": {
+          "enum": [
+            "prepare",
+            "setup",
+            "build",
+            "run",
+            "exercise",
+            "cleanup",
+            "finalize"
+          ]
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "details": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[A-Za-z][A-Za-z0-9]{0,63}$"
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "suggestion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "errorCode": {
+      "enum": [
+        "SOURCE_NOT_FOUND",
+        "SOURCE_TOO_LARGE",
+        "SOURCE_TOO_MANY_FILES",
+        "SOURCE_PATH_TRAVERSAL",
+        "SOURCE_SYMLINK_ESCAPE",
+        "SOURCE_REF_UNRESOLVED",
+        "SOURCE_DIGEST_MISMATCH",
+        "MANIFEST_NOT_FOUND",
+        "MANIFEST_INVALID",
+        "MANIFEST_UNKNOWN_FIELD",
+        "MANIFEST_LITERAL_SECRET",
+        "MANIFEST_UNSAFE_SHELL",
+        "PLAN_UNRESOLVED",
+        "PLAN_DRIFT",
+        "MUTABLE_BASE_IMAGE",
+        "RUNTIME_VERSION_UNRESOLVED",
+        "POLICY_BUNDLE_UNRESOLVED",
+        "RUNNER_UNAVAILABLE",
+        "RUNNER_FEATURE_UNAVAILABLE",
+        "SANDBOX_PREPARE_FAILED",
+        "SANDBOX_START_FAILED",
+        "SANDBOX_DESTROY_FAILED",
+        "RESOURCE_LIMIT_EXCEEDED",
+        "TIMEOUT",
+        "SETUP_FAILED",
+        "BUILD_FAILED",
+        "SERVICE_START_FAILED",
+        "READINESS_FAILED",
+        "JOURNEY_ASSERTION_FAILED",
+        "CLEANUP_FAILED",
+        "PROCESS_LEAK",
+        "UNDECLARED_FILESYSTEM_WRITE",
+        "FORBIDDEN_FILESYSTEM_ACCESS",
+        "UNDECLARED_NETWORK_DESTINATION",
+        "FORBIDDEN_NETWORK_ATTEMPT",
+        "UNDECLARED_PORT_LISTEN",
+        "UNDECLARED_PROCESS_EXEC",
+        "CLEANUP_RESIDUE",
+        "OBSERVER_START_FAILED",
+        "OBSERVER_INCOMPLETE",
+        "OBSERVATION_SCHEMA_INVALID",
+        "NONDETERMINISTIC_RESULT",
+        "EVIDENCE_BUILD_FAILED",
+        "EVIDENCE_DIGEST_MISMATCH",
+        "EVIDENCE_PRIVACY_BLOCKED",
+        "ATTESTATION_INVALID",
+        "ATTESTATION_UNTRUSTED",
+        "EVIDENCE_STALE",
+        "SIGNING_FAILED",
+        "POLICY_DENIED",
+        "POLICY_EVALUATION_FAILED",
+        "INTERNAL_ERROR",
+        "CANCELLED"
+      ]
+    }
+  }
+}

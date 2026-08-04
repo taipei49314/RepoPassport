@@ -1,0 +1,17 @@
+{
+  "name": "alpha25-undeclared-port-python",
+  "class": "malicious",
+  "language": "python",
+  "scenario": "quickstart",
+  "schemaValid": true,
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "capability": "NONCONFORMING",
+    "overall": "NONCONFORMING",
+    "listen": "127.0.0.1:8080",
+    "output": "/outputs/request.json"
+  }
+}

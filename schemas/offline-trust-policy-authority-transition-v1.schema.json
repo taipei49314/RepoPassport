@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/offline-trust-policy-authority-transition-v1.schema.json",
+  "title": "RepoPassport Offline Trust Policy Authority Transition v1",
+  "type": "object",
+  "required": ["schemaVersion", "purpose", "policyPayloadType", "generation", "keyAlgorithm", "keyIdAlgorithm", "previousAuthorityKeyId", "nextAuthorityKeyId"],
+  "properties": {
+    "schemaVersion": {"const": "1"},
+    "purpose": {"const": "offline-trust-policy-authority-rotation"},
+    "policyPayloadType": {"const": "application/vnd.repopass.offline-trust-policy.v2+json"},
+    "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "keyAlgorithm": {"const": "ed25519"},
+    "keyIdAlgorithm": {"const": "spki-sha256"},
+    "previousAuthorityKeyId": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "nextAuthorityKeyId": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,100 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: healthy-node-cli
+  displayName: Healthy Node CLI
+  description: Processes a synthetic message without third-party dependencies.
+  labels:
+    fixture: healthy
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-node:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: node
+        version: "22.23.1"
+      baseImage:
+        reference: docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Process a synthetic message
+      description: Reads a fixture and writes a deterministic JSON result.
+      environment: linux-node
+      inputs:
+        message:
+          type: file
+          required: true
+          fixture: fixtures/message.txt
+          mount:
+            path: /inputs/message.txt
+            readOnly: true
+      phases:
+        exercise:
+          timeout: 30s
+          driver:
+            type: cli
+            command:
+              - node
+              - /workspace/cli.mjs
+              - /inputs/message.txt
+              - /outputs/result.json
+            assertions:
+              - id: process-exited
+                exitCode: 0
+              - id: process-reported
+                stdoutContains: '"message":"hello repopass"'
+              - id: stdout-schema-valid
+                stdoutJsonSchema: .repopass/schemas/cli-stdout.schema.json
+              - id: result-created
+                fileExists: /outputs/result.json
+      capabilities:
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+              - /inputs/**
+            write:
+              - /outputs/**
+      verification:
+        repeats: 3
+        successThreshold: 3
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

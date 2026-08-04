@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/release-key-policy-v1.schema.json",
+  "title": "RepoPassport Release Key Policy v1",
+  "type": "object",
+  "required": ["schemaVersion", "product", "channel", "purpose", "generation", "keyAlgorithm", "keyIdAlgorithm", "keys"],
+  "properties": {
+    "schemaVersion": {"const": "1"},
+    "product": {"const": "repopass"},
+    "channel": {"const": "alpha"},
+    "purpose": {"const": "release-index-signing"},
+    "generation": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+    "keyAlgorithm": {"const": "ed25519"},
+    "keyIdAlgorithm": {"const": "spki-sha256"},
+    "keys": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/key"}}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "key": {
+      "type": "object",
+      "required": ["keyId", "status"],
+      "properties": {
+        "keyId": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "status": {"enum": ["trusted", "revoked"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

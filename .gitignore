@@ -1,0 +1,20 @@
+# Build output
+/dist/
+/repopass
+/repopass.exe
+
+# RepoPassport controller state and generated lockfiles
+/.repopass/
+/passport.lock.json
+
+# Local development artifacts
+/coverage.out
+/coverage.html
+*.test
+*.prof
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

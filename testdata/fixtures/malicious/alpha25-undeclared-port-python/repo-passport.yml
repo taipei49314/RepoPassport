@@ -1,0 +1,153 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: alpha25-undeclared-port-python
+  displayName: Alpha.25 undeclared Python TCP listener
+  description: Runs a declared HTTP listener plus a synthetic undeclared loopback TCP listener.
+  labels:
+    fixture: malicious
+
+spec:
+  project:
+    kind: web-app
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-python:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: python
+        version: "3.12.13"
+      baseImage:
+        reference: docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Exercise a loopback HTTP service with an extra TCP listener
+      description: The HTTP journey succeeds while a second undeclared TCP listener remains open.
+      environment: linux-python
+      phases:
+        run:
+          timeout: 1m
+          service:
+            id: app
+            command:
+              - python
+              - /workspace/server.py
+              - --output
+              - /outputs/request.json
+              - --port
+              - "8080"
+            readiness:
+              http:
+                url: http://127.0.0.1:8080/health
+                status: 200
+                timeout: 15s
+        exercise:
+          timeout: 30s
+          driver:
+            type: http
+            steps:
+              - request:
+                  id: echo
+                  method: post
+                  url: http://127.0.0.1:8080/echo
+                  json:
+                    message: hello repopass
+              - assert:
+                  id: echo-status
+                  response:
+                    requestId: echo
+                    status: 200
+              - assert:
+                  id: echo-message-jsonpath
+                  response:
+                    requestId: echo
+                    jsonPath:
+                      path: $.received.message
+                      equals: hello repopass
+              - assert:
+                  id: echo-response-schema
+                  response:
+                    requestId: echo
+                    jsonSchema: .repopass/schemas/echo-response.schema.json
+              - assert:
+                  id: request-created
+                  fileExists: /outputs/request.json
+              - assert:
+                  id: request-json-schema
+                  jsonFile:
+                    path: /outputs/request.json
+                    schema: .repopass/schemas/echo-response.schema.json
+        cleanup:
+          timeout: 15s
+          steps:
+            - id: stop-service
+              signal:
+                target: app
+                type: term
+                gracePeriod: 5s
+      capabilities:
+        run:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+            write:
+              - /outputs/**
+          ports:
+            listen:
+              - host: 127.0.0.1
+                port: 8080
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+              - /outputs/**
+            write:
+              - /outputs/**
+        cleanup:
+          network:
+            deny: true
+          filesystem:
+            write:
+              - /outputs/**
+      verification:
+        repeats: 3
+        successThreshold: 3
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - port-listen
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

@@ -1,0 +1,17 @@
+{
+  "name": "alpha24-transient-create-delete",
+  "class": "malicious",
+  "language": "python",
+  "scenario": "quickstart",
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "capability": "nonconforming",
+    "cleanup": "allowed-residue",
+    "overall": "nonconforming",
+    "operationNotification": "nonconforming-notifications",
+    "operationalError": false
+  }
+}

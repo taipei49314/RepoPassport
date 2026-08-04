@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "received",
+    "runtime"
+  ],
+  "properties": {
+    "received": {
+      "type": "object",
+      "required": [
+        "message"
+      ],
+      "properties": {
+        "message": {
+          "const": "hello repopass"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "const": "python"
+    }
+  },
+  "additionalProperties": false
+}

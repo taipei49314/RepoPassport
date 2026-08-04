@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/attestation.schema.json",
+  "title": "RepoPassport in-toto Verification Attestation",
+  "description": "Strict in-toto Statement v1 profile for a RepoPassport verification bundle.",
+  "type": "object",
+  "required": [
+    "_type",
+    "subject",
+    "predicateType",
+    "predicate"
+  ],
+  "properties": {
+    "_type": {
+      "const": "https://in-toto.io/Statement/v1"
+    },
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "prefixItems": [
+        {
+          "$ref": "#/$defs/subject"
+        }
+      ],
+      "items": false
+    },
+    "predicateType": {
+      "const": "https://repopass.dev/attestation/verification/v0.1"
+    },
+    "predicate": {
+      "$ref": "#/$defs/predicate"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "rawSHA256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "name",
+        "digest"
+      ],
+      "properties": {
+        "name": {
+          "const": "bundle-manifest.json"
+        },
+        "digest": {
+          "type": "object",
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "sha256": {
+              "$ref": "#/$defs/rawSHA256"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "predicate": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "runId",
+        "verificationId",
+        "verificationArtifactDigest",
+        "verificationDigest",
+        "source",
+        "plan",
+        "runner",
+        "originalResults"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1"
+        },
+        "runId": {
+          "type": "string",
+          "pattern": "^run_[a-z0-9]+$"
+        },
+        "verificationId": {
+          "type": "string",
+          "pattern": "^vrf_[a-z0-9]+$"
+        },
+        "verificationArtifactDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "verificationDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "source": {
+          "$ref": "verification.schema.json#/$defs/source"
+        },
+        "plan": {
+          "$ref": "#/$defs/plan"
+        },
+        "runner": {
+          "$ref": "verification.schema.json#/$defs/runner"
+        },
+        "originalResults": {
+          "$ref": "verification.schema.json#/$defs/results"
+        },
+        "sbom": {
+          "$ref": "#/$defs/sbom"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "plan": {
+                "properties": {
+                  "evidence": {
+                    "properties": {
+                      "include": {
+                        "const": [
+                          "normalized-observations",
+                          "sbom",
+                          "verification-summary"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sbom"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "sbom"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "plan": {
+      "type": "object",
+      "required": [
+        "scenario",
+        "environment",
+        "planDigest",
+        "policyBundleDigest",
+        "resolvedPlanSchemaVersion",
+        "evidence"
+      ],
+      "properties": {
+        "scenario": {
+          "$ref": "verification.schema.json#/$defs/identifier"
+        },
+        "environment": {
+          "$ref": "verification.schema.json#/$defs/identifier"
+        },
+        "planDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "policyBundleDigest": {
+          "$ref": "#/$defs/digest"
+        },
+        "resolvedPlanSchemaVersion": {
+          "const": "4"
+        },
+        "evidence": {
+          "$ref": "verification.schema.json#/$defs/evidence"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sbom": {
+      "type": "object",
+      "required": [
+        "format",
+        "mediaType",
+        "path",
+        "digest"
+      ],
+      "properties": {
+        "format": {
+          "const": "SPDX-2.3"
+        },
+        "mediaType": {
+          "const": "application/spdx+json"
+        },
+        "path": {
+          "const": "payload/sbom.spdx.json"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

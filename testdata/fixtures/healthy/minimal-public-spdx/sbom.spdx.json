@@ -1,0 +1,28 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-08-01T00:00:00Z",
+    "creators": [
+      "Tool: RepoPassport synthetic fixture"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentDescribes": [
+    "SPDXRef-demo"
+  ],
+  "documentNamespace": "https://example.invalid/spdx/repopass-demo",
+  "name": "repopass-demo-sbom",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-demo",
+      "copyrightText": "NOASSERTION",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "name": "repopass-demo",
+      "versionInfo": "0.0.0-synthetic"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

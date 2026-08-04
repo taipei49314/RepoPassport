@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go integrity, vulnerability, format, vet, and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Download and verify modules
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy -diff
+
+      - name: Scan application module graph
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -C cmd/repopass -scan module
+
+      - name: Scan source and test symbols
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -test ./...
+
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [[ -n "${unformatted}" ]]; then
+            echo "The following Go files are not formatted:"
+            echo "${unformatted}"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+  schema-json:
+    name: Schema JSON syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Parse schema and fixture JSON
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          schemas = sorted(Path("schemas").rglob("*.json"))
+          if not schemas:
+              raise SystemExit("no JSON schemas found under schemas/")
+
+          fixture_json = sorted(Path("testdata/fixtures").rglob("*.json"))
+          paths = schemas + fixture_json
+
+          for path in paths:
+              with path.open("r", encoding="utf-8") as handle:
+                  json.load(handle)
+              print(f"valid JSON: {path}")
+          PY
+
+  container-integration:
+    name: Container integration (opt-in)
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.REPOPASS_RUN_CONTAINER_INTEGRATION == 'true' }}
+    needs:
+      - go
+      - schema-json
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Record Docker feature information
+        run: |
+          docker version
+          docker info
+
+      - name: Pre-pull and inspect exact approved fixture images
+        run: |
+          node_image='docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3'
+          python_image='docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
+          docker pull --platform linux/amd64 "$node_image"
+          docker pull --platform linux/amd64 "$python_image"
+          docker image inspect \
+            --format '{{json .RepoDigests}} {{.Os}}/{{.Architecture}}' \
+            "$node_image" "$python_image"
+
+      - name: Run container integration tests
+        env:
+          REPOPASS_INTEGRATION_BACKEND: docker
+        run: go test -tags=integration -count=1 -v ./internal/cli -run '^TestContainer'

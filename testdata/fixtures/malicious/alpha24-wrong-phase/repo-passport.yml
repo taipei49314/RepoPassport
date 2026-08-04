@@ -1,0 +1,104 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: alpha24-wrong-phase
+  displayName: Alpha.24 Wrong Phase Write
+  description: Exercise mutates a path that only an already-dispatched build phase declares.
+  labels:
+    fixture: malicious
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-python:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: python
+        version: "3.12.13"
+      baseImage:
+        reference: docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Detect a write authorized only in another phase
+      description: Build is dispatched first; exercise then modifies the build-only path.
+      environment: linux-python
+      phases:
+        build:
+          timeout: 30s
+          steps:
+            - id: write-declared-build-state
+              run:
+                command:
+                  - python
+                  - /workspace/fixture.py
+                  - build
+        exercise:
+          timeout: 30s
+          driver:
+            type: cli
+            command:
+              - python
+              - /workspace/fixture.py
+              - exercise
+            assertions:
+              - id: process-exited
+                exitCode: 0
+              - id: process-reported
+                stdoutContains: "completed:wrong-phase"
+      capabilities:
+        build:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+            write:
+              - /outputs/build-only.json
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+              - /outputs/build-only.json
+            write:
+              - /outputs/result.json
+      verification:
+        repeats: 2
+        successThreshold: 2
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

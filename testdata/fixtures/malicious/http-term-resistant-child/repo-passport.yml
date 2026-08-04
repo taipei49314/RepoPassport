@@ -1,0 +1,134 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: http-term-resistant-child
+  displayName: HTTP TERM-Resistant Child
+  description: Leaves a TERM-resistant child for trusted final quiescence after the service exits.
+  labels:
+    fixture: malicious
+
+spec:
+  project:
+    kind: web-app
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-python:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: python
+        version: "3.12.13"
+      baseImage:
+        reference: docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 64MiB
+        pids: 32
+
+  scenarios:
+    quickstart:
+      title: Remove a TERM-resistant service child
+      description: The service is functional while its detached child survives until trusted quiescence.
+      environment: linux-python
+      phases:
+        run:
+          timeout: 30s
+          service:
+            id: app
+            command:
+              - python
+              - /workspace/service.py
+              - --port
+              - "18083"
+              - --heartbeat
+              - /outputs/heartbeat.txt
+            readiness:
+              http:
+                url: http://127.0.0.1:18083/health
+                status: 200
+                timeout: 10s
+        exercise:
+          timeout: 10s
+          driver:
+            type: http
+            steps:
+              - request:
+                  id: health
+                  method: get
+                  url: http://127.0.0.1:18083/health
+              - assert:
+                  id: health-status
+                  response:
+                    requestId: health
+                    status: 200
+              - assert:
+                  id: child-heartbeat-created
+                  fileExists: /outputs/heartbeat.txt
+        cleanup:
+          timeout: 10s
+          steps:
+            - id: stop-service
+              signal:
+                target: app
+                type: term
+                gracePeriod: 2s
+      capabilities:
+        run:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+            write:
+              - /outputs/**
+          ports:
+            listen:
+              - host: 127.0.0.1
+                port: 18083
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+              - /outputs/**
+            write:
+              - /outputs/**
+        cleanup:
+          network:
+            deny: true
+          filesystem:
+            write:
+              - /outputs/**
+      verification:
+        repeats: 1
+        successThreshold: 1
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - port-listen
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

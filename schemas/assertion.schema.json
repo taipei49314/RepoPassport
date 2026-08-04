@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/assertion.schema.json",
+  "title": "RepoPassport Assertion Result",
+  "description": "Result of one trusted journey assertion.",
+  "$ref": "#/$defs/assertionResult",
+  "$defs": {
+    "assertionResult": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "assertionId",
+        "type",
+        "required",
+        "expected",
+        "actual",
+        "status",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": "1"
+        },
+        "assertionId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9:/._-]{0,255}$"
+        },
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "expected": {},
+        "actual": {},
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "passed",
+            "failed",
+            "blocked",
+            "inconclusive"
+          ]
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "durationMillis": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "healthy-node-cli",
+  "class": "healthy",
+  "language": "node",
+  "scenario": "quickstart",
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "output": "/outputs/result.json",
+    "stdoutSchema": ".repopass/schemas/cli-stdout.schema.json"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "cleanup-undeclared-residue",
+  "class": "malicious",
+  "language": "node",
+  "scenario": "quickstart",
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "cleanup": "undeclared-residue",
+    "overall": "nonconforming",
+    "operationalError": false
+  }
+}

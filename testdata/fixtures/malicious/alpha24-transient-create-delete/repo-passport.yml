@@ -1,0 +1,87 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: alpha24-transient-create-delete
+  displayName: Alpha.24 Transient Create Delete
+  description: A synchronous Python CLI creates and deletes an undeclared output while its functional assertion passes.
+  labels:
+    fixture: malicious
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-python:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: python
+        version: "3.12.13"
+      baseImage:
+        reference: docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Detect a transient undeclared output mutation
+      description: The final retained state is declared, but a private transient output is not.
+      environment: linux-python
+      phases:
+        exercise:
+          timeout: 30s
+          driver:
+            type: cli
+            command:
+              - python
+              - /workspace/fixture.py
+            assertions:
+              - id: process-exited
+                exitCode: 0
+              - id: process-reported
+                stdoutContains: "completed:transient-create-delete"
+              - id: result-created
+                fileExists: /outputs/result.json
+      capabilities:
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+            write:
+              - /outputs/result.json
+      verification:
+        repeats: 2
+        successThreshold: 2
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - network-enforcement
+          - resource-usage
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

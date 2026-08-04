@@ -1,0 +1,20 @@
+{
+  "name": "healthy-node-cli-spdx",
+  "class": "healthy",
+  "language": "node",
+  "scenario": "quickstart",
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "output": "/outputs/result.json",
+    "stdoutSchema": ".repopass/schemas/cli-stdout.schema.json",
+    "evidenceInclude": [
+      "normalized-observations",
+      "sbom",
+      "verification-summary"
+    ],
+    "spdx": "sbom.spdx.json"
+  }
+}

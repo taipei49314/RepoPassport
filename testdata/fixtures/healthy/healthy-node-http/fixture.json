@@ -1,0 +1,17 @@
+{
+  "name": "healthy-node-http",
+  "class": "healthy",
+  "language": "node",
+  "scenario": "quickstart",
+  "schemaValid": true,
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "PASS",
+    "capability": "INCOMPLETE",
+    "overall": "INCONCLUSIVE",
+    "listen": "127.0.0.1:8080",
+    "output": "/outputs/request.json"
+  }
+}

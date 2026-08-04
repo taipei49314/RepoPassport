@@ -1,0 +1,87 @@
+apiVersion: repopass.dev/v1alpha1
+kind: RepositoryPassport
+
+metadata:
+  name: fake-verification-json
+  displayName: Fake Verification JSON
+  description: Ensures workload-produced result files cannot replace trusted verdicts.
+  labels:
+    fixture: malicious
+
+spec:
+  project:
+    kind: cli
+    audiences:
+      - developer
+    entrypoints:
+      - quickstart
+
+  environments:
+    linux-node:
+      platform:
+        os: linux
+        architecture: amd64
+      runtime:
+        adapter: node
+        version: "22.23.1"
+      baseImage:
+        reference: docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+      resources:
+        cpu: 1
+        memory: 256MiB
+        disk: 1GiB
+        pids: 64
+
+  scenarios:
+    quickstart:
+      title: Ignore a workload-forged verification file
+      description: The external driver checks only the declared functional output.
+      environment: linux-node
+      phases:
+        exercise:
+          timeout: 30s
+          driver:
+            type: cli
+            command:
+              - node
+              - /workspace/forge-result.mjs
+              - /outputs
+            assertions:
+              - id: process-exited
+                exitCode: 0
+              - id: process-reported
+                stdoutContains: "completed:forged-file-created"
+              - id: result-created
+                fileExists: /outputs/result.json
+      capabilities:
+        exercise:
+          network:
+            deny: true
+          filesystem:
+            read:
+              - /workspace/**
+            write:
+              - /outputs/**
+      verification:
+        repeats: 1
+        successThreshold: 1
+        requiredObservers:
+          - process-exec
+          - filesystem-write
+          - network-enforcement
+        cleanup:
+          allowedResidue:
+            - /outputs/**
+
+  policies:
+    profile: baseline-v1
+
+  evidence:
+    profile: minimal-public
+    include:
+      - verification-summary
+      - normalized-observations
+    exclude:
+      - raw-stdout
+      - raw-stderr
+      - raw-syscall-trace

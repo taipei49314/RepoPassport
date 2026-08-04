@@ -1,0 +1,8 @@
+{
+  "name": "repopass-healthy-node-http",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.23.1"
+  }
+}

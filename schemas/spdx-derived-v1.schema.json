@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/spdx-derived-v1.schema.json",
+  "title": "RepoPassport Repository-Derived SPDX 2.3 JSON Profile v1",
+  "type": "object",
+  "required": [
+    "SPDXID", "creationInfo", "dataLicense", "documentDescribes",
+    "documentNamespace", "name", "packages", "relationships", "spdxVersion"
+  ],
+  "properties": {
+    "SPDXID": {"const": "SPDXRef-DOCUMENT"},
+    "creationInfo": {
+      "type": "object",
+      "required": ["created", "creators"],
+      "properties": {
+        "created": {"const": "1970-01-01T00:00:00Z"},
+        "creators": {"const": ["Tool: RepoPassport/npm-package-lock-v1"]}
+      },
+      "additionalProperties": false
+    },
+    "dataLicense": {"const": "CC0-1.0"},
+    "documentDescribes": {"const": ["SPDXRef-Root"]},
+    "documentNamespace": {
+      "type": "string",
+      "pattern": "^https://repopass\\.dev/spdx/npm-package-lock-v1/[a-f0-9]{64}$"
+    },
+    "name": {"const": "RepoPassport repository-derived npm lock SBOM"},
+    "packages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 2048,
+      "items": {"$ref": "#/$defs/package"}
+    },
+    "relationships": {
+      "type": "array",
+      "maxItems": 8192,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/relationship"}
+    },
+    "spdxVersion": {"const": "SPDX-2.3"}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "packageID": {
+      "type": "string",
+      "pattern": "^(?:SPDXRef-Root|SPDXRef-Package-[a-f0-9]{64})$"
+    },
+    "checksum": {
+      "type": "object",
+      "required": ["algorithm", "checksumValue"],
+      "properties": {
+        "algorithm": {"const": "SHA512"},
+        "checksumValue": {"type": "string", "pattern": "^[a-f0-9]{128}$"}
+      },
+      "additionalProperties": false
+    },
+    "package": {
+      "type": "object",
+      "required": [
+        "SPDXID", "copyrightText", "downloadLocation", "filesAnalyzed",
+        "licenseConcluded", "licenseDeclared", "name", "versionInfo"
+      ],
+      "properties": {
+        "SPDXID": {"$ref": "#/$defs/packageID"},
+        "checksums": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "prefixItems": [{"$ref": "#/$defs/checksum"}],
+          "items": false
+        },
+        "copyrightText": {"const": "NOASSERTION"},
+        "downloadLocation": {"const": "NOASSERTION"},
+        "filesAnalyzed": {"const": false},
+        "licenseConcluded": {"const": "NOASSERTION"},
+        "licenseDeclared": {"const": "NOASSERTION"},
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 214,
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$"
+        },
+        "versionInfo": {"type": "string", "minLength": 5, "maxLength": 128}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"SPDXID": {"const": "SPDXRef-Root"}}, "required": ["SPDXID"]},
+          "then": {"not": {"required": ["checksums"]}},
+          "else": {"required": ["checksums"]}
+        }
+      ]
+    },
+    "relationship": {
+      "type": "object",
+      "required": ["spdxElementId", "relatedSpdxElement", "relationshipType"],
+      "properties": {
+        "spdxElementId": {"$ref": "#/$defs/packageID"},
+        "relatedSpdxElement": {"$ref": "#/$defs/packageID"},
+        "relationshipType": {"const": "DEPENDS_ON"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "http-never-ready",
+  "class": "malicious",
+  "language": "python",
+  "scenario": "quickstart",
+  "schemaValid": true,
+  "planReady": true,
+  "requiresExternalPackages": false,
+  "expected": {
+    "validation": "PASS",
+    "functional": "FAIL",
+    "error": "READINESS_FAILED",
+    "cleanup": "CLEAN",
+    "containerResidue": "NONE"
+  }
+}

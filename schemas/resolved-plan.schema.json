@@ -1,0 +1,1132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/resolved-plan.schema.json",
+  "title": "RepoPassport Resolved Plan",
+  "description": "Strict public schema for passport.lock.json emitted by the v0.1 planner.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "source",
+    "manifestDigest",
+    "scenario",
+    "environment",
+    "runtimeAdapter",
+    "runtimeVersion",
+    "baseImageReference",
+    "baseImageDigest",
+    "resources",
+    "inputs",
+    "adapterVersions",
+    "observerVersions",
+    "journeyDriver",
+    "journeyDriverVersion",
+    "commands",
+    "journeyAssertions",
+    "cleanup",
+    "evidence",
+    "capabilities",
+    "requiredRunnerFeatures",
+    "observerSet",
+    "repeatCount",
+    "successThreshold",
+    "policyBundleDigest",
+    "planDigest"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "4"
+    },
+    "source": {
+      "$ref": "#/$defs/source"
+    },
+    "manifestDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "scenario": {
+      "$ref": "#/$defs/identifier"
+    },
+    "environment": {
+      "$ref": "#/$defs/identifier"
+    },
+    "runtimeAdapter": {
+      "enum": [
+        "node",
+        "python"
+      ]
+    },
+    "runtimeVersion": {
+      "$ref": "#/$defs/version"
+    },
+    "baseImageReference": {
+      "type": "string",
+      "pattern": "^[^\\s]+@sha256:[a-f0-9]{64}$",
+      "maxLength": 512
+    },
+    "baseImageDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "resources": {
+      "$ref": "#/$defs/resources"
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/input"
+      }
+    },
+    "adapterVersions": {
+      "$ref": "#/$defs/versionMap"
+    },
+    "observerVersions": {
+      "$ref": "#/$defs/versionMap"
+    },
+    "journeyDriver": {
+      "enum": [
+        "cli",
+        "http"
+      ]
+    },
+    "journeyDriverVersion": {
+      "$ref": "#/$defs/version"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    },
+    "journeyAssertions": {
+      "type": "array"
+    },
+    "httpJourney": {
+      "$ref": "#/$defs/httpJourney"
+    },
+    "cleanup": {
+      "$ref": "#/$defs/cleanup"
+    },
+    "evidence": {
+      "$ref": "#/$defs/evidence"
+    },
+    "capabilities": {
+      "$ref": "#/$defs/capabilitiesByPhase"
+    },
+    "requiredRunnerFeatures": {
+      "type": "array",
+      "uniqueItems": true,
+      "contains": {
+        "const": "cleanup-residue-classification"
+      },
+      "minContains": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9:+./-]*$"
+      }
+    },
+    "observerSet": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/observerName"
+      }
+    },
+    "repeatCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "successThreshold": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "policyBundleDigest": {
+      "$ref": "#/$defs/digest"
+    },
+    "planDigest": {
+      "$ref": "#/$defs/digest"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "journeyDriver": {
+            "const": "http"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "httpJourney"
+        ],
+        "properties": {
+          "journeyDriverVersion": {
+            "const": "0.1.0"
+          },
+          "journeyAssertions": {
+            "minItems": 1,
+            "items": {
+              "$ref": "#/$defs/httpJourneyAssertion"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "journeyDriver": {
+            "const": "cli"
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "httpJourney"
+          ]
+        },
+        "properties": {
+          "journeyDriverVersion": {
+            "const": "0.2.0"
+          },
+          "journeyAssertions": {
+            "items": {
+              "$ref": "#/$defs/journeyAssertion"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,62}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "sandboxPath": {
+      "type": "string",
+      "pattern": "^/[ -~]*$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "(?:^|/)\\.\\.(?:/|$)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "\\\\"
+          }
+        }
+      ]
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[ -~]+$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "^/"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(?:^|/)\\.\\.(?:/|$)"
+          }
+        },
+        {
+          "not": {
+            "pattern": "\\\\"
+          }
+        }
+      ]
+    },
+    "goDuration": {
+      "type": "string",
+      "pattern": "^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|ms|s|m|h))+$"
+    },
+    "wholeMillisecondDuration": {
+      "type": "string",
+      "pattern": "^(?:[1-9][0-9]*(?:ms|s|m|h)|(?:0|[1-9][0-9]*)\\.[0-9]{1,3}s|[1-9][0-9]*h(?:[0-9]+m)?(?:[0-9]+(?:\\.[0-9]{1,3})?s)?|[1-9][0-9]*m(?:[0-9]+(?:\\.[0-9]{1,3})?s)?)$",
+      "not": {
+        "pattern": "^0\\.0{1,3}s$"
+      }
+    },
+    "httpURL": {
+      "type": "string",
+      "pattern": "^http://127\\.0\\.0\\.1:(?:[1-9]|[1-9][0-9]{1,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])(?:/(?:[A-Za-z0-9._~!$&'()*+,;=:@/-]|%[0-9A-Fa-f]{2})*)?(?:\\?(?:[A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})+)?$",
+      "maxLength": 2048,
+      "allOf": [
+        {
+          "not": {
+            "pattern": "[#\\\\]"
+          }
+        },
+        {
+          "not": {
+            "pattern": "(?:^|/)(?:\\.|%2[eE])(?:\\.|%2[eE])?(?:/|\\?|$)"
+          }
+        }
+      ]
+    },
+    "httpOutputPath": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 4096,
+      "pattern": "^/outputs(?:/[^\\\\]+)*$",
+      "not": {
+        "pattern": "(?:^|/)\\.\\.(?:/|$)"
+      }
+    },
+    "httpStatus": {
+      "type": "integer",
+      "minimum": 200,
+      "maximum": 599
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "identity",
+        "treeDigest"
+      ],
+      "properties": {
+        "identity": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "string",
+              "pattern": "^git:[a-f0-9]{40}$"
+            }
+          ]
+        },
+        "commit": {
+          "$ref": "#/$defs/commit"
+        },
+        "treeDigest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resources": {
+      "type": "object",
+      "required": [
+        "cpuMillis",
+        "memoryBytes",
+        "diskBytes",
+        "pids"
+      ],
+      "properties": {
+        "cpuMillis": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memoryBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "diskBytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pids": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "cleanup": {
+      "type": "object",
+      "required": [
+        "classifierVersion",
+        "allowedResidue"
+      ],
+      "properties": {
+        "classifierVersion": {
+          "const": "0.1.0"
+        },
+        "allowedResidue": {
+          "enum": [
+            [],
+            [
+              "/outputs/**"
+            ]
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "profile",
+        "include",
+        "exclude"
+      ],
+      "properties": {
+        "profile": {
+          "const": "minimal-public"
+        },
+        "include": {
+          "oneOf": [
+            {
+              "const": [
+                "normalized-observations",
+                "verification-summary"
+              ]
+            },
+            {
+              "const": [
+                "normalized-observations",
+                "sbom",
+                "verification-summary"
+              ]
+            }
+          ]
+        },
+        "exclude": {
+          "const": [
+            "raw-stderr",
+            "raw-stdout",
+            "raw-syscall-trace"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "fixture",
+        "mountPath",
+        "readOnly"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "boolean",
+            "file",
+            "directory",
+            "json",
+            "secret-reference",
+            "choice"
+          ]
+        },
+        "fixture": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "mountPath": {
+          "oneOf": [
+            {
+              "const": ""
+            },
+            {
+              "$ref": "#/$defs/sandboxPath"
+            }
+          ]
+        },
+        "readOnly": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "versionMap": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "$ref": "#/$defs/identifier"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/version"
+      }
+    },
+    "command": {
+      "type": "object",
+      "required": [
+        "phase",
+        "id",
+        "timeout",
+        "role"
+      ],
+      "properties": {
+        "phase": {
+          "$ref": "#/$defs/phase"
+        },
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "signal": {
+          "$ref": "#/$defs/signal"
+        },
+        "readiness": {
+          "$ref": "#/$defs/httpReadiness"
+        },
+        "timeout": {
+          "$ref": "#/$defs/goDuration"
+        },
+        "role": {
+          "enum": [
+            "foreground",
+            "service",
+            "journey",
+            "signal"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "argv"
+          ],
+          "not": {
+            "required": [
+              "signal"
+            ]
+          }
+        },
+        {
+          "required": [
+            "signal"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "argv"
+                ]
+              },
+              {
+                "required": [
+                  "readiness"
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "service"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "argv",
+              "readiness"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "readiness"
+            ]
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "const": "service"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "signal": {
+      "type": "object",
+      "required": [
+        "target",
+        "type",
+        "gracePeriod"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": [
+            "term",
+            "kill",
+            "int",
+            "hup"
+          ]
+        },
+        "gracePeriod": {
+          "$ref": "#/$defs/wholeMillisecondDuration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "httpReadiness": {
+      "type": "object",
+      "required": [
+        "url",
+        "status",
+        "timeout"
+      ],
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/httpURL"
+        },
+        "status": {
+          "$ref": "#/$defs/httpStatus"
+        },
+        "timeout": {
+          "$ref": "#/$defs/wholeMillisecondDuration"
+        }
+      },
+      "additionalProperties": false
+    },
+    "httpJourney": {
+      "type": "object",
+      "required": [
+        "serviceId",
+        "steps"
+      ],
+      "properties": {
+        "serviceId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 128,
+          "contains": {
+            "type": "object",
+            "required": [
+              "request"
+            ]
+          },
+          "minContains": 1,
+          "maxContains": 32,
+          "allOf": [
+            {
+              "contains": {
+                "type": "object",
+                "required": [
+                  "assertionId"
+                ]
+              },
+              "minContains": 1
+            }
+          ],
+          "items": {
+            "$ref": "#/$defs/httpDriverStep"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "httpDriverStep": {
+      "type": "object",
+      "properties": {
+        "request": {
+          "$ref": "#/$defs/httpRequest"
+        },
+        "assertionId": {
+          "$ref": "#/$defs/identifier"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "request"
+          ]
+        },
+        {
+          "required": [
+            "assertionId"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "httpRequest": {
+      "type": "object",
+      "required": [
+        "id",
+        "method",
+        "url",
+        "timeout"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "method": {
+          "enum": [
+            "get",
+            "head",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "options"
+          ]
+        },
+        "url": {
+          "$ref": "#/$defs/httpURL"
+        },
+        "headers": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": {
+            "pattern": "^[a-z0-9!#$%&'*+.^_`|~-]+$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[ -~]*$",
+            "maxLength": 8192
+          }
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 1048576
+        },
+        "json": {},
+        "timeout": {
+          "$ref": "#/$defs/wholeMillisecondDuration"
+        }
+      },
+      "not": {
+        "required": [
+          "body",
+          "json"
+        ]
+      },
+      "additionalProperties": false
+    },
+    "httpResponseAssertion": {
+      "type": "object",
+      "required": [
+        "requestId"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "$ref": "#/$defs/httpStatus"
+        },
+        "header": {
+          "$ref": "#/$defs/httpHeaderAssertion"
+        },
+        "bodyContains": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1048576
+        },
+        "jsonPath": {
+          "type": "object",
+          "required": [
+            "path",
+            "equals"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^\\$"
+            },
+            "equals": {}
+          },
+          "additionalProperties": false
+        },
+        "jsonSchema": {
+          "$ref": "#/$defs/jsonSchemaRef"
+        }
+      },
+      "minProperties": 2,
+      "additionalProperties": false
+    },
+    "jsonSchemaRef": {
+      "type": "object",
+      "required": [
+        "path",
+        "digest",
+        "dialect",
+        "validatorVersion"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/repositoryPath"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "dialect": {
+          "const": "https://json-schema.org/draft/2020-12/schema"
+        },
+        "validatorVersion": {
+          "const": "github.com/santhosh-tekuri/jsonschema/v6@v6.0.2"
+        }
+      },
+      "additionalProperties": false
+    },
+    "httpJSONFileAssertion": {
+      "type": "object",
+      "required": [
+        "path",
+        "schema"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/httpOutputPath"
+        },
+        "schema": {
+          "$ref": "#/$defs/jsonSchemaRef"
+        }
+      },
+      "additionalProperties": false
+    },
+    "httpHeaderAssertion": {
+      "type": "object",
+      "required": [
+        "name",
+        "contains"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+        },
+        "contains": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      },
+      "additionalProperties": false
+    },
+    "journeyAssertion": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "stdoutContains": {
+          "type": "string"
+        },
+        "stderrContains": {
+          "type": "string"
+        },
+        "stdoutRegex": {
+          "type": "string"
+        },
+        "stdoutJsonSchema": {
+          "$ref": "#/$defs/jsonSchemaRef"
+        },
+        "fileExists": {
+          "$ref": "#/$defs/sandboxPath"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "exitCode"
+          ]
+        },
+        {
+          "required": [
+            "stdoutContains"
+          ]
+        },
+        {
+          "required": [
+            "stderrContains"
+          ]
+        },
+        {
+          "required": [
+            "stdoutRegex"
+          ]
+        },
+        {
+          "required": [
+            "stdoutJsonSchema"
+          ]
+        },
+        {
+          "required": [
+            "fileExists"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "httpJourneyAssertion": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "fileExists": {
+          "$ref": "#/$defs/httpOutputPath"
+        },
+        "response": {
+          "$ref": "#/$defs/httpResponseAssertion"
+        },
+        "jsonFile": {
+          "$ref": "#/$defs/httpJSONFileAssertion"
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "fileExists"
+          ]
+        },
+        {
+          "required": [
+            "response"
+          ]
+        },
+        {
+          "required": [
+            "jsonFile"
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "phase": {
+      "enum": [
+        "prepare",
+        "setup",
+        "build",
+        "run",
+        "exercise",
+        "cleanup"
+      ]
+    },
+    "observerName": {
+      "enum": [
+        "process-exec",
+        "filesystem-write",
+        "port-listen",
+        "network-enforcement",
+        "resource-usage"
+      ]
+    },
+    "capabilitiesByPhase": {
+      "type": "object",
+      "required": [
+        "prepare",
+        "setup",
+        "build",
+        "run",
+        "exercise",
+        "cleanup"
+      ],
+      "properties": {
+        "prepare": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "setup": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "build": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "run": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "exercise": {
+          "$ref": "#/$defs/capabilitySet"
+        },
+        "cleanup": {
+          "$ref": "#/$defs/capabilitySet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilitySet": {
+      "type": "object",
+      "required": [
+        "network",
+        "filesystem",
+        "ports",
+        "process"
+      ],
+      "properties": {
+        "network": {
+          "$ref": "#/$defs/network"
+        },
+        "filesystem": {
+          "$ref": "#/$defs/filesystem"
+        },
+        "ports": {
+          "$ref": "#/$defs/ports"
+        },
+        "process": {
+          "$ref": "#/$defs/process"
+        }
+      },
+      "additionalProperties": false
+    },
+    "network": {
+      "type": "object",
+      "required": [
+        "deny"
+      ],
+      "properties": {
+        "deny": {
+          "type": "boolean"
+        },
+        "allow": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/networkDestination"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "networkDestination": {
+      "type": "object",
+      "required": [
+        "host",
+        "port"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      },
+      "additionalProperties": false
+    },
+    "filesystem": {
+      "type": "object",
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/pathSet"
+        },
+        "write": {
+          "$ref": "#/$defs/pathSet"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pathSet": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/sandboxPath"
+      }
+    },
+    "ports": {
+      "type": "object",
+      "properties": {
+        "listen": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/portBinding"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "portBinding": {
+      "type": "object",
+      "required": [
+        "host",
+        "port"
+      ],
+      "properties": {
+        "host": {
+          "enum": [
+            "127.0.0.1",
+            "::1"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "protocol": {
+          "const": "tcp"
+        }
+      },
+      "additionalProperties": false
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "exec": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "background": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
