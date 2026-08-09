@@ -243,6 +243,9 @@ func testReleaseBuilder(t *testing.T, root string) {
 			t.Fatalf("%s is missing ambient build isolation contract %q", relativePath(root, path), environmentContract)
 		}
 	}
+	if !strings.Contains(script, `& $goCommand mod download -modcacherw`) {
+		t.Fatalf("%s must keep its task-local module cache writable for non-root Linux cleanup", relativePath(root, path))
+	}
 
 	firstBuild := requireSource("first build", "& $goCommand build")
 	hostEnvironmentReset := requireSource("host build environment reset", "$env:GOOS = $null")
