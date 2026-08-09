@@ -161,6 +161,17 @@ func testIdentityReplacements(t *testing.T, root string) {
 func testReleaseBuilder(t *testing.T, root string) {
 	path := filepath.Join(root, "scripts", "build-release.ps1")
 	script := string(readFile(t, path))
+	requireSource := func(label, fragment string) int {
+		t.Helper()
+		index := strings.Index(script, fragment)
+		if index < 0 {
+			t.Fatalf("%s is missing %s contract fragment %q", relativePath(root, path), label, fragment)
+		}
+		return index
+	}
+	if !regexp.MustCompile(`(?s)\[Parameter\(Mandatory\s*=\s*\$true\)\]\s*\[ValidatePattern\(['\"]\^\[0-9a-f\]\{40\}\$['\"]\)\]\s*\[string\]\$TestedRevision`).MatchString(script) {
+		t.Fatalf("%s must require TestedRevision as an exact lowercase 40-hex SHA", relativePath(root, path))
+	}
 	exactSymbol := regexp.MustCompile(`(?m)^\s*\$versionSymbol\s*=\s*"` + regexp.QuoteMeta(canonicalModule+"/internal/cli.Version=$Version") + `"\s*$`)
 	if !exactSymbol.MatchString(script) {
 		t.Fatalf("%s must assign the exact canonical linker target %q", relativePath(root, path), canonicalModule+"/internal/cli.Version=$Version")
@@ -188,9 +199,49 @@ func testReleaseBuilder(t *testing.T, root string) {
 		if !strings.Contains(statement.text, "-buildvcs=true") {
 			t.Fatalf("%s:%d invokes go build without the exact -buildvcs=true flag", relativePath(root, path), statement.line)
 		}
+		if !strings.Contains(statement.text, "-mod=readonly") {
+			t.Fatalf("%s:%d invokes go build without the exact -mod=readonly flag", relativePath(root, path), statement.line)
+		}
 	}
-	if buildCount == 0 {
-		t.Fatalf("%s contains no go build invocation", relativePath(root, path))
+	if buildCount != 3 {
+		t.Fatalf("%s contains %d source-level go build invocations; want exactly 3 qualified builds", relativePath(root, path), buildCount)
+	}
+
+	if regexp.MustCompile(`(?m)^\s*\$stagingRoot\s*=\s*Join-Path\s+\$repoRoot\b`).MatchString(script) {
+		t.Fatalf("%s places pre-qualified build artifacts inside the worktree", relativePath(root, path))
+	}
+	if !regexp.MustCompile(`(?m)^\s*\$previousGOWORK\s*=\s*\$env:GOWORK\s*$`).MatchString(script) ||
+		!regexp.MustCompile(`(?m)^\s*\$env:GOWORK\s*=\s*\$previousGOWORK\s*$`).MatchString(script) {
+		t.Fatalf("%s must preserve and restore the caller GOWORK value", relativePath(root, path))
+	}
+
+	firstBuild := requireSource("first build", "& go build")
+	hostEnvironmentReset := requireSource("host build environment reset", "$env:GOOS = $null")
+	if hostEnvironmentReset > firstBuild {
+		t.Fatalf("%s must clear caller cross-build environment before building the host qualifier", relativePath(root, path))
+	}
+	qualifierBuild := requireSource("private qualifier", "./internal/releasequalification/cmd/repopass-release-qualify")
+	lastBuild := strings.LastIndex(script, "& go build")
+	preHelper := requireSource("pre-helper qualification", "-phase pre-helper")
+	helperExecution := requireSource("kit helper execution", "& $kitTool -os")
+	publishCreation := requireSource("late publish directory creation", "New-Item -ItemType Directory -Path $publishRoot")
+	checksumCreation := requireSource("checksum construction", "$checksumLines =")
+	prePublish := requireSource("pre-publish qualification", "-phase pre-publish")
+	atomicPublish := requireSource("atomic publication", "[IO.Directory]::Move($publishRoot, $distRoot)")
+	if !(qualifierBuild < lastBuild && lastBuild < preHelper && preHelper < helperExecution &&
+		helperExecution < publishCreation && publishCreation < checksumCreation &&
+		checksumCreation < prePublish && prePublish < atomicPublish) {
+		t.Fatalf("%s does not enforce build, qualify, helper, checksum, re-qualify, atomic-publish ordering", relativePath(root, path))
+	}
+	for _, phase := range []string{"pre-helper", "pre-publish"} {
+		pattern := regexp.MustCompile(`(?s)-phase\s+` + regexp.QuoteMeta(phase) + `\b.*?-tested-revision\s+\$TestedRevision\s+-tree\s+\$testedTree`)
+		if !pattern.MatchString(script) {
+			t.Fatalf("%s %s qualifier invocation must bind TestedRevision and testedTree", relativePath(root, path), phase)
+		}
+	}
+	if !strings.Contains(script, "Remove-ScopedDirectory -Parent $temporaryBase -Path $stagingRoot") ||
+		!strings.Contains(script, "Remove-ScopedDirectory -Parent $repoRoot -Path $publishRoot") {
+		t.Fatalf("%s must scope cleanup of external staging and unpublished worktree directories", relativePath(root, path))
 	}
 }
 
@@ -250,7 +301,9 @@ func TestValidateManifest(t *testing.T) {
 
 	// Network-backed dependency setup is deliberately separate from the
 	// conformance commands. A cache miss after this point must fail closed.
+	runGo(t, temp, map[string]string{"GOWORK": "off"}, "mod", "tidy")
 	runGo(t, temp, map[string]string{"GOWORK": "off"}, "mod", "download", "all")
+	runGo(t, temp, map[string]string{"GOWORK": "off"}, "mod", "verify")
 	offline := map[string]string{"GOPROXY": "off", "GOWORK": "off"}
 	runGo(t, temp, offline, "test", "-count=1", "./...")
 
