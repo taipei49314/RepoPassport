@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,10 @@ func testProcessContention(t *testing.T) {
 	}
 	command := exec.Command(os.Args[0], "-test.run=^TestObserveChainStateConcurrencyCancellationAndProcessContention$")
 	command.Env = append(os.Environ(), "REPOPASS_TRUST_CHAIN_STATE_HELPER=hold-lock", "REPOPASS_TRUST_CHAIN_STATE_ROOT="+root)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -32,6 +37,7 @@ func testProcessContention(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
+		_ = stdin.Close()
 		if command.ProcessState == nil {
 			_ = command.Process.Kill()
 			_ = command.Wait()
@@ -56,6 +62,9 @@ func testProcessContention(t *testing.T) {
 	after, err := os.ReadFile(path)
 	if err != nil || string(after) != string(before) {
 		t.Fatalf("contention changed state: got %q, err %v", after, err)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatalf("release lock helper: %v", err)
 	}
 	if err := command.Wait(); err != nil {
 		t.Fatalf("lock helper exit = %v", err)
@@ -83,6 +92,8 @@ func testProcessLockHelper(t *testing.T) bool {
 		t.Fatal(err)
 	}
 	_, _ = os.Stdout.WriteString("LOCKED\n")
-	time.Sleep(250 * time.Millisecond)
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatal(err)
+	}
 	return true
 }

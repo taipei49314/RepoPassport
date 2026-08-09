@@ -66,6 +66,20 @@ func validateNoAlternateDataStreams(path string) error {
 }
 
 func securePublicationDirectory(path string) error {
+	if err := securePublicationACL(path, windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT); err != nil {
+		return err
+	}
+	return validatePublicationDirectory(path)
+}
+
+func securePublicationFile(path string) error {
+	if err := securePublicationACL(path, 0); err != nil {
+		return err
+	}
+	return validatePublicationFile(path)
+}
+
+func securePublicationACL(path string, inheritance uint32) error {
 	current, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || current == nil || current.User.Sid == nil {
 		return os.ErrPermission
@@ -79,18 +93,27 @@ func securePublicationDirectory(path string) error {
 	pinner.Pin(system)
 	defer pinner.Unpin()
 	entries := []windows.EXPLICIT_ACCESS{
-		{AccessPermissions: 0x1f01ff, AccessMode: windows.GRANT_ACCESS, Inheritance: windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT, Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(current.User.Sid)}},
-		{AccessPermissions: 0x1f01ff, AccessMode: windows.GRANT_ACCESS, Inheritance: windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT, Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP, TrusteeValue: windows.TrusteeValueFromSID(system)}},
+		{AccessPermissions: 0x1f01ff, AccessMode: windows.GRANT_ACCESS, Inheritance: inheritance, Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER, TrusteeValue: windows.TrusteeValueFromSID(current.User.Sid)}},
+		{AccessPermissions: 0x1f01ff, AccessMode: windows.GRANT_ACCESS, Inheritance: inheritance, Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP, TrusteeValue: windows.TrusteeValueFromSID(system)}},
 	}
 	acl, err := windows.ACLFromEntries(entries, nil)
 	if err != nil {
 		return err
 	}
-	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil); err != nil {
+	if err := windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		current.User.Sid,
+		nil,
+		acl,
+		nil,
+	); err != nil {
 		return err
 	}
 	runtime.KeepAlive(entries)
-	return validatePublicationDirectory(path)
+	runtime.KeepAlive(current)
+	return nil
 }
 
 func validatePublicationDirectory(path string) error {

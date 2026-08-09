@@ -201,7 +201,7 @@ func publishNewDirectory(outputDir string, files []publicationFile) error {
 		if err := os.Chmod(path, 0o600); err != nil {
 			return ErrPublishFailed
 		}
-		if err := validatePublicationFile(path); err != nil {
+		if err := securePublicationFile(path); err != nil || validatePublicationFile(path) != nil {
 			return ErrPublishFailed
 		}
 	}

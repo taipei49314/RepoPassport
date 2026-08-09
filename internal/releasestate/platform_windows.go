@@ -197,7 +197,11 @@ func openDirectoryHandle(path string, access uint32) (windows.Handle, error) {
 }
 
 func convergePrivateFile(file *os.File, path string) error {
-	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FA;;;BA)")
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || current == nil || current.User.Sid == nil {
+		return ErrUnavailable
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(privateDACLSDDL(current.User.Sid.String()))
 	if err != nil || descriptor == nil {
 		return ErrUnavailable
 	}
@@ -206,10 +210,12 @@ func convergePrivateFile(file *os.File, path string) error {
 		return ErrUnavailable
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		current.User.Sid, nil, dacl, nil); err != nil {
 		return ErrUnavailable
 	}
 	runtime.KeepAlive(descriptor)
+	runtime.KeepAlive(current)
 	return validatePrivateDACL(windows.Handle(file.Fd()))
 }
 

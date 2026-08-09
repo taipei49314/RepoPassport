@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -360,6 +361,10 @@ func TestObserveCrossProcessLockTimeoutAndExitRelease(t *testing.T) {
 		"REPOPASS_TRUSTSTATE_HELPER=hold-lock",
 		"REPOPASS_TRUSTSTATE_ROOT="+root,
 	)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -367,6 +372,13 @@ func TestObserveCrossProcessLockTimeoutAndExitRelease(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		_ = stdin.Close()
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}()
 	scanner := bufio.NewScanner(stdout)
 	if !scanner.Scan() || scanner.Text() != "LOCKED" {
 		command.Process.Kill()
@@ -387,6 +399,9 @@ func TestObserveCrossProcessLockTimeoutAndExitRelease(t *testing.T) {
 	result, observeErr := Observe(context.Background(), root, testAuthority, 2, testDigestB)
 	if !errors.Is(observeErr, ErrUnavailable) || result != (Result{Evaluation: EvaluationUnavailable, Generation: 0}) {
 		t.Fatalf("lock contention = %#v, %v", result, observeErr)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatalf("release lock helper: %v", err)
 	}
 	if err := command.Wait(); err != nil {
 		t.Fatalf("lock holder exit = %v", err)
@@ -501,10 +516,12 @@ func TestTruststateProcessHelper(t *testing.T) {
 			os.Exit(5)
 		}
 		fmt.Println("LOCKED")
-		time.Sleep(300 * time.Millisecond)
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			os.Exit(6)
+		}
 		os.Exit(0) // Deliberately bypasses unlock/close: the OS must release it.
 	default:
-		os.Exit(6)
+		os.Exit(7)
 	}
 }
 
