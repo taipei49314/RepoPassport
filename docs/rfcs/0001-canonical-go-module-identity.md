@@ -184,12 +184,15 @@ the separately injected and tested CLI version.
 
 For a release-build check, every required full CLI, verifier, and host-only kit
 helper executable MUST be built with `-buildvcs=true` and contain
-`vcs.revision` exactly equal to the tested
-default-branch commit SHA and `vcs.modified` exactly `false`. A missing,
+`vcs.revision` exactly equal to the tested commit SHA and `vcs.modified`
+exactly `false`. A missing,
 duplicate, malformed, or different setting fails closed. The check log MUST
 bind the tested commit SHA, tree SHA, and SHA-256 of every inspected executable.
 These CI fields are not a versioned receipt. Satisfying the module-path check
 alone does not establish exact-source eligibility.
+
+Every source-list, test, and build command used by this check, including the
+release builder and host-only helper build, MUST run with `GOWORK=off`.
 
 The portable kit manifest already binds the verifier executable by size and
 SHA-256. Consequently, validating the build information of the exact bound
@@ -215,11 +218,15 @@ workspace override, or non-zero exit is `MODULE_PATH_MISMATCH`.
 
 Also with `GOWORK=off`, `go list -f '{{.ImportPath}}' ./...` MUST exit zero.
 Every repository-owned package path MUST be either the exact module path or
-begin with the exact module path followed by `/`. An AST scan that includes
-build-tagged Go files MUST require every repository-owned import to use the
-same exact prefix. A legacy, wrong-case, or other alias fails closed; package
-paths fail as `PACKAGE_PATH_MISMATCH`, while an observed legacy prefix also
-emits `LEGACY_MODULE_REFERENCE`.
+begin with the exact module path followed by `/`.
+
+An AST scan that includes build-tagged Go files MUST reject an import equal to
+the exact legacy path or beginning with the legacy path followed by `/`. It
+MUST also reject any ASCII-case-insensitive match of a canonical or legacy
+segment-prefix unless the canonical prefix is byte-exact. Any committed
+`go.mod` or `go.work` replacement involving either namespace is rejected.
+Package-list failures emit `PACKAGE_PATH_MISMATCH`; an observed legacy prefix
+also emits `LEGACY_MODULE_REFERENCE`.
 
 ### External `schemas` import
 
@@ -274,7 +281,8 @@ pair and source settings.
 The executable identity scan MUST reject the legacy prefix in
 `BuildInfo.Path`, `BuildInfo.Main.Path`, `BuildInfo.Main.Replace.Path`, every
 dependency `Path` or `Replace.Path`, and every build-setting key or value. It
-MUST NOT trust filename or version text as a substitute for these checks.
+MUST also require `BuildInfo.Main.Replace` to be nil. It MUST NOT trust filename
+or version text as a substitute for these checks.
 
 For each portable verifier kit, qualification MUST:
 
@@ -314,10 +322,18 @@ result. Aggregation is deterministic and fail-first:
 3. otherwise, and only if every required check is `PASS`, the aggregate is
    `PASS`.
 
-When multiple labels apply, duplicates are removed and results are ordered by
-the bytewise tuple `(label, artifact-or-check-ID)`. The private run log also
-retains the first failing observation in execution order. A later observation
-MUST NOT hide that first failure or convert `FAIL` into `NOT_RUN`.
+When multiple results apply, only identical tuples are deduplicated. Results
+are ordered by `(result-rank, label, artifact-or-check-ID)`, where bytewise
+result rank is fixed as `FAIL=0`, `NOT_RUN=1`, and `PASS=2`; label and ID are
+then compared bytewise. The potentially public CI run log also retains the
+first failing observation in execution order and applies the same redaction as
+annotations. A later observation MUST NOT hide that first failure or convert
+`FAIL` into `NOT_RUN`.
+
+If an artifact's build information is unreadable, that artifact emits only
+`BUILD_INFO_UNREADABLE`; the implementation MUST NOT derive source-revision,
+dirty-state, module, main-package, or legacy labels from fields it could not
+parse. Independently observed source-scan failures remain separate results.
 
 A module-identity `PASS` MUST NOT upgrade functional, capability,
 reproducibility, cleanup, evidence, freshness, or overall verification.
@@ -356,12 +372,12 @@ Diagnostics MAY include the expected identity, inspected artifact name, and
 actual non-secret identity string. They MUST NOT include environment secrets,
 credentials, module-proxy credentials, or arbitrary binary bytes.
 
-A failed or not-run check retains its bounded private CI log, emits only its
-exact check label plus allowlisted non-secret identity fields in the CI
-annotation, removes temporary consumer/extraction directories, and makes the
-tested source or artifact release-ineligible. The annotation is not a public
-evidence bundle. A mismatch never becomes `blocked` or `inconclusive` merely
-because another identity was observed.
+A failed or not-run check retains its bounded, potentially public CI log,
+emits only its exact check label plus allowlisted non-secret identity fields in
+the CI annotation, removes temporary consumer/extraction directories, and
+makes the tested source or artifact release-ineligible. The annotation is not
+a public evidence bundle. A mismatch never becomes `blocked` or `inconclusive`
+merely because another identity was observed.
 
 ## Trust boundaries and security
 
@@ -381,12 +397,11 @@ The uncontrolled legacy namespace MUST be treated as a different and untrusted
 module. No redirect or similarity of package contents may authorize it.
 
 The external-consumer test may use only the exact local checkout through a
-temporary `replace` for the RepoPassport module. This does not make the entire
-test hermetic: transitive dependencies may already be cached or may require the
-Go module network path. CI MUST pre-download and verify them in its controlled
-setup phase or explicitly retain that network use in the private run log.
-Ordinary dependency authentication continues to use Go's configured public
-checksum behavior.
+temporary `replace` for the RepoPassport module. CI MUST pre-download and verify
+dependencies in its controlled setup phase, then run the consumer with
+`GOPROXY=off` and `GOWORK=off`. A cache miss fails the consumer check rather
+than opening a network path. Dependency authentication during setup continues
+to use Go's configured public checksum behavior.
 
 Build-information and kit parsing MUST be bounded. Kit extraction MUST retain
 the existing regular-file, path, size, inventory, and cleanup protections.
@@ -407,9 +422,10 @@ Security invariants that remain non-configurable:
 Module path, main package, repository URL, artifact filename, digest, size, Go
 version, and source revision are public build metadata.
 
-CI annotations MUST NOT collect or emit module-proxy credentials, Git
+CI annotations and logs MUST NOT collect or emit module-proxy credentials, Git
 credentials, environment secrets, private filesystem paths, or raw executable
-bytes. Private raw logs follow the existing evidence retention policy.
+bytes. CI logs are treated as potentially public, receive the same redaction
+as annotations, and use the CI platform's configured bounded retention.
 
 This RFC defines no public evidence or receipt schema. Any later public bundle
 MUST use a separately reviewed allowlist, schema version, canonicalization, and
@@ -513,9 +529,12 @@ M1-M7 implementation.
 - With `GOWORK=off`, require `go list -m -f '{{.Path}}'` to emit exactly one
   canonical module-path line.
 - With `GOWORK=off`, require every `go list -f '{{.ImportPath}}' ./...` result
-  and every repository-owned AST import to use the exact canonical prefix.
-- Reject committed `replace`/workspace aliases for either namespace.
-- Parse all Go files, including build-tagged files, and reject a legacy import.
+  to use the exact canonical prefix.
+- Reject committed `go.mod` or `go.work` replacements involving either
+  namespace.
+- Parse all Go files, including build-tagged files; reject legacy
+  segment-prefix imports and non-byte-exact case variants of canonical or
+  legacy segment-prefixes.
 - Inspect release scripts and workflows for the exact canonical linker target.
 - Check active documentation examples separately from allowed historical prose.
 - Run the identity gate before release publication.
@@ -534,7 +553,7 @@ M1-M7 implementation.
 - Build Linux/amd64 and Windows/amd64 full/verifier executables and the
   host-only kit helper used on each qualification host.
 - Parse each artifact with `debug/buildinfo`.
-- Validate exact main module, main package, tested default-branch SHA, clean
+- Validate exact main module, main package, tested commit SHA, clean
   source setting, and absence of legacy identity records.
 - Validate each portable kit, then validate the embedded verifier identity.
 - Substitute a binary built with a legacy or wrong module identity and require
@@ -572,8 +591,8 @@ changed.
 `RP-M0-MODULE` is used here only as the release program's tracking label; this
 RFC does not create or serialize an acceptance-registry entry. That row may
 become `PASS` only when all source, external-consumer, release binary,
-portable-kit, documentation, and exact merged-SHA checks above pass with no
-required skip.
+portable-kit, documentation, and exact merged default-branch SHA checks above
+pass with no required skip.
 
 ## Rollout and rollback
 
@@ -615,7 +634,7 @@ binaries, kits, checksums, or historical Alpha evidence.
 
 After rollback, `RP-M0-MODULE` MUST return to `FAIL` or `NOT_RUN`, and no release
 may publish until a new accepted namespace decision and all required checks
-pass on the new exact merged SHA.
+pass on the new exact merged default-branch SHA.
 
 After a pre-alpha artifact containing the migration has been published, its tag
 and assets MUST NOT be overwritten. A defect is corrected in a new pre-alpha
