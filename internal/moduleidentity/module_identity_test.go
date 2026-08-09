@@ -255,12 +255,17 @@ func testReleaseBuilder(t *testing.T, root string) {
 	helperExecution := requireSource("kit helper execution", "& $kitTool -os")
 	publishCreation := requireSource("late publish directory creation", "New-Item -ItemType Directory -Path $publishRoot")
 	checksumCreation := requireSource("checksum construction", "$checksumLines =")
+	stagingCleanup := requireSource("pre-publication staging cleanup", "Remove-ScopedDirectory -Parent $temporaryBase -Path $stagingRoot")
 	prePublish := requireSource("pre-publish qualification", "-phase pre-publish")
 	atomicPublish := requireSource("controller-owned atomic publication", "-publish-to $distRoot")
 	if !(qualifierBuild < lastBuild && lastBuild < preHelper && preHelper < helperExecution &&
 		helperExecution < publishCreation && publishCreation < checksumCreation &&
-		checksumCreation < prePublish && prePublish < atomicPublish) {
+		checksumCreation < stagingCleanup && stagingCleanup < prePublish && prePublish < atomicPublish) {
 		t.Fatalf("%s does not enforce build, qualify, helper, checksum, final qualification, atomic-publish ordering", relativePath(root, path))
+	}
+	if !strings.Contains(script, "$controllerRoot = Join-Path $temporaryBase") ||
+		!strings.Contains(script, "Remove-ScopedDirectory -Parent $temporaryBase -Path $controllerRoot") {
+		t.Fatalf("%s must isolate and clean the final controller separately from pre-publication staging", relativePath(root, path))
 	}
 	if strings.Contains(script, "[IO.Directory]::Move($publishRoot, $distRoot)") {
 		t.Fatalf("%s publishes outside the final fixed-snapshot controller", relativePath(root, path))
