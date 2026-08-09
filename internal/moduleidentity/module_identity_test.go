@@ -420,6 +420,7 @@ func TestValidateManifest(t *testing.T) {
 	// Network-backed dependency setup is deliberately separate from the
 	// conformance commands. A cache miss after this point must fail closed.
 	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "tidy")
+	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "download", "all")
 	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "verify")
 	offline := map[string]string{"GONOPROXY": "none", "GOPROXY": "off", "GOWORK": "off"}
 	runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "test", "-count=1", "./...")
