@@ -73,6 +73,59 @@ func TestRunLabelsInvalidInputNotRunWithoutEchoingInput(t *testing.T) {
 	}
 }
 
+func TestPublishQualifiedDirectoryAllowsOnlySameParentAtomicDistRename(t *testing.T) {
+	parent := t.TempDir()
+	source := filepath.Join(parent, ".release-publish-0123456789abcdef")
+	destination := filepath.Join(parent, "dist")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishQualifiedDirectory(source, destination); err != nil {
+		t.Fatalf("same-parent dist publication failed: %v", err)
+	}
+	if _, err := os.Lstat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after atomic publication: %v", err)
+	}
+	if info, err := os.Lstat(destination); err != nil || !info.IsDir() {
+		t.Fatalf("destination missing after atomic publication: %v", err)
+	}
+}
+
+func TestPublishQualifiedDirectoryRejectsPathScopeAndOverwrite(t *testing.T) {
+	parent := t.TempDir()
+	tests := []struct {
+		name        string
+		source      string
+		destination string
+	}{
+		{"wrong source prefix", filepath.Join(parent, "publish"), filepath.Join(parent, "dist")},
+		{"wrong destination name", filepath.Join(parent, ".release-publish-a"), filepath.Join(parent, "other")},
+		{"different parent", filepath.Join(parent, ".release-publish-b"), filepath.Join(t.TempDir(), "dist")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.Mkdir(test.source, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := publishQualifiedDirectory(test.source, test.destination); err == nil {
+				t.Fatal("out-of-scope publication path accepted")
+			}
+		})
+	}
+
+	source := filepath.Join(parent, ".release-publish-c")
+	destination := filepath.Join(parent, "dist")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishQualifiedDirectory(source, destination); err == nil {
+		t.Fatal("existing publication destination was overwritten")
+	}
+}
+
 func decodeOutputRecords(t *testing.T, data []byte) []map[string]any {
 	t.Helper()
 	decoder := json.NewDecoder(bytes.NewReader(data))
