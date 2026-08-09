@@ -276,6 +276,15 @@ func testReleaseBuilder(t *testing.T, root string) {
 	if !strings.Contains(script, "Assert-NoReparsePathComponents") || strings.Contains(script, "Remove-Item -LiteralPath $quarantine -Recurse") {
 		t.Fatalf("%s must reject ancestor reparse points and delete quarantined entries without recursive traversal", relativePath(root, path))
 	}
+	if !strings.Contains(script, "Clear-ScopedReadOnlyAttribute") ||
+		!strings.Contains(script, "[IO.FileAttributes]::ReadOnly") {
+		t.Fatalf("%s must clear Windows read-only cache attributes only after no-reparse quarantine validation", relativePath(root, path))
+	}
+	probeIsolation := strings.Index(script, `$env:GOTOOLCHAIN = "local"`)
+	probeExecution := strings.Index(script, "& $goCommand version")
+	if probeIsolation < 0 || probeExecution < 0 || probeIsolation > probeExecution {
+		t.Fatalf("%s must isolate GOENV/GOTOOLCHAIN before executing the Go toolchain probe", relativePath(root, path))
+	}
 	if tail := script[atomicPublish+len("-publish-to $distRoot"):]; strings.Contains(strings.SplitN(tail, "finally", 2)[0], "Assert-") {
 		t.Fatalf("%s performs a fallible assertion after atomic publication", relativePath(root, path))
 	}
