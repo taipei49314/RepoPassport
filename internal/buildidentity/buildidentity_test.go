@@ -56,6 +56,7 @@ import (
 	"reflect"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -218,6 +219,23 @@ func TestValidateBuildInfoRejectsCaseVariantsAndMainPackageLookalikes(t *testing
 			requireFailureCode(t, got, CodeMainPackagePathMismatch)
 		})
 	}
+}
+
+func FuzzValidateBuildInfoAcceptsOnlyExactModuleAndMainPackage(f *testing.F) {
+	f.Add(CanonicalModulePath, FullCLIIdentity.MainPackage)
+	f.Add(strings.ToLower(CanonicalModulePath), FullCLIIdentity.MainPackage)
+	f.Add(CanonicalModulePath, FullCLIIdentity.MainPackage+"/")
+	f.Add("", "")
+	f.Fuzz(func(t *testing.T, modulePath, mainPackage string) {
+		info := exactBuildInfo(FullCLIIdentity)
+		info.Main.Path = modulePath
+		info.Path = mainPackage
+		accepted := len(ValidateBuildInfo(info, FullCLIIdentity, testedRevision, "property")) == 0
+		wantAccepted := modulePath == CanonicalModulePath && mainPackage == FullCLIIdentity.MainPackage
+		if accepted != wantAccepted {
+			t.Fatalf("accepted=%t for module/main pair %q / %q; want %t", accepted, modulePath, mainPackage, wantAccepted)
+		}
+	})
 }
 
 func TestValidateBuildInfoRequiresNilMainReplacement(t *testing.T) {

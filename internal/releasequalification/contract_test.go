@@ -35,6 +35,7 @@
 //		Artifacts []ArtifactReport
 //		Kits      []KitReport
 //		Results   []buildidentity.Result // deterministic flattened failures
+//		FirstFailure *buildidentity.Result // first FAIL in execution order
 //		Log       []LogRecord
 //	}
 //
@@ -273,6 +274,64 @@ func TestQualifyPreHelperInspectsEveryRequiredSlot(t *testing.T) {
 			}
 			requireResultCode(t, report.Results, buildidentity.CodeBuildInfoUnreadable, slot.id)
 		})
+	}
+}
+
+func TestQualifiersRejectUnexpectedInventory(t *testing.T) {
+	fixture := testQualificationFixture(t)
+	tests := []struct {
+		name string
+		root func(*testing.T, *qualificationFixture) string
+		run  func(string) error
+	}{
+		{
+			name: "pre-helper",
+			root: stagePreHelper,
+			run: func(root string) error {
+				_, err := QualifyPreHelper(root, fixture.revision, fixture.tree)
+				return err
+			},
+		},
+		{
+			name: "pre-publish",
+			root: stagePrePublish,
+			run: func(root string) error {
+				_, err := QualifyPrePublish(root, fixture.revision, fixture.tree)
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := test.root(t, fixture)
+			if err := os.WriteFile(filepath.Join(root, "unexpected.txt"), []byte("untrusted\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := test.run(root); err == nil {
+				t.Fatal("unexpected inventory entry did not block qualification")
+			}
+		})
+	}
+}
+
+func TestQualificationRetainsFirstFailureInExecutionOrder(t *testing.T) {
+	fixture := testQualificationFixture(t)
+	root := stagePreHelper(t, fixture)
+	firstPath := filepath.Join(root, preHelperContract[0].name)
+	if err := os.Remove(firstPath); err != nil {
+		t.Fatal(err)
+	}
+	copyFixtureFile(t, fixture.legacyVerifier, firstPath)
+	if err := os.WriteFile(filepath.Join(root, preHelperContract[1].name), []byte("not a Go executable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := QualifyPreHelper(root, fixture.revision, fixture.tree)
+	if err == nil {
+		t.Fatal("invalid first and second artifacts did not block qualification")
+	}
+	if report.FirstFailure == nil || report.FirstFailure.Status != buildidentity.StatusFail ||
+		report.FirstFailure.Subject != preHelperContract[0].id {
+		t.Fatalf("first failure = %#v, want first required artifact %q", report.FirstFailure, preHelperContract[0].id)
 	}
 }
 

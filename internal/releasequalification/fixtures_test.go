@@ -192,7 +192,7 @@ func runFixtureCommand(root string, extraEnv []string, name string, args ...stri
 	command.Env = append(os.Environ(), extraEnv...)
 	out, err := command.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("%s fixture command failed", name)
 	}
 	return out, nil
 }

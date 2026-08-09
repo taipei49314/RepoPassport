@@ -1,6 +1,7 @@
 package moduleidentity
 
 import (
+	"context"
 	"fmt"
 	"go/parser"
 	"go/token"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -33,6 +35,7 @@ func TestCanonicalModuleIdentitySourceContract(t *testing.T) {
 		{"module_and_workspace_files_have_no_identity_replacements", testIdentityReplacements},
 		{"release_builder_uses_canonical_identity", testReleaseBuilder},
 		{"readme_describes_the_canonical_repository", testREADME},
+		{"active_workflows_and_docs_reject_legacy_identity", testActiveIdentitySurfaces},
 		{"external_schemas_consumer_works_offline", testExternalSchemasConsumer},
 	}
 
@@ -47,12 +50,12 @@ func TestCanonicalModuleIdentitySourceContract(t *testing.T) {
 }
 
 func testRootModule(t *testing.T, root string) {
-	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "list", "-m", "-f", "{{.Path}}")
+	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "MODULE_PATH_MISMATCH", "list", "-m", "-f", "{{.Path}}")
 	requireExactLine(t, out, canonicalModule)
 }
 
 func testLocalPackagePaths(t *testing.T, root string) {
-	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "list", "-f", "{{.ImportPath}}", "./...")
+	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "PACKAGE_PATH_MISMATCH", "list", "-f", "{{.ImportPath}}", "./...")
 	paths := commandLines(t, out)
 	if len(paths) == 0 {
 		t.Fatal("go list returned no repository packages")
@@ -180,7 +183,7 @@ func testReleaseBuilder(t *testing.T, root string) {
 		t.Fatalf("%s still contains the legacy module prefix", relativePath(root, path))
 	}
 
-	goBuild := regexp.MustCompile(`(?i)(?:^|\s)&\s*go(?:\.exe)?\s+build(?:\s|$)`)
+	goBuild := regexp.MustCompile(`(?i)(?:^|\s)&\s*(?:go(?:\.exe)?|\$goCommand)\s+build(?:\s|$)`)
 	goWorkAssignment := regexp.MustCompile(`(?i)^\s*\$env:GOWORK\s*=\s*(.*?)\s*$`)
 	goWorkOff := false
 	buildCount := 0
@@ -214,14 +217,33 @@ func testReleaseBuilder(t *testing.T, root string) {
 		!regexp.MustCompile(`(?m)^\s*\$env:GOWORK\s*=\s*\$previousGOWORK\s*$`).MatchString(script) {
 		t.Fatalf("%s must preserve and restore the caller GOWORK value", relativePath(root, path))
 	}
+	for _, environmentContract := range []string{
+		`$env:GOENV = "off"`,
+		`$env:GOFLAGS = ""`,
+		`$env:GOTOOLCHAIN = "local"`,
+		`$env:GOAMD64 = "v1"`,
+		`$env:GOEXPERIMENT = ""`,
+		`$env:GOPROXY = "off"`,
+		`$env:GIT_DIR = $null`,
+		`$env:GIT_WORK_TREE = $null`,
+		`Get-Command go -CommandType Application`,
+		`Get-Command git -CommandType Application`,
+		`$env:GOCACHE = Join-Path $stagingRoot "gocache"`,
+		`$env:GOMODCACHE = Join-Path $stagingRoot "gomodcache"`,
+		`$env:GOTMPDIR = Join-Path $stagingRoot "gotmp"`,
+	} {
+		if !strings.Contains(script, environmentContract) {
+			t.Fatalf("%s is missing ambient build isolation contract %q", relativePath(root, path), environmentContract)
+		}
+	}
 
-	firstBuild := requireSource("first build", "& go build")
+	firstBuild := requireSource("first build", "& $goCommand build")
 	hostEnvironmentReset := requireSource("host build environment reset", "$env:GOOS = $null")
 	if hostEnvironmentReset > firstBuild {
 		t.Fatalf("%s must clear caller cross-build environment before building the host qualifier", relativePath(root, path))
 	}
 	qualifierBuild := requireSource("private qualifier", "./internal/releasequalification/cmd/repopass-release-qualify")
-	lastBuild := strings.LastIndex(script, "& go build")
+	lastBuild := strings.LastIndex(script, "& $goCommand build")
 	preHelper := requireSource("pre-helper qualification", "-phase pre-helper")
 	helperExecution := requireSource("kit helper execution", "& $kitTool -os")
 	publishCreation := requireSource("late publish directory creation", "New-Item -ItemType Directory -Path $publishRoot")
@@ -231,7 +253,10 @@ func testReleaseBuilder(t *testing.T, root string) {
 	if !(qualifierBuild < lastBuild && lastBuild < preHelper && preHelper < helperExecution &&
 		helperExecution < publishCreation && publishCreation < checksumCreation &&
 		checksumCreation < prePublish && prePublish < atomicPublish) {
-		t.Fatalf("%s does not enforce build, qualify, helper, checksum, re-qualify, atomic-publish ordering", relativePath(root, path))
+		t.Fatalf("%s does not enforce build, qualify, helper, checksum, final qualification, atomic-publish ordering", relativePath(root, path))
+	}
+	if tail := script[atomicPublish+len("[IO.Directory]::Move($publishRoot, $distRoot)"):]; strings.Contains(strings.SplitN(tail, "finally", 2)[0], "Assert-") {
+		t.Fatalf("%s performs a fallible assertion after atomic publication", relativePath(root, path))
 	}
 	for _, phase := range []string{"pre-helper", "pre-publish"} {
 		pattern := regexp.MustCompile(`(?s)-phase\s+` + regexp.QuoteMeta(phase) + `\b.*?-tested-revision\s+\$TestedRevision\s+-tree\s+\$testedTree`)
@@ -242,6 +267,22 @@ func testReleaseBuilder(t *testing.T, root string) {
 	if !strings.Contains(script, "Remove-ScopedDirectory -Parent $temporaryBase -Path $stagingRoot") ||
 		!strings.Contains(script, "Remove-ScopedDirectory -Parent $repoRoot -Path $publishRoot") {
 		t.Fatalf("%s must scope cleanup of external staging and unpublished worktree directories", relativePath(root, path))
+	}
+	for _, inventoryCheck := range []string{
+		"Assert-ExactRegularFiles -Path $artifactRoot -ExpectedNames $preHelperInventory",
+		"Assert-ExactRegularFiles -Path $artifactRoot -ExpectedNames $postHelperInventory",
+	} {
+		if !strings.Contains(script, inventoryCheck) {
+			t.Fatalf("%s is missing frozen staging inventory check %q", relativePath(root, path), inventoryCheck)
+		}
+	}
+	for _, digestCheck := range []string{
+		"Assert-FileSHA256 -Path $qualifier -ExpectedSHA256 $qualifierSHA256",
+		"Assert-FileSHA256 -Path $kitTool -ExpectedSHA256 $kitToolSHA256",
+	} {
+		if strings.Count(script, digestCheck) < 2 {
+			t.Fatalf("%s must bind each executed private tool before and after use with %q", relativePath(root, path), digestCheck)
+		}
 	}
 }
 
@@ -267,6 +308,44 @@ func testREADME(t *testing.T, root string) {
 			t.Fatalf("%s contains a non-byte-exact case variant of the canonical module", relativePath(root, path))
 		}
 		offset = index + len(canonicalModule)
+	}
+}
+
+func testActiveIdentitySurfaces(t *testing.T, root string) {
+	paths := []string{
+		filepath.Join(root, "README.md"),
+		filepath.Join(root, "IMPLEMENTATION_STATUS.md"),
+		filepath.Join(root, "docs", "release.md"),
+		filepath.Join(root, "spec", "versioning.md"),
+	}
+	workflowRoot := filepath.Join(root, ".github", "workflows")
+	if err := filepath.WalkDir(workflowRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() && (strings.HasSuffix(entry.Name(), ".yml") || strings.HasSuffix(entry.Name(), ".yaml")) {
+			paths = append(paths, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("active identity surface scan failed")
+	}
+	for _, path := range paths {
+		content := string(readFile(t, path))
+		if strings.Contains(asciiLower(content), asciiLower(legacyModule)) {
+			t.Fatalf("%s contains LEGACY_MODULE_REFERENCE", relativePath(root, path))
+		}
+		for offset := 0; ; {
+			index := strings.Index(asciiLower(content[offset:]), asciiLower(canonicalModule))
+			if index < 0 {
+				break
+			}
+			index += offset
+			if content[index:index+len(canonicalModule)] != canonicalModule {
+				t.Fatalf("%s contains PACKAGE_PATH_MISMATCH", relativePath(root, path))
+			}
+			offset = index + len(canonicalModule)
+		}
 	}
 }
 
@@ -301,16 +380,15 @@ func TestValidateManifest(t *testing.T) {
 
 	// Network-backed dependency setup is deliberately separate from the
 	// conformance commands. A cache miss after this point must fail closed.
-	runGo(t, temp, map[string]string{"GOWORK": "off"}, "mod", "tidy")
-	runGo(t, temp, map[string]string{"GOWORK": "off"}, "mod", "download", "all")
-	runGo(t, temp, map[string]string{"GOWORK": "off"}, "mod", "verify")
+	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "tidy")
+	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "verify")
 	offline := map[string]string{"GOPROXY": "off", "GOWORK": "off"}
-	runGo(t, temp, offline, "test", "-count=1", "./...")
+	runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "test", "-count=1", "./...")
 
-	out := runGo(t, temp, offline, "list", "-m", "-f", "{{.Path}}", canonicalModule)
+	out := runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "list", "-m", "-f", "{{.Path}}", canonicalModule)
 	requireExactLine(t, out, canonicalModule)
 
-	out = runGo(t, temp, offline, "list", "-m", "all")
+	out = runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "list", "-m", "all")
 	canonicalCount := 0
 	for _, line := range commandLines(t, out) {
 		fields := strings.Fields(line)
@@ -351,23 +429,23 @@ func repositoryRoot(t *testing.T) string {
 	}
 }
 
-func runGo(t *testing.T, dir string, overrides map[string]string, args ...string) []byte {
+func runGo(t *testing.T, dir string, overrides map[string]string, failureCode string, args ...string) []byte {
 	t.Helper()
-	command := exec.Command(goTool(t), args...)
+	const commandTimeout = 90 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, goTool(t), args...)
+	command.WaitDelay = 5 * time.Second
 	command.Dir = dir
 	command.Env = environment(overrides)
 	out, err := command.Output()
+	if ctx.Err() != nil {
+		t.Fatalf("%s: required Go command timed out after %s", failureCode, commandTimeout)
+	}
 	if err == nil {
 		return out
 	}
-	stderr := ""
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		stderr = strings.TrimSpace(string(exitErr.Stderr))
-	}
-	if stderr != "" {
-		t.Fatalf("go %s failed: %v\n%s", strings.Join(args, " "), err, stderr)
-	}
-	t.Fatalf("go %s failed: %v", strings.Join(args, " "), err)
+	t.Fatalf("%s: required Go command failed", failureCode)
 	return nil
 }
 

@@ -237,6 +237,21 @@ func TestQualifyPrePublishFreezesFourBinariesAndTwoKits(t *testing.T) {
 	requireAllowlistedLog(t, report.Log, wantLogIDs, fixture.revision, fixture.tree, root)
 }
 
+func TestQualifyPrePublishRejectsChecksumSubstitution(t *testing.T) {
+	fixture := testQualificationFixture(t)
+	root := stagePrePublish(t, fixture)
+	if err := os.WriteFile(
+		filepath.Join(root, "SHA256SUMS"),
+		[]byte(strings.Repeat("0", 64)+"  repopass-linux-amd64\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := QualifyPrePublish(root, fixture.revision, fixture.tree); err == nil {
+		t.Fatalf("substituted checksum inventory passed final qualification: %#v", report)
+	}
+}
+
 func TestReleaseQualificationProductionDoesNotImportReleaseKit(t *testing.T) {
 	for name, file := range productionGoFiles(t) {
 		for _, spec := range file.Imports {
@@ -263,7 +278,32 @@ func stagePrePublish(t *testing.T, fixture *qualificationFixture) string {
 			t.Fatal(err)
 		}
 	}
+	writePrePublishChecksums(t, root)
 	return root
+}
+
+func writePrePublishChecksums(t *testing.T, root string) {
+	t.Helper()
+	names := make([]string, 0, len(prePublishArtifactContract)+len(prePublishKitContract))
+	for _, slot := range prePublishArtifactContract {
+		names = append(names, slot.name)
+	}
+	for _, slot := range prePublishKitContract {
+		names = append(names, slot.name)
+	}
+	sort.Strings(names)
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		_, digest := fileDigest(t, filepath.Join(root, name))
+		lines = append(lines, strings.TrimPrefix(digest, "sha256:")+"  "+name)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "SHA256SUMS"),
+		[]byte(strings.Join(lines, "\n")+"\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func requireAnyResultCode(t *testing.T, results []buildidentity.Result, code buildidentity.Code) {
