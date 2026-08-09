@@ -73,6 +73,42 @@ func TestRunLabelsInvalidInputNotRunWithoutEchoingInput(t *testing.T) {
 	}
 }
 
+func TestRunPreservesStructuralNotRunAlongsideIdentityFailures(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		"repopass-linux-amd64",
+		"repopass-windows-amd64.exe",
+		"repopass-verify-linux-amd64",
+		"repopass-verify-windows-amd64.exe",
+		"repopass-kit-host.exe",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("not a Go executable\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "unexpected"), []byte("extra\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if code := run([]string{
+		"-phase", "pre-helper", "-root", root,
+		"-tested-revision", strings.Repeat("1", 40),
+		"-tree", strings.Repeat("2", 40),
+	}, &output); code == 0 {
+		t.Fatal("structurally invalid inventory returned success")
+	}
+	records := decodeOutputRecords(t, output.Bytes())
+	seenIdentityFailure := false
+	seenStructuralNotRun := false
+	for _, record := range records {
+		seenIdentityFailure = seenIdentityFailure || record["code"] == "BUILD_INFO_UNREADABLE"
+		seenStructuralNotRun = seenStructuralNotRun || record["code"] == "REQUIRED_CHECK_NOT_RUN"
+	}
+	if !seenIdentityFailure || !seenStructuralNotRun {
+		t.Fatalf("records lost a failure dimension: %#v", records)
+	}
+}
+
 func TestPublishQualifiedDirectoryAllowsOnlySameParentAtomicDistRename(t *testing.T) {
 	parent := t.TempDir()
 	source := filepath.Join(parent, ".release-sealed-0123456789abcdef")
