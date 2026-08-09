@@ -10,15 +10,18 @@ on:
 permissions:
   contents: read
 
+env:
+  GOWORK: "off"
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   go:
-    name: Go integrity, vulnerability, format, vet, and test
+    name: Go integrity, identity, release build, vulnerability, format, vet, and test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Check out source
@@ -29,7 +32,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.26.5'
           cache: false
 
       - name: Download and verify modules
@@ -57,8 +60,20 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Test all packages, including module and release identity
+        run: go test -count=1 ./...
+
+      - name: Compile integration-tagged container tests without executing containers
+        run: go test -count=1 -tags=integration ./internal/cli -run '^$'
+
+      - name: Build and qualify release artifacts from the exact checkout
+        shell: pwsh
+        run: |
+          $testedRevision = (git rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $testedRevision -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'unable to bind release qualification to checkout HEAD'
+          }
+          & ./scripts/build-release.ps1 -Version 0.1.0-alpha.33 -TestedRevision $testedRevision
 
   schema-json:
     name: Schema JSON syntax
@@ -92,9 +107,12 @@ jobs:
           PY
 
   windows-go:
-    name: Windows test and cross-process lock stress
+    name: Windows identity, release build, test, and cross-process lock stress
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
 
     steps:
       - name: Check out source
@@ -105,7 +123,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.26.5'
           cache: false
 
       - name: Download and verify modules
@@ -114,16 +132,19 @@ jobs:
           go mod verify
           go mod tidy -diff
 
-      - name: Test
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
+      - name: Test all packages, including module and release identity
         run: go test -count=1 ./...
 
+      - name: Build and qualify release artifacts from the exact checkout
+        shell: pwsh
+        run: |
+          $testedRevision = (git rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $testedRevision -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'unable to bind release qualification to checkout HEAD'
+          }
+          & ./scripts/build-release.ps1 -Version 0.1.0-alpha.33 -TestedRevision $testedRevision
+
       - name: Stress cross-process state locking
-        env:
-          TEMP: ${{ runner.temp }}
-          TMP: ${{ runner.temp }}
         run: >-
           go test -count=20 -timeout=10m
           ./internal/releasestate
@@ -150,7 +171,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.26.5'
           cache: false
 
       - name: Record Docker feature information

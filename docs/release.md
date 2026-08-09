@@ -1087,7 +1087,7 @@ the two canonical verifier kits, and `dist/SHA256SUMS`. `dist` must be absent
 or empty; the builder never overwrites an earlier release:
 
 ```powershell
-./scripts/build-release.ps1 -Version 0.1.0-alpha.33
+./scripts/build-release.ps1 -Version 0.1.0-alpha.33 -TestedRevision $(git rev-parse HEAD)
 ```
 
 The Alpha.33 script accepts only the exact Alpha.33 version, sets
@@ -1096,6 +1096,14 @@ variables, validates the exact seven-file inventory in private staging, and
 publishes the completed directory with a single no-overwrite directory move.
 `SHA256SUMS` binds the other six files with lowercase SHA-256 in deterministic
 filename order.
+
+Run the builder only after all untrusted workload processes owned by the build
+account have terminated. The final controller copies the seven-file inventory
+into a private random snapshot, revalidates it after writing the allowlisted
+log, and uses an atomic no-replace rename. Windows snapshots use a protected
+current-user-and-SYSTEM DACL. A hostile process already running as that same OS
+principal is outside this local release-builder boundary and requires a
+separate disposable build identity or VM.
 
 Building changes the release archive identity. Freeze the resulting `dist/`
 files, rerun the complete live gate in section 3, and treat only that

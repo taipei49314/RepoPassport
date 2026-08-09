@@ -51,18 +51,18 @@ func TestCanonicalModuleIdentitySourceContract(t *testing.T) {
 
 func testRootModule(t *testing.T, root string) {
 	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "MODULE_PATH_MISMATCH", "list", "-m", "-f", "{{.Path}}")
-	requireExactLine(t, out, canonicalModule)
+	requireExactLine(t, out, canonicalModule, "MODULE_PATH_MISMATCH")
 }
 
 func testLocalPackagePaths(t *testing.T, root string) {
 	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "PACKAGE_PATH_MISMATCH", "list", "-f", "{{.ImportPath}}", "./...")
 	paths := commandLines(t, out)
 	if len(paths) == 0 {
-		t.Fatal("go list returned no repository packages")
+		t.Fatal("PACKAGE_PATH_MISMATCH: go list returned no repository packages")
 	}
 	for _, path := range paths {
 		if path != canonicalModule && !strings.HasPrefix(path, canonicalModule+"/") {
-			t.Fatalf("repository package path is outside the exact canonical prefix: %q", path)
+			t.Fatalf("PACKAGE_PATH_MISMATCH: repository package path is outside the exact canonical prefix: %q", path)
 		}
 	}
 }
@@ -114,7 +114,7 @@ func testGoImports(t *testing.T, root string) {
 		if total > len(violations) {
 			suffix = fmt.Sprintf("\n... and %d more", total-len(violations))
 		}
-		t.Fatalf("found %d non-canonical Go imports (all .go files are parsed regardless of build tags):\n%s%s", total, strings.Join(violations, "\n"), suffix)
+		t.Fatalf("LEGACY_MODULE_REFERENCE or PACKAGE_PATH_MISMATCH: found %d non-canonical Go imports (all .go files are parsed regardless of build tags):\n%s%s", total, strings.Join(violations, "\n"), suffix)
 	}
 }
 
@@ -154,7 +154,7 @@ func testIdentityReplacements(t *testing.T, root string) {
 				return r == ' ' || r == '\t' || r == '=' || r == '>' || r == '(' || r == ')' || r == '"' || r == '\''
 			}) {
 				if hasFoldedSegmentPrefix(field, canonicalModule) || hasFoldedSegmentPrefix(field, legacyModule) {
-					t.Fatalf("%s:%d has a replace directive involving a canonical or legacy RepoPassport namespace: %q", relativePath(root, path), clause.line, clause.text)
+					t.Fatalf("LEGACY_MODULE_REFERENCE or PACKAGE_PATH_MISMATCH: %s:%d has a replace directive involving a canonical or legacy RepoPassport namespace: %q", relativePath(root, path), clause.line, clause.text)
 				}
 			}
 		}
@@ -324,13 +324,13 @@ func testREADME(t *testing.T, root string) {
 	path := filepath.Join(root, "README.md")
 	readme := string(readFile(t, path))
 	if regexp.MustCompile(`(?i)\bmirror(?:ed|ing|s)?\b`).MatchString(readme) {
-		t.Fatalf("%s still describes the active public repository as a mirror", relativePath(root, path))
+		t.Fatalf("PACKAGE_PATH_MISMATCH: %s still describes the active public repository as a mirror", relativePath(root, path))
 	}
 	if strings.Contains(asciiLower(readme), asciiLower(legacyModule)) {
-		t.Fatalf("%s still names the legacy Go module; historical mentions belong only in RFC or changelog history", relativePath(root, path))
+		t.Fatalf("LEGACY_MODULE_REFERENCE: %s still names the legacy Go module; historical mentions belong only in RFC or changelog history", relativePath(root, path))
 	}
 	if !strings.Contains(readme, canonicalModule) {
-		t.Fatalf("%s must name the exact case-sensitive canonical module %q", relativePath(root, path), canonicalModule)
+		t.Fatalf("PACKAGE_PATH_MISMATCH: %s must name the exact case-sensitive canonical module %q", relativePath(root, path), canonicalModule)
 	}
 	for offset := 0; ; {
 		index := strings.Index(asciiLower(readme[offset:]), asciiLower(canonicalModule))
@@ -339,7 +339,7 @@ func testREADME(t *testing.T, root string) {
 		}
 		index += offset
 		if readme[index:index+len(canonicalModule)] != canonicalModule {
-			t.Fatalf("%s contains a non-byte-exact case variant of the canonical module", relativePath(root, path))
+			t.Fatalf("PACKAGE_PATH_MISMATCH: %s contains a non-byte-exact case variant of the canonical module", relativePath(root, path))
 		}
 		offset = index + len(canonicalModule)
 	}
@@ -367,7 +367,7 @@ func testActiveIdentitySurfaces(t *testing.T, root string) {
 		}
 		return nil
 	}); err != nil {
-		t.Fatalf("active identity surface scan failed")
+		t.Fatalf("REQUIRED_CHECK_NOT_RUN: active identity surface scan failed")
 	}
 	for _, path := range paths {
 		content := string(readFile(t, path))
@@ -425,7 +425,7 @@ func TestValidateManifest(t *testing.T) {
 	runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "test", "-count=1", "./...")
 
 	out := runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "list", "-m", "-f", "{{.Path}}", canonicalModule)
-	requireExactLine(t, out, canonicalModule)
+	requireExactLine(t, out, canonicalModule, "EXTERNAL_IMPORT_FAILED")
 
 	out = runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "list", "-m", "all")
 	canonicalCount := 0
@@ -531,11 +531,11 @@ func environment(overrides map[string]string) []string {
 	return env
 }
 
-func requireExactLine(t *testing.T, output []byte, want string) {
+func requireExactLine(t *testing.T, output []byte, want, failureCode string) {
 	t.Helper()
 	lines := commandLines(t, output)
 	if len(lines) != 1 || lines[0] != want {
-		t.Fatalf("command output was %q; want exactly one line %q", string(output), want)
+		t.Fatalf("%s: command output was %q; want exactly one line %q", failureCode, string(output), want)
 	}
 }
 
