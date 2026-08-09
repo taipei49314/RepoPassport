@@ -91,6 +91,47 @@ func TestPublishQualifiedDirectoryAllowsOnlySameParentAtomicDistRename(t *testin
 	}
 }
 
+func TestWriteQualificationBeforePublicationFailureLeavesNoDist(t *testing.T) {
+	parent := t.TempDir()
+	source := filepath.Join(parent, ".release-publish-write-failure")
+	destination := filepath.Join(parent, "dist")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writer := &failingWriter{err: io.ErrClosedPipe}
+	if err := writeQualificationThenPublish(writer, []byte("allowlisted record\n"), source, destination); err == nil {
+		t.Fatal("failed qualification output unexpectedly published")
+	}
+	if info, err := os.Lstat(source); err != nil || !info.IsDir() {
+		t.Fatalf("source was not retained after output failure: %v", err)
+	}
+	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+		t.Fatalf("dist exists after output failure: %v", err)
+	}
+}
+
+func TestWriteQualificationThenAtomicPublicationHasNoPostRenameWrite(t *testing.T) {
+	parent := t.TempDir()
+	source := filepath.Join(parent, ".release-publish-write-success")
+	destination := filepath.Join(parent, "dist")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := writeQualificationThenPublish(&output, []byte("allowlisted record\n"), source, destination); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "allowlisted record\n" {
+		t.Fatalf("qualification output = %q", output.String())
+	}
+	if _, err := os.Lstat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after publication: %v", err)
+	}
+	if info, err := os.Lstat(destination); err != nil || !info.IsDir() {
+		t.Fatalf("destination missing after publication: %v", err)
+	}
+}
+
 func TestPublishQualifiedDirectoryRejectsPathScopeAndOverwrite(t *testing.T) {
 	parent := t.TempDir()
 	tests := []struct {
@@ -161,4 +202,12 @@ func sameKeySet(left, right []string) bool {
 		return result
 	}
 	return reflect.DeepEqual(set(left), set(right))
+}
+
+type failingWriter struct {
+	err error
+}
+
+func (writer *failingWriter) Write([]byte) (int, error) {
+	return 0, writer.err
 }

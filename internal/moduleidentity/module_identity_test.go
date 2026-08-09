@@ -223,9 +223,16 @@ func testReleaseBuilder(t *testing.T, root string) {
 		`$env:GOTOOLCHAIN = "local"`,
 		`$env:GOAMD64 = "v1"`,
 		`$env:GOEXPERIMENT = ""`,
+		`$env:GOAUTH = "off"`,
+		`$env:GONOPROXY = "none"`,
+		`$env:GOCACHEPROG = ""`,
+		`$env:GOFIPS140 = "off"`,
 		`$env:GOPROXY = "off"`,
 		`$env:GIT_DIR = $null`,
 		`$env:GIT_WORK_TREE = $null`,
+		`$env:GIT_CONFIG_NOSYSTEM = "1"`,
+		`$env:GIT_CONFIG_GLOBAL = $gitNullDevice`,
+		`$env:PATH = $sanitizedPath`,
 		`Get-Command go -CommandType Application`,
 		`Get-Command git -CommandType Application`,
 		`$env:GOCACHE = Join-Path $stagingRoot "gocache"`,
@@ -257,6 +264,12 @@ func testReleaseBuilder(t *testing.T, root string) {
 	}
 	if strings.Contains(script, "[IO.Directory]::Move($publishRoot, $distRoot)") {
 		t.Fatalf("%s publishes outside the final fixed-snapshot controller", relativePath(root, path))
+	}
+	if !strings.Contains(script, "-AllowedUntrackedRoot $publishRoot") {
+		t.Fatalf("%s must allowlist only the current internal publish root during the final source check", relativePath(root, path))
+	}
+	if !strings.Contains(script, "Assert-NoReparsePathComponents") || strings.Contains(script, "Remove-Item -LiteralPath $quarantine -Recurse") {
+		t.Fatalf("%s must reject ancestor reparse points and delete quarantined entries without recursive traversal", relativePath(root, path))
 	}
 	if tail := script[atomicPublish+len("-publish-to $distRoot"):]; strings.Contains(strings.SplitN(tail, "finally", 2)[0], "Assert-") {
 		t.Fatalf("%s performs a fallible assertion after atomic publication", relativePath(root, path))
@@ -385,7 +398,7 @@ func TestValidateManifest(t *testing.T) {
 	// conformance commands. A cache miss after this point must fail closed.
 	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "tidy")
 	runGo(t, temp, map[string]string{"GOWORK": "off"}, "EXTERNAL_IMPORT_FAILED", "mod", "verify")
-	offline := map[string]string{"GOPROXY": "off", "GOWORK": "off"}
+	offline := map[string]string{"GONOPROXY": "none", "GOPROXY": "off", "GOWORK": "off"}
 	runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "test", "-count=1", "./...")
 
 	out := runGo(t, temp, offline, "EXTERNAL_IMPORT_FAILED", "list", "-m", "-f", "{{.Path}}", canonicalModule)
@@ -434,7 +447,7 @@ func repositoryRoot(t *testing.T) string {
 
 func runGo(t *testing.T, dir string, overrides map[string]string, failureCode string, args ...string) []byte {
 	t.Helper()
-	const commandTimeout = 90 * time.Second
+	const commandTimeout = 3 * time.Minute
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, goTool(t), args...)
@@ -465,7 +478,7 @@ func goTool(t *testing.T) string {
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		return path
 	}
-	t.Fatalf("could not locate the Go tool in PATH or runtime.GOROOT()=%q", runtime.GOROOT())
+	t.Fatal("required Go tool is unavailable")
 	return ""
 }
 

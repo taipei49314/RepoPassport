@@ -252,6 +252,29 @@ func TestQualifyPrePublishRejectsChecksumSubstitution(t *testing.T) {
 	}
 }
 
+func TestQualifyPrePublishRejectsChecksumChangedBetweenSnapshots(t *testing.T) {
+	fixture := testQualificationFixture(t)
+	root := stagePrePublish(t, fixture)
+	originalRead := readQualificationChecksumSnapshot
+	reads := 0
+	readQualificationChecksumSnapshot = func(path string, maxSize int64) ([]byte, bool) {
+		reads++
+		data, ok := originalRead(path, maxSize)
+		if ok && reads > 1 {
+			data = append(append([]byte(nil), data...), []byte("# substituted after first read\n")...)
+		}
+		return data, ok
+	}
+	t.Cleanup(func() { readQualificationChecksumSnapshot = originalRead })
+
+	if report, err := QualifyPrePublish(root, fixture.revision, fixture.tree); err == nil {
+		t.Fatalf("checksum changed between snapshots passed final qualification: %#v", report)
+	}
+	if reads < 2 {
+		t.Fatalf("SHA256SUMS snapshots = %d, want at least 2", reads)
+	}
+}
+
 func TestReleaseQualificationProductionDoesNotImportReleaseKit(t *testing.T) {
 	for name, file := range productionGoFiles(t) {
 		for _, spec := range file.Imports {
