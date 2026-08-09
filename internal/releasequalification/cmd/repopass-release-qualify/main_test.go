@@ -168,6 +168,42 @@ func TestWriteQualificationThenAtomicPublicationHasNoPostRenameWrite(t *testing.
 	}
 }
 
+func TestFinalSealedValidationFailureAfterOutputLeavesNoDist(t *testing.T) {
+	parent := t.TempDir()
+	source := filepath.Join(parent, ".release-sealed-final-validation")
+	destination := filepath.Join(parent, "dist")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	validated := false
+	err := writeQualificationThenValidateAndPublish(
+		&output,
+		[]byte("allowlisted record\n"),
+		source,
+		destination,
+		func(path string) error {
+			validated = true
+			if path != source {
+				t.Fatalf("validated path = %q, want sealed source", path)
+			}
+			return errors.New("sealed bytes changed")
+		},
+	)
+	if err == nil || !validated {
+		t.Fatalf("final sealed validation result: called=%v err=%v", validated, err)
+	}
+	if output.String() != "allowlisted record\n" {
+		t.Fatalf("qualification output was not completed before final validation: %q", output.String())
+	}
+	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
+		t.Fatalf("dist exists after final sealed validation failure: %v", err)
+	}
+	if info, err := os.Lstat(source); err != nil || !info.IsDir() {
+		t.Fatalf("sealed source disappeared after validation failure: %v", err)
+	}
+}
+
 func TestPublishQualifiedDirectoryRejectsPathScopeAndOverwrite(t *testing.T) {
 	parent := t.TempDir()
 	tests := []struct {
@@ -200,6 +236,32 @@ func TestPublishQualifiedDirectoryRejectsPathScopeAndOverwrite(t *testing.T) {
 	}
 	if err := publishQualifiedDirectory(source, destination); err == nil {
 		t.Fatal("existing publication destination was overwritten")
+	}
+}
+
+func TestAtomicPublishDirectoryNoReplaceNeverOverwrites(t *testing.T) {
+	parent := t.TempDir()
+	source := filepath.Join(parent, "source")
+	destination := filepath.Join(parent, "destination")
+	if err := os.Mkdir(source, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(destination, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(destination, "marker")
+	if err := os.WriteFile(marker, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicPublishDirectoryNoReplace(source, destination); err == nil {
+		t.Fatal("atomic no-replace publication overwrote an existing destination")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil || string(data) != "original\n" {
+		t.Fatalf("existing destination changed: data=%q err=%v", data, err)
+	}
+	if info, err := os.Lstat(source); err != nil || !info.IsDir() {
+		t.Fatalf("source disappeared after rejected no-replace publication: %v", err)
 	}
 }
 
