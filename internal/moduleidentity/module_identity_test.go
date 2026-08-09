@@ -279,6 +279,10 @@ func testReleaseBuilder(t *testing.T, root string) {
 	if tail := script[atomicPublish+len("-publish-to $distRoot"):]; strings.Contains(strings.SplitN(tail, "finally", 2)[0], "Assert-") {
 		t.Fatalf("%s performs a fallible assertion after atomic publication", relativePath(root, path))
 	}
+	if !strings.Contains(script, "$distWasPublished = $true") ||
+		!strings.Contains(script, ".release-withdrawn-") {
+		t.Fatalf("%s must atomically withdraw dist before reporting any post-publication cleanup failure", relativePath(root, path))
+	}
 	for _, phase := range []string{"pre-helper", "pre-publish"} {
 		pattern := regexp.MustCompile(`(?s)-phase\s+` + regexp.QuoteMeta(phase) + `\b.*?-tested-revision\s+\$TestedRevision\s+-tree\s+\$testedTree`)
 		if !pattern.MatchString(script) {
