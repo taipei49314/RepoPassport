@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,10 @@ func TestObserveContentionAndCancellationLeaveStateUnchanged(t *testing.T) {
 		"REPOPASS_TRUST_ROTATION_STATE_HELPER=hold-lock",
 		"REPOPASS_TRUST_ROTATION_STATE_ROOT="+root,
 	)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +40,7 @@ func TestObserveContentionAndCancellationLeaveStateUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
+		_ = stdin.Close()
 		if command.ProcessState == nil {
 			_ = command.Process.Kill()
 			_ = command.Wait()
@@ -61,6 +67,9 @@ func TestObserveContentionAndCancellationLeaveStateUnchanged(t *testing.T) {
 	after, readErr := os.ReadFile(path)
 	if readErr != nil || string(after) != string(before) {
 		t.Fatalf("contention changed state: got %q, err %v", after, readErr)
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatalf("release lock helper: %v", err)
 	}
 	if err := command.Wait(); err != nil {
 		t.Fatalf("lock helper exit = %v", err)
@@ -89,6 +98,8 @@ func TestTrustRotationStateProcessHelper(t *testing.T) {
 		os.Exit(4)
 	}
 	_, _ = os.Stdout.WriteString("LOCKED\n")
-	time.Sleep(250 * time.Millisecond)
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		os.Exit(5)
+	}
 	os.Exit(0) // The process exit must release a lock even without cleanup.
 }

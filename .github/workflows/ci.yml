@@ -91,6 +91,41 @@ jobs:
               print(f"valid JSON: {path}")
           PY
 
+  windows-go:
+    name: Windows test and cross-process lock stress
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Download and verify modules
+        run: |
+          go mod download
+          go mod verify
+          go mod tidy -diff
+
+      - name: Test
+        run: go test -count=1 ./...
+
+      - name: Stress cross-process state locking
+        run: >-
+          go test -count=5
+          ./internal/releasestate
+          ./internal/trustchainstate
+          ./internal/trustrotationstate
+          ./internal/truststate
+          -run '^(TestObserveContextAndTimeoutBoundLockContention|TestObserveChainStateConcurrencyCancellationAndProcessContention|TestObserveContentionAndCancellationLeaveStateUnchanged|TestObserveCrossProcessLockTimeoutAndExitRelease)$'
+
   container-integration:
     name: Container integration (opt-in)
     if: ${{ github.event_name == 'workflow_dispatch' || vars.REPOPASS_RUN_CONTAINER_INTEGRATION == 'true' }}
@@ -130,4 +165,4 @@ jobs:
       - name: Run container integration tests
         env:
           REPOPASS_INTEGRATION_BACKEND: docker
-        run: go test -tags=integration -count=1 -v ./internal/cli -run '^TestContainer'
+        run: go test -timeout=25m -tags=integration -count=1 -v ./internal/cli -run '^TestContainer'

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -425,6 +426,10 @@ func TestObserveContextAndTimeoutBoundLockContention(t *testing.T) {
 	assertOutcome(t, capture(ObservePolicy(context.Background(), root, testAuthorityA, "repopass", "alpha", 1, testDigestA)), Result{EvaluationInitialized, 1}, nil)
 	command := exec.Command(os.Args[0], "-test.run=^TestReleaseStateProcessHelper$")
 	command.Env = append(os.Environ(), "REPOPASS_RELEASESTATE_HELPER=hold-lock", "REPOPASS_RELEASESTATE_ROOT="+root)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -432,6 +437,13 @@ func TestObserveContextAndTimeoutBoundLockContention(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		_ = stdin.Close()
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	}()
 	scanner := bufio.NewScanner(stdout)
 	if !scanner.Scan() || scanner.Text() != "LOCKED" {
 		_ = command.Process.Kill()
@@ -445,6 +457,9 @@ func TestObserveContextAndTimeoutBoundLockContention(t *testing.T) {
 	lockTimeout = 50 * time.Millisecond
 	assertOutcome(t, capture(ObservePolicy(context.Background(), root, testAuthorityA, "repopass", "alpha", 2, testDigestB)), Result{EvaluationUnavailable, 0}, ErrUnavailable)
 	lockTimeout = previous
+	if err := stdin.Close(); err != nil {
+		t.Fatalf("release lock helper: %v", err)
+	}
 	if err := command.Wait(); err != nil {
 		t.Fatalf("lock helper exit: %v", err)
 	}
@@ -482,10 +497,12 @@ func TestReleaseStateProcessHelper(t *testing.T) {
 			os.Exit(4)
 		}
 		fmt.Println("LOCKED")
-		time.Sleep(250 * time.Millisecond)
+		if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+			os.Exit(5)
+		}
 		os.Exit(0)
 	default:
-		os.Exit(5)
+		os.Exit(6)
 	}
 }
 
