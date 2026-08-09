@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/releaseindex"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/releaseindex"
 )
 
 type signReleaseIndexCLIOptions struct {

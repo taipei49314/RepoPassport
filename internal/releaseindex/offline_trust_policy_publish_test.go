@@ -9,8 +9,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/repopass/repopass/internal/attestation"
-	"github.com/repopass/repopass/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 )
 
 type offlineTrustPolicyPublicationKey struct {

@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/spdx"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/spdx"
 )
 
 func TestEvaluateFreshnessFourDimensionMatrixAndPrecedence(t *testing.T) {

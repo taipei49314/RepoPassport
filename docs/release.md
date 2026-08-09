@@ -13,6 +13,28 @@ A release record must not imply completion of later milestones,
 complete capability-conforming observation, full M3, trusted hosted identity,
 scenario re-execution, historical-currentness, or SBOM generation/independent validation.
 
+## Canonical Go module release gate
+
+The active source and release build identity is the exact, case-sensitive Go
+module `github.com/taipei49314/RepoPassport`, under the repository of the same
+name. [RFC-0001](rfcs/0001-canonical-go-module-identity.md) is the accepted
+normative decision.
+
+Release construction runs with `GOWORK=off`, requires a clean exact checkout,
+and builds with `-buildvcs=true`. Before the host-only kit helper executes, a
+private qualification controller must inspect the two full binaries, two
+verifier binaries, and helper through one fixed file handle per artifact. It
+binds SHA-256 and Go build information for the same bytes and requires the
+exact module, artifact-specific main package, tested commit, and
+`vcs.modified=false`. Before atomic publication it repeats those checks for
+the publish copies, independently validates both strict portable-kit
+inventories, and validates each bound embedded verifier identity.
+
+A PR result is implementation evidence only. The module gate closes only after
+the complete check set is rerun on the exact merged default-branch SHA with no
+required skip. These non-versioned CI checks are not a release receipt, signer
+identity, trusted time, provenance, SBOM, or stable-release authorization.
+
 ## Alpha.33 offline trust-policy authority-transition-chain release contract
 
 The full CLI adds `assemble-offline-trust-policy-authority-transition-chain`
@@ -1065,7 +1087,7 @@ the two canonical verifier kits, and `dist/SHA256SUMS`. `dist` must be absent
 or empty; the builder never overwrites an earlier release:
 
 ```powershell
-./scripts/build-release.ps1 -Version 0.1.0-alpha.33
+./scripts/build-release.ps1 -Version 0.1.0-alpha.33 -TestedRevision $(git rev-parse HEAD)
 ```
 
 The Alpha.33 script accepts only the exact Alpha.33 version, sets
@@ -1074,6 +1096,14 @@ variables, validates the exact seven-file inventory in private staging, and
 publishes the completed directory with a single no-overwrite directory move.
 `SHA256SUMS` binds the other six files with lowercase SHA-256 in deterministic
 filename order.
+
+Run the builder only after all untrusted workload processes owned by the build
+account have terminated. The final controller copies the seven-file inventory
+into a private random snapshot, revalidates it after writing the allowlisted
+log, and uses an atomic no-replace rename. Windows snapshots use a protected
+current-user-and-SYSTEM DACL. A hostile process already running as that same OS
+principal is outside this local release-builder boundary and requires a
+separate disposable build identity or VM.
 
 Building changes the release archive identity. Freeze the resulting `dist/`
 files, rerun the complete live gate in section 3, and treat only that

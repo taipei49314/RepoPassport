@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/manifest"
 )
 
 // validateSchemaExecutionFeatures keeps the public authoring schema broader

@@ -14,16 +14,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/acquisition"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/execution"
-	"github.com/repopass/repopass/internal/manifest"
-	"github.com/repopass/repopass/internal/planner"
-	"github.com/repopass/repopass/internal/privacy"
-	"github.com/repopass/repopass/internal/rendering"
-	"github.com/repopass/repopass/internal/runtimepolicy"
-	"github.com/repopass/repopass/internal/storage"
-	"github.com/repopass/repopass/internal/verification"
+	"github.com/taipei49314/RepoPassport/internal/acquisition"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/execution"
+	"github.com/taipei49314/RepoPassport/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/planner"
+	"github.com/taipei49314/RepoPassport/internal/privacy"
+	"github.com/taipei49314/RepoPassport/internal/rendering"
+	"github.com/taipei49314/RepoPassport/internal/runtimepolicy"
+	"github.com/taipei49314/RepoPassport/internal/storage"
+	"github.com/taipei49314/RepoPassport/internal/verification"
 )
 
 func TestContainerAlpha25UndeclaredPortFixtureContract(t *testing.T) {

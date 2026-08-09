@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/repopass/repopass/internal/releasekit"
+	"github.com/taipei49314/RepoPassport/internal/releasekit"
 )
 
 func main() {

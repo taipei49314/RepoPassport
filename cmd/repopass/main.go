@@ -5,9 +5,9 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/repopass/repopass/internal/cli"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/execution"
+	"github.com/taipei49314/RepoPassport/internal/cli"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/execution"
 )
 
 func main() {

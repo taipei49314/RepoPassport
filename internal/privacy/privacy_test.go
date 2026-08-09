@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 func TestFrozenPolicyDescriptorAndOrderedRules(t *testing.T) {

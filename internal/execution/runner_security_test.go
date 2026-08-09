@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/runtimepolicy"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/runtimepolicy"
 )
 
 func TestPrepareRejectsUnapprovedRuntimeTupleBeforeBackend(t *testing.T) {

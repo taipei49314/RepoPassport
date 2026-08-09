@@ -5,8 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/repopass/repopass/internal/canonicaljson"
-	"github.com/repopass/repopass/schemas"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/schemas"
 )
 
 const (

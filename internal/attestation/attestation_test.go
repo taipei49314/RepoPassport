@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/canonicaljson"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/spdx"
-	"github.com/repopass/repopass/internal/verification"
-	"github.com/repopass/repopass/schemas"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/spdx"
+	"github.com/taipei49314/RepoPassport/internal/verification"
+	"github.com/taipei49314/RepoPassport/schemas"
 )
 
 func TestSchema4OptionalSPDXBundleModelsAreDeterministicAndBound(t *testing.T) {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/repopass/repopass/internal/attestation"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/trustchainstate"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/trustchainstate"
 )
 
 const chainedSignedOfflineTrustPolicyBasis = "signed-offline-policy-v2+authority-transition-chain-v1"

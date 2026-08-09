@@ -10,10 +10,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/repopass/repopass/internal/canonicaljson"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/rendering"
-	"github.com/repopass/repopass/internal/verification"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/rendering"
+	"github.com/taipei49314/RepoPassport/internal/verification"
 )
 
 var runIDPattern = regexp.MustCompile(`^(?:run|vrf)_[a-zA-Z0-9._-]{3,96}$`)

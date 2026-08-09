@@ -6,11 +6,11 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/repopass/repopass/internal/acquisition"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/manifest"
-	"github.com/repopass/repopass/internal/privacy"
-	"github.com/repopass/repopass/internal/spdx"
+	"github.com/taipei49314/RepoPassport/internal/acquisition"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/privacy"
+	"github.com/taipei49314/RepoPassport/internal/spdx"
 )
 
 func TestRepoOwnedMinimalPublicSPDXFixtureSupportsDerivedProfile(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 )
 
 func TestSignedOfflineTrustPolicyAuthoritySignatureAuthenticatesBeforeParsingV2Payload(t *testing.T) {

@@ -1,9 +1,9 @@
 package privacy
 
 import (
-	"github.com/repopass/repopass/internal/canonicaljson"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/spdx"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/spdx"
 )
 
 const (

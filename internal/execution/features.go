@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 // FeatureNegotiation separates hard execution requirements from observer

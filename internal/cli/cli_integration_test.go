@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/storage"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/storage"
 )
 
 type testEnvelope struct {

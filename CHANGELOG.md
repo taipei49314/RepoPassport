@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Accept RFC-0001 and begin the intentional pre-v0 Go module migration from
+  `github.com/repopass/repopass` to the controlled, case-sensitive public
+  namespace `github.com/taipei49314/RepoPassport`. Repository imports, the
+  public `schemas` package, release linker symbol, and executable Go build
+  information move atomically; JSON Schema IDs, evidence predicates, CLI
+  behavior, and historical Alpha artifacts do not change.
+- Add fail-closed module/source qualification for the full CLI, portable
+  verifier, host-only kit helper, and verifier inside each strict portable kit.
+  The gate binds the tested commit and clean-tree build settings and does not
+  claim signer identity, trusted time, provenance, or overall verification.
 - `minimal-public-v1alpha3` accepts specification-valid
   `git:<40-lower-hex>` source identities so attestations can be built from Git
   worktrees. The base and derived frozen ruleset identities are advanced; this

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 const validLinuxResourceControl = `{"ok":true,"cgroupVersion":2,` +

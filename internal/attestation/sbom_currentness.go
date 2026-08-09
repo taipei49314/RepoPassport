@@ -1,6 +1,6 @@
 package attestation
 
-import "github.com/repopass/repopass/internal/spdx"
+import "github.com/taipei49314/RepoPassport/internal/spdx"
 
 const (
 	SBOMCurrentnessProfile      = "npm-package-lock-currentness-v1"

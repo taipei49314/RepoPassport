@@ -9,6 +9,26 @@ RepoPassport versions four public contracts independently:
 | CLI | executable semantic version plus structured-output `schemaVersion` |
 | Policy/runner/adapter/observer | exact semantic version and immutable digest where applicable |
 
+## Go module and source identity
+
+The canonical, case-sensitive repository and Go module identity is:
+
+```text
+github.com/taipei49314/RepoPassport
+```
+
+Repository-owned package paths are this exact value or this value followed by
+`/`. The public Go schemas package is therefore
+`github.com/taipei49314/RepoPassport/schemas`. Builds MUST NOT use a workspace
+or module replacement to reinterpret this identity. Release executables bind
+the exact module, main package, tested commit, and clean-tree state through Go
+build information as specified by
+[RFC-0001](../docs/rfcs/0001-canonical-go-module-identity.md).
+
+Module identity is not a signer, repository-owner, freshness, or artifact-trust
+proof. It does not change the independently versioned manifest, generated
+artifact, CLI, policy, runner, adapter, observer, or evidence contracts.
+
 ## Manifest API
 
 The initial manifest API is:

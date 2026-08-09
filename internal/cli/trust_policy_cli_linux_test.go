@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/attestation"
-	"github.com/repopass/repopass/internal/canonicaljson"
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 	"golang.org/x/sys/unix"
 )
 
