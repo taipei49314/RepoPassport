@@ -333,6 +333,11 @@ func testREADME(t *testing.T, root string) {
 }
 
 func testActiveIdentitySurfaces(t *testing.T, root string) {
+	ciPath := filepath.Join(root, ".github", "workflows", "ci.yml")
+	ci := string(readFile(t, ciPath))
+	if strings.Contains(ci, "go-version-file:") || strings.Count(ci, "go-version: '1.26.5'") != 3 {
+		t.Fatalf("%s must pin Go 1.26.5 exactly for Linux, Windows, and container jobs", relativePath(root, ciPath))
+	}
 	paths := []string{
 		filepath.Join(root, "README.md"),
 		filepath.Join(root, "IMPLEMENTATION_STATUS.md"),
