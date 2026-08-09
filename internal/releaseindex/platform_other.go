@@ -25,6 +25,7 @@ func hardlinkCount(file *os.File) uint64 {
 func validateOpenedPath(*os.File, string) error    { return nil }
 func validateNoAlternateDataStreams(string) error  { return nil }
 func securePublicationDirectory(path string) error { return os.Chmod(path, 0o700) }
+func securePublicationFile(path string) error      { return os.Chmod(path, 0o600) }
 func validatePublicationDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 {

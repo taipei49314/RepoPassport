@@ -23,6 +23,10 @@ func securePrivatePermissionsForTest(t *testing.T, path string) {
 
 func setPrivateDACLForTest(t *testing.T, path, sddl string) {
 	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		t.Fatalf("resolve current user SID: %v", err)
+	}
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil {
 		t.Fatalf("parse test DACL: %v", err)
@@ -34,8 +38,8 @@ func setPrivateDACLForTest(t *testing.T, path, sddl string) {
 	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		user.User.Sid,
 		nil,
 		dacl,
 		nil,
