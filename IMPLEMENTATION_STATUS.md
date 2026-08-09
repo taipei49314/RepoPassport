@@ -1,6 +1,6 @@
 # Implementation status
 
-Status date: 2026-08-04
+Status date: 2026-08-09
 
 RepoPassport `v0.1.0-alpha.33` is the current `v1alpha1` vertical slice. This
 source document does not claim completed Alpha.33 race, local/repro, fixed-VM,
@@ -12,6 +12,24 @@ of every milestone in the project plan.
 The public source branch additionally carries an unreleased Git-worktree
 identity compatibility fix with a new frozen privacy ruleset. It is not
 byte-identical to, or qualified by, the Alpha.33 canonical release evidence.
+
+## Unreleased canonical module/source identity
+
+RFC-0001 accepts `github.com/taipei49314/RepoPassport` as the exact canonical
+repository, Go module, and repository-owned package prefix. This source
+atomically migrates `go.mod`, imports, the public `schemas` package, release
+linker target, active documentation, and release build-information checks.
+Protocol URLs, JSON Schema identifiers, evidence predicates, binary names,
+CLI output, historical Alpha artifacts, and M1-M7 scope are unchanged.
+
+Source conformance and release qualification fail closed on legacy/case-variant
+identity, workspace replacement, wrong main package, unreadable build
+information, revision mismatch, dirty source, missing required artifacts, and
+portable-kit substitution. PR checks establish only implementation status.
+`RP-M0-MODULE` remains incomplete until the full Linux/Windows source,
+external-consumer, release-binary, kit, and exact merged default-branch checks
+pass with no required skip. This module identity is not repository-owner or
+signer authentication, trusted time, provenance, or overall verification.
 
 ## Alpha.33 bounded offline policy-authority transition chain
 

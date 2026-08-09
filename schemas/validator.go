@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/repopass/repopass/internal/structuredjson"
+	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 

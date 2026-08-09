@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/repopass/repopass/internal/atomicfile"
-	"github.com/repopass/repopass/internal/canonicaljson"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/manifest"
-	"github.com/repopass/repopass/internal/runtimepolicy"
-	"github.com/repopass/repopass/internal/structuredjson"
+	"github.com/taipei49314/RepoPassport/internal/atomicfile"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/runtimepolicy"
+	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
 const (

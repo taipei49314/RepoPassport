@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 )
 
 func TestAuthorityTransitionCanonicalSignVerifyAndGetters(t *testing.T) {

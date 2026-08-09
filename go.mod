@@ -1,4 +1,4 @@
-module github.com/repopass/repopass
+module github.com/taipei49314/RepoPassport
 
 go 1.26
 

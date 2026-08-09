@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/verification"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/verification"
 )
 
 func TestRunStoreRoundTripUsesAuthoritativeRoot(t *testing.T) {

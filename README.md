@@ -3,10 +3,10 @@
 Local-first tooling to **describe, plan, run, and independently verify** a repository
 scenario — with evidence that a workload cannot forge from inside the sandbox.
 
-> **Repository location:** public mirror at
-> `github.com/taipei49314/RepoPassport`. Canonical Go module identity remains
-> `github.com/repopass/repopass`. Clone-and-build works; until the owner matches
-> the module namespace, do not treat the mirror URL as a stable Go import path.
+> **Canonical source and Go module:**
+> `github.com/taipei49314/RepoPassport`. Repository-owned imports, release
+> build information, and the public `schemas` package use this exact,
+> case-sensitive namespace.
 
 [![CI](https://github.com/taipei49314/RepoPassport/actions/workflows/ci.yml/badge.svg)](https://github.com/taipei49314/RepoPassport/actions/workflows/ci.yml)
 [![Status](https://img.shields.io/badge/status-v1alpha1-orange.svg)](docs/release.md)
@@ -50,6 +50,12 @@ go test ./...
 # Inspect / validate a healthy fixture
 go run ./cmd/repopass inspect ./testdata/fixtures/healthy/healthy-node-cli --output json
 go run ./cmd/repopass validate ./testdata/fixtures/healthy/healthy-node-cli/repo-passport.yml
+```
+
+Go consumers of the public strict validators use the canonical package:
+
+```go
+import "github.com/taipei49314/RepoPassport/schemas"
 ```
 
 Target verification flow:

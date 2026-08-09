@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/repopass/repopass/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
 )
 
 func makeOfflineTrustPolicyAuthorityTransitionPublication(t *testing.T) (ed25519.PrivateKey, []byte, []byte, []byte) {

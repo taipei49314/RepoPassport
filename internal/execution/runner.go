@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/repopass/repopass/internal/controllerfs"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/runtimepolicy"
-	"github.com/repopass/repopass/internal/structuredjson"
+	"github.com/taipei49314/RepoPassport/internal/controllerfs"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/runtimepolicy"
+	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
 const (

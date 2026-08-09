@@ -13,6 +13,28 @@ A release record must not imply completion of later milestones,
 complete capability-conforming observation, full M3, trusted hosted identity,
 scenario re-execution, historical-currentness, or SBOM generation/independent validation.
 
+## Canonical Go module release gate
+
+The active source and release build identity is the exact, case-sensitive Go
+module `github.com/taipei49314/RepoPassport`, under the repository of the same
+name. [RFC-0001](rfcs/0001-canonical-go-module-identity.md) is the accepted
+normative decision.
+
+Release construction runs with `GOWORK=off`, requires a clean exact checkout,
+and builds with `-buildvcs=true`. Before the host-only kit helper executes, a
+private qualification controller must inspect the two full binaries, two
+verifier binaries, and helper through one fixed file handle per artifact. It
+binds SHA-256 and Go build information for the same bytes and requires the
+exact module, artifact-specific main package, tested commit, and
+`vcs.modified=false`. Before atomic publication it repeats those checks for
+the publish copies, independently validates both strict portable-kit
+inventories, and validates each bound embedded verifier identity.
+
+A PR result is implementation evidence only. The module gate closes only after
+the complete check set is rerun on the exact merged default-branch SHA with no
+required skip. These non-versioned CI checks are not a release receipt, signer
+identity, trusted time, provenance, SBOM, or stable-release authorization.
+
 ## Alpha.33 offline trust-policy authority-transition-chain release contract
 
 The full CLI adds `assemble-offline-trust-policy-authority-transition-chain`

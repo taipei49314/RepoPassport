@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/planner"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/planner"
 )
 
 func TestCurrentDirectCLIPlanContract(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/repopass/repopass/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
 )
 
 func PublishSignedSidecars(outputDir string, index, envelopeRaw, signerSPKI []byte) error {

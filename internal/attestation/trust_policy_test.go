@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 const canonicalTrustPolicy = `{"keyAlgorithm":"ed25519","keyIdAlgorithm":"spki-sha256","keys":[{"keyId":"sha256:1111111111111111111111111111111111111111111111111111111111111111","status":"trusted"},{"keyId":"sha256:2222222222222222222222222222222222222222222222222222222222222222","status":"revoked"}],"schemaVersion":"1"}`

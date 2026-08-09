@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/repopass/repopass/internal/atomicfile"
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/atomicfile"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 

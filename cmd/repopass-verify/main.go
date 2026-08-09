@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/repopass/repopass/internal/cli"
+	"github.com/taipei49314/RepoPassport/internal/cli"
 )
 
 func main() {

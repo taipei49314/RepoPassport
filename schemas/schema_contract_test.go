@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/cli"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/manifest"
-	"github.com/repopass/repopass/internal/privacy"
-	schemavalidator "github.com/repopass/repopass/schemas"
+	"github.com/taipei49314/RepoPassport/internal/cli"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/privacy"
+	schemavalidator "github.com/taipei49314/RepoPassport/schemas"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 

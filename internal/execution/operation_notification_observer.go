@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 const (

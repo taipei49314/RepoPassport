@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/repopass/repopass/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
 )
 
 const (

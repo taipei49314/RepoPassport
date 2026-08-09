@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 	"golang.org/x/sys/windows"
 )
 

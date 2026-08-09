@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/repopass/repopass/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 )
 
 const (

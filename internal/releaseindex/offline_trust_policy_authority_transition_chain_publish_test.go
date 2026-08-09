@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/repopass/repopass/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
 )
 
 func makeOfflineTrustPolicyAuthorityTransitionChainPublication(t *testing.T) (root, terminal, chain []byte) {

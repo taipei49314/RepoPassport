@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/structuredjson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
 type schemaResolver struct {

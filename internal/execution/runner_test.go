@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/repopass/repopass/internal/acquisition"
-	"github.com/repopass/repopass/internal/controllerfs"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/runtimepolicy"
-	"github.com/repopass/repopass/internal/verification"
+	"github.com/taipei49314/RepoPassport/internal/acquisition"
+	"github.com/taipei49314/RepoPassport/internal/controllerfs"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/runtimepolicy"
+	"github.com/taipei49314/RepoPassport/internal/verification"
 )
 
 type commandCall struct {

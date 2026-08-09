@@ -13,7 +13,7 @@ $stagingRoot = Join-Path $repoRoot (".release-staging-" + [Guid]::NewGuid().ToSt
 # Keep the publish directory next to dist so the final directory move is a
 # single same-volume rename, never a sequence of visible per-file copies.
 $publishRoot = Join-Path $repoRoot (".release-publish-" + [Guid]::NewGuid().ToString("N"))
-$versionSymbol = "github.com/repopass/repopass/internal/cli.Version=$Version"
+$versionSymbol = "github.com/taipei49314/RepoPassport/internal/cli.Version=$Version"
 $expected = @(
     "repopass-linux-amd64",
     "repopass-windows-amd64.exe",

@@ -3,8 +3,8 @@ package execution
 import (
 	"context"
 
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/structuredjson"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
 func (r *Runner) inspectHTTPJSONFileAssertion(

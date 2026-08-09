@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/acquisition"
-	"github.com/repopass/repopass/internal/attestation"
-	"github.com/repopass/repopass/internal/domain"
-	"github.com/repopass/repopass/internal/spdx"
-	"github.com/repopass/repopass/internal/storage"
+	"github.com/taipei49314/RepoPassport/internal/acquisition"
+	"github.com/taipei49314/RepoPassport/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/spdx"
+	"github.com/taipei49314/RepoPassport/internal/storage"
 )
 
 func TestMain(m *testing.M) {

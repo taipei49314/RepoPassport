@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 func alpha25PortSummaryDetails(comparison string) map[string]any {

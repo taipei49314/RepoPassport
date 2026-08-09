@@ -12,9 +12,9 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/repopass/repopass/internal/acquisition"
-	"github.com/repopass/repopass/internal/controllerfs"
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/acquisition"
+	"github.com/taipei49314/RepoPassport/internal/controllerfs"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 )
 
 type preparedPaths struct {

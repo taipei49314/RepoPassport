@@ -1,7 +1,7 @@
 package manifest
 
 import (
-	"github.com/repopass/repopass/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
