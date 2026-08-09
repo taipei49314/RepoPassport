@@ -249,16 +249,16 @@ func TestAtomicPublishDirectoryNoReplaceNeverOverwrites(t *testing.T) {
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(destination, "marker")
-	if err := os.WriteFile(marker, []byte("original\n"), 0o600); err != nil {
+	destinationBefore, err := os.Stat(destination)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := atomicPublishDirectoryNoReplace(source, destination); err == nil {
 		t.Fatal("atomic no-replace publication overwrote an existing destination")
 	}
-	data, err := os.ReadFile(marker)
-	if err != nil || string(data) != "original\n" {
-		t.Fatalf("existing destination changed: data=%q err=%v", data, err)
+	destinationAfter, err := os.Stat(destination)
+	if err != nil || !os.SameFile(destinationBefore, destinationAfter) {
+		t.Fatalf("existing empty destination identity changed: err=%v", err)
 	}
 	if info, err := os.Lstat(source); err != nil || !info.IsDir() {
 		t.Fatalf("source disappeared after rejected no-replace publication: %v", err)
