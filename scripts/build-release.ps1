@@ -433,7 +433,9 @@ try {
     New-Item -ItemType Directory -Path $env:GOTMPDIR | Out-Null
     $env:GOPROXY = "https://proxy.golang.org"
     $env:GOSUMDB = "sum.golang.org"
-    & $goCommand mod download >$null 2>$null
+    # Keep this fresh, task-local cache removable by the non-root Linux
+    # controller after qualification.
+    & $goCommand mod download -modcacherw >$null 2>$null
     if ($LASTEXITCODE -ne 0) { throw "release dependency setup failed" }
     & $goCommand mod verify >$null 2>$null
     if ($LASTEXITCODE -ne 0) { throw "release dependency verification failed" }
