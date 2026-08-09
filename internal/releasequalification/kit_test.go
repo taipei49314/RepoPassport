@@ -275,6 +275,35 @@ func TestQualifyPrePublishRejectsChecksumChangedBetweenSnapshots(t *testing.T) {
 	}
 }
 
+func TestPreparePrePublishSealsQualifiedBytesBeforePublication(t *testing.T) {
+	fixture := testQualificationFixture(t)
+	staged := stagePrePublish(t, fixture)
+	parent := t.TempDir()
+	source := filepath.Join(parent, ".release-publish-fixture")
+	if err := os.Rename(staged, source); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(parent, "dist")
+	report, sealed, err := PreparePrePublish(source, destination, fixture.revision, fixture.tree)
+	if err != nil {
+		t.Fatalf("prepare final publication snapshot: %v (report %#v)", err, report)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(sealed) })
+	if filepath.Dir(sealed) != parent || !strings.HasPrefix(filepath.Base(sealed), ".release-sealed-") || sealed == source {
+		t.Fatalf("sealed root = %q, want unique same-parent snapshot", sealed)
+	}
+
+	if err := os.WriteFile(filepath.Join(source, "repopass-linux-amd64"), []byte("substituted source\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := QualifyPrePublish(source, fixture.revision, fixture.tree); err == nil {
+		t.Fatal("substituted original source remained qualified")
+	}
+	if sealedReport, err := QualifyPrePublish(sealed, fixture.revision, fixture.tree); err != nil {
+		t.Fatalf("sealed snapshot changed with original source: %v (report %#v)", err, sealedReport)
+	}
+}
+
 func TestReleaseQualificationProductionDoesNotImportReleaseKit(t *testing.T) {
 	for name, file := range productionGoFiles(t) {
 		for _, spec := range file.Imports {

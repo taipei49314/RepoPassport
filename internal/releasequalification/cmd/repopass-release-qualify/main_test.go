@@ -75,7 +75,7 @@ func TestRunLabelsInvalidInputNotRunWithoutEchoingInput(t *testing.T) {
 
 func TestPublishQualifiedDirectoryAllowsOnlySameParentAtomicDistRename(t *testing.T) {
 	parent := t.TempDir()
-	source := filepath.Join(parent, ".release-publish-0123456789abcdef")
+	source := filepath.Join(parent, ".release-sealed-0123456789abcdef")
 	destination := filepath.Join(parent, "dist")
 	if err := os.Mkdir(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestPublishQualifiedDirectoryAllowsOnlySameParentAtomicDistRename(t *testin
 
 func TestWriteQualificationBeforePublicationFailureLeavesNoDist(t *testing.T) {
 	parent := t.TempDir()
-	source := filepath.Join(parent, ".release-publish-write-failure")
+	source := filepath.Join(parent, ".release-sealed-write-failure")
 	destination := filepath.Join(parent, "dist")
 	if err := os.Mkdir(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -112,7 +112,7 @@ func TestWriteQualificationBeforePublicationFailureLeavesNoDist(t *testing.T) {
 
 func TestWriteQualificationThenAtomicPublicationHasNoPostRenameWrite(t *testing.T) {
 	parent := t.TempDir()
-	source := filepath.Join(parent, ".release-publish-write-success")
+	source := filepath.Join(parent, ".release-sealed-write-success")
 	destination := filepath.Join(parent, "dist")
 	if err := os.Mkdir(source, 0o700); err != nil {
 		t.Fatal(err)
@@ -139,9 +139,9 @@ func TestPublishQualifiedDirectoryRejectsPathScopeAndOverwrite(t *testing.T) {
 		source      string
 		destination string
 	}{
-		{"wrong source prefix", filepath.Join(parent, "publish"), filepath.Join(parent, "dist")},
-		{"wrong destination name", filepath.Join(parent, ".release-publish-a"), filepath.Join(parent, "other")},
-		{"different parent", filepath.Join(parent, ".release-publish-b"), filepath.Join(t.TempDir(), "dist")},
+		{"wrong source prefix", filepath.Join(parent, ".release-publish-a"), filepath.Join(parent, "dist")},
+		{"wrong destination name", filepath.Join(parent, ".release-sealed-a"), filepath.Join(parent, "other")},
+		{"different parent", filepath.Join(parent, ".release-sealed-b"), filepath.Join(t.TempDir(), "dist")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -154,7 +154,7 @@ func TestPublishQualifiedDirectoryRejectsPathScopeAndOverwrite(t *testing.T) {
 		})
 	}
 
-	source := filepath.Join(parent, ".release-publish-c")
+	source := filepath.Join(parent, ".release-sealed-c")
 	destination := filepath.Join(parent, "dist")
 	if err := os.Mkdir(source, 0o700); err != nil {
 		t.Fatal(err)
