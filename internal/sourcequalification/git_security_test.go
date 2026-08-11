@@ -70,7 +70,7 @@ func TestGitCommandErrorRedactsRawStderr(t *testing.T) {
 	}
 }
 
-func TestValidateGitExecutablePathRejectsCheckoutBinary(t *testing.T) {
+func TestValidateGitExecutablePathIgnoresCheckoutBinary(t *testing.T) {
 	trustedGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("resolve trusted Git fixture executable: %v", err)
@@ -86,11 +86,11 @@ func TestValidateGitExecutablePathRejectsCheckoutBinary(t *testing.T) {
 			t.Fatalf("remove isolated Git test environment: %v", cleanupErr)
 		}
 	}
-	if err == nil {
-		t.Fatal("repository-local Git executable was accepted")
+	if err != nil {
+		t.Fatalf("fixed machine Git resolver was redirected or unavailable: %v", err)
 	}
-	if inspector != nil {
-		t.Fatal("rejected Git executable returned a partial inspector")
+	if inspector == nil || sameCanonicalPath(inspector.gitPath, candidate) {
+		t.Fatalf("repository-local Git executable was selected: inspector=%v path=%q", inspector != nil, candidate)
 	}
 }
 
