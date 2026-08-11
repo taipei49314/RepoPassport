@@ -69,7 +69,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	return runWithControllerOperations(args, stdout, stderr, unavailableControllerCommandOperations{})
+	return runWithControllerOperations(args, stdout, stderr, newProductionControllerCommandOperations())
 }
 
 func runWithoutControllerOperations(args []string, stdout, stderr io.Writer) int {
