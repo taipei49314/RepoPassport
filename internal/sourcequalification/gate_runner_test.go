@@ -143,6 +143,7 @@ func TestRunRequiredGatesRequiresLaneLifetimeApplicationBinding(t *testing.T) {
 		wantStatus QualificationStatus
 		wantCode   string
 		wantCalls  int
+		wantExit   *int64
 	}{
 		{
 			name:       "binding unavailable blocks before execution",
@@ -167,6 +168,7 @@ func TestRunRequiredGatesRequiresLaneLifetimeApplicationBinding(t *testing.T) {
 			wantStatus: StatusFail,
 			wantCode:   "SOURCE_QUAL_GATE_FAILED",
 			wantCalls:  1,
+			wantExit:   gateTestInt64(0),
 		},
 	}
 	for _, test := range tests {
@@ -184,8 +186,9 @@ func TestRunRequiredGatesRequiresLaneLifetimeApplicationBinding(t *testing.T) {
 				&gateTestLogSink{},
 			)
 			requireGateRunError(t, err, test.wantCode)
-			if len(records) == 0 || records[0].Status != test.wantStatus || records[0].ExitCode != nil {
-				t.Fatalf("binding failure first record = %#v, want %s with null exit", records, test.wantStatus)
+			if len(records) == 0 || records[0].Status != test.wantStatus ||
+				!gateTestEqualInt64(records[0].ExitCode, test.wantExit) {
+				t.Fatalf("binding failure first record = %#v, want %s with exit %#v", records, test.wantStatus, test.wantExit)
 			}
 			requireLaterNotRun(t, records, 0)
 			if len(executor.requests) != test.wantCalls {
@@ -484,7 +487,7 @@ func (executor *gateTestExecutor) BindApplications(
 	}
 	executor.boundApplications = append(executor.boundApplications, cloned)
 	if executor.bindErr != nil {
-		return nil, executor.bindErr
+		return executor.binding, executor.bindErr
 	}
 	if executor.binding == nil {
 		executor.binding = &gateTestApplicationBinding{}
