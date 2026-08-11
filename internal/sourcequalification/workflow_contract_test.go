@@ -833,12 +833,16 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 		requireWorkflowScriptFragments(t, pre, append([]string{
 			"sha256sum", "actual_tool_manifest_digest", "actual_executable_digest",
 			"SQ_TOOL_MANIFEST_DIGEST", "SQ_EXECUTABLE_DIGEST",
+			`test "$actual_tool_manifest_digest" = "$SQ_TOOL_MANIFEST_DIGEST"`,
+			`test "$actual_executable_digest" = "$SQ_EXECUTABLE_DIGEST"`,
 		}, inventory...)...)
 		requireWorkflowScriptFragments(t, post, append([]string{"sha256sum", "cmp"}, inventory...)...)
 	} else {
 		requireWorkflowScriptFragments(t, pre, append([]string{
 			"Get-FileHash", "actualToolManifestDigest", "actualExecutableDigest",
 			"SQ_TOOL_MANIFEST_DIGEST", "SQ_EXECUTABLE_DIGEST",
+			"$actualToolManifestDigest -cne $env:SQ_TOOL_MANIFEST_DIGEST",
+			"$actualExecutableDigest -cne $env:SQ_EXECUTABLE_DIGEST",
 		}, inventory...)...)
 		requireWorkflowScriptFragments(t, post, append([]string{"Get-FileHash", "Compare-Object"}, inventory...)...)
 	}
