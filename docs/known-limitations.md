@@ -33,6 +33,26 @@ contract.
 - Consequently `RP-M0-QUAL` is BLOCKED, not PASS. This controller does not
   close M0 overall, any M1-M7 milestone, or stable release qualification.
 
+## Unreleased required container-journey check boundary
+
+- The required `ubuntu-24.04` Docker/Podman matrix is a GitHub-hosted rolling
+  runner check. Its log records the actual runner image, kernel, cgroup,
+  backend, and image inspection for that execution; the label is not an
+  owner-controlled immutable or fixed qualification VM.
+- Docker uses the hosted rootful daemon. Podman is exercised directly as the
+  runner user and may not fall back to `sudo podman`; a rootful Podman result
+  would be a different tuple.
+- The exact digest-pinned images and `--pull=never` execution prevent a mutable
+  tag fallback. They do not provide signature issuer identity, transparency,
+  trusted time, revocation, or release approval.
+- Only four healthy Node/Python CLI/HTTP journeys run in this required matrix.
+  They prove the scoped functional, repeat, and cleanup assertions when the
+  exact job passes; adversarial and Docker-only observer suites remain separate.
+- Podman still has unavailable Docker engine-diff, activity-notification, and
+  peer-port observations. A healthy journey remains capability `INCOMPLETE`
+  and overall `INCONCLUSIVE`; this check does not complete M1, M2, M6, or a
+  stable release.
+
 ## Alpha.33 offline trust-policy authority-chain boundary
 
 - Only explicit offline chains of 2..8 existing Alpha.32 transitions are

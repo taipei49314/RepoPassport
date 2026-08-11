@@ -60,6 +60,25 @@ immutable gate applications, complete PASS receipts, independent offline
 replay, and no required skip. M1-M7, external trust, independent review, and
 stable release qualification remain unchanged and incomplete.
 
+## Unreleased required Docker and Podman healthy-journey check
+
+The ordinary CI workflow includes a required Linux `amd64` matrix for the
+existing Docker and Podman command backends. Each fresh job pulls the exact
+approved digest-pinned Node and Python images, records the checkout, runner,
+kernel, cgroup, engine, and selected image details, and runs only the named
+healthy Node/Python CLI and single-service HTTP journeys. The named test
+requires functional `PASS`, reproducibility `STABLE`, cleanup
+`ALLOWED_RESIDUE`, exact configured repeat counts, and confirmed removal of
+every container created by the controller.
+
+This is a non-versioned current-source CI check, not a release receipt or a
+fixed-VM qualification. Podman continues to report the Docker-only engine
+diff, activity-notification, and peer-port observers as unavailable. Healthy
+results therefore remain capability `INCOMPLETE` and overall `INCONCLUSIVE`.
+The matrix can advance only the `RP-M1-JOURNEY` functional/reproducibility/
+cleanup row after a first-attempt exact merged-SHA run; it does not complete
+M1, any M2 observer row, external trust, or stable release qualification.
+
 ## Alpha.33 bounded offline policy-authority transition chain
 
 Alpha.33 composes 2..8 existing Alpha.32 transition envelopes in one canonical
