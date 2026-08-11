@@ -232,10 +232,9 @@ func TestParseCanonicalReceiptAcceptsBlockedGateWithObservedTimes(t *testing.T) 
 }
 
 func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *testing.T) {
-	archive := []byte("canonical archive bytes")
-	manifest := []byte(`{"artifactType":"repopass-source-archive-manifest"}`)
-	linux := receiptParserCanonical(t, LaneLinuxAMD64, archive, manifest, nil)
-	windows := receiptParserCanonical(t, LaneWindowsAMD64, archive, manifest, nil)
+	archive, manifest, tree := receiptParserValidSourcePackage(t)
+	linux := receiptParserCanonicalWithTree(t, LaneLinuxAMD64, archive, manifest, tree, nil)
+	windows := receiptParserCanonicalWithTree(t, LaneWindowsAMD64, archive, manifest, tree, nil)
 	if err := verifyReceiptPackageBindings(archive, manifest, linux, windows); err != nil {
 		t.Fatalf("verifyReceiptPackageBindings rejected exact pair: %v", err)
 	}
@@ -266,7 +265,7 @@ func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *test
 			archive:  archive,
 			manifest: manifest,
 			linux:    linux,
-			windows: receiptParserCanonical(t, LaneWindowsAMD64, archive, manifest, func(document map[string]any) {
+			windows: receiptParserCanonicalWithTree(t, LaneWindowsAMD64, archive, manifest, tree, func(document map[string]any) {
 				receiptParserSetWorkflowRunID(document, "987654321")
 			}),
 		},
@@ -275,7 +274,7 @@ func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *test
 			archive:  archive,
 			manifest: manifest,
 			linux:    linux,
-			windows: receiptParserCanonical(t, LaneWindowsAMD64, archive, manifest, func(document map[string]any) {
+			windows: receiptParserCanonicalWithTree(t, LaneWindowsAMD64, archive, manifest, tree, func(document map[string]any) {
 				receiptParserObject(document, "subject")["baseRevision"] = strings.Repeat("a", 40)
 			}),
 		},
@@ -283,7 +282,7 @@ func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *test
 			name:     "receipt claims other archive",
 			archive:  archive,
 			manifest: manifest,
-			linux: receiptParserCanonical(t, LaneLinuxAMD64, archive, manifest, func(document map[string]any) {
+			linux: receiptParserCanonicalWithTree(t, LaneLinuxAMD64, archive, manifest, tree, func(document map[string]any) {
 				source := receiptParserObject(document, "source")
 				receiptParserObject(source, "archive")["sha256"] = receiptParserSHA256([]byte("other archive"))
 			}),
@@ -298,6 +297,47 @@ func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *test
 			}
 		})
 	}
+}
+
+func receiptParserValidSourcePackage(t *testing.T) ([]byte, []byte, string) {
+	t.Helper()
+	files := []archiveFile{
+		{Path: "go.mod", GitMode: "100644", Data: []byte("module github.com/taipei49314/RepoPassport\n")},
+	}
+	tree, err := reconstructGitTreeSHA1(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := Subject{
+		Repository:      canonicalRepositoryURL,
+		ModulePath:      canonicalModulePath,
+		ModuleVersion:   canonicalModuleVersion,
+		GitObjectFormat: "sha1",
+		BaseRevision:    "0123456789abcdef0123456789abcdef01234567",
+		TestedRevision:  "89abcdef0123456789abcdef0123456789abcdef",
+		TreeSHA:         tree,
+	}
+	archive, manifest, err := buildSourcePackage(subject, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return archive, manifest, tree
+}
+
+func receiptParserCanonicalWithTree(
+	t *testing.T,
+	lane Lane,
+	archive, manifest []byte,
+	tree string,
+	mutate func(map[string]any),
+) []byte {
+	t.Helper()
+	return receiptParserCanonical(t, lane, archive, manifest, func(document map[string]any) {
+		receiptParserObject(document, "subject")["treeSHA"] = tree
+		if mutate != nil {
+			mutate(document)
+		}
+	})
 }
 
 func TestVerifyReceiptPackageBindingsRejectsManifestReceiptSubjectSplit(t *testing.T) {
