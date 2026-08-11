@@ -4,6 +4,33 @@ RepoPassport `v0.1.0-alpha.33` is an early reference implementation with a
 deliberately narrow truthful scope. This document is part of the product
 contract.
 
+## Unreleased current-source qualification boundary
+
+- The RFC-0002 controller is private CI tooling, not a shipped product command
+  or an external verifier. Its canonical package can prove structural and
+  byte-level consistency relative to supplied expectations; it does not prove
+  who operated the runner or approved a release.
+- Production has no authenticated, complete GitHub attempt-history provider.
+  It therefore reports BLOCKED before inspecting or executing source instead
+  of claiming ordinal 1 or hiding a prior failure.
+- Production has no lane-lifetime immutable authority for every executable,
+  loader, runtime, and toolchain dependency used by source gates. The OS gate
+  executor reports BLOCKED before execution; a pathname check or digest-only
+  precheck is not accepted as equivalent authority.
+- Linux network-none gates require a verified rootless user/PID/mount/network
+  namespace path. Windows network-none gates are BLOCKED until an enforceable
+  AppContainer, WFP, or equivalent boundary is implemented and verified.
+- GitHub Actions artifacts are untrusted transport. They do not supply
+  external trust roots, signer identity, trusted time, transparency,
+  revocation, an independent reviewer, or release promotion authority.
+- The supported filesystem model is a quiescent, operator-controlled runner.
+  Fixed-handle identities, no-follow traversal, bounded inventories, and
+  identity-bound rollback close observed substitution paths, but do not claim
+  isolation from a hostile administrator or same-principal writer; that wider
+  boundary belongs to M6.
+- Consequently `RP-M0-QUAL` is BLOCKED, not PASS. This controller does not
+  close M0 overall, any M1-M7 milestone, or stable release qualification.
+
 ## Alpha.33 offline trust-policy authority-chain boundary
 
 - Only explicit offline chains of 2..8 existing Alpha.32 transitions are

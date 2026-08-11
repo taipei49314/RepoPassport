@@ -12,6 +12,12 @@
   verifier, host-only kit helper, and verifier inside each strict portable kit.
   The gate binds the tested commit and clean-tree build settings and does not
   claim signer identity, trusted time, provenance, or overall verification.
+- Implement the private RFC-0002 current-source controller, canonical
+  lane/package/tool records, bounded no-follow Git and filesystem traversal,
+  identity-bound publication rollback, and offline subject replay. Production
+  remains BLOCKED until authenticated attempt history and lane-lifetime
+  immutable gate-application authority are available; no required skip is
+  treated as PASS.
 - `minimal-public-v1alpha3` accepts specification-valid
   `git:<40-lower-hex>` source identities so attestations can be built from Git
   worktrees. The base and derived frozen ruleset identities are advanced; this

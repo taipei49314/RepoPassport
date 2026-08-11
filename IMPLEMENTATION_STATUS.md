@@ -1,6 +1,6 @@
 # Implementation status
 
-Status date: 2026-08-09
+Status date: 2026-08-11
 
 RepoPassport `v0.1.0-alpha.33` is the current `v1alpha1` vertical slice. This
 source document does not claim completed Alpha.33 race, local/repro, fixed-VM,
@@ -30,6 +30,33 @@ portable-kit substitution. PR checks establish only implementation status.
 external-consumer, release-binary, kit, and exact merged default-branch checks
 pass with no required skip. This module identity is not repository-owner or
 signer authentication, trusted time, provenance, or overall verification.
+
+## Unreleased current-source qualification controller
+
+RFC-0002 defines and this source implements the private, fail-closed
+current-source qualification data plane: exact Git subject inspection,
+canonical USTAR source and manifest generation, strict Linux/Windows receipts,
+bounded source gates, attempt tombstones, exact package/tool assembly, and
+empty-directory offline subject verification. Filesystem traversal is bounded
+and no-follow; output publication is identity-bound and rechecks the source
+before retaining a lane artifact.
+
+The production controller intentionally cannot authorize a PASS yet. It has no
+authenticated complete GitHub attempt-history provider, and the OS gate
+executor has no lane-lifetime authority that can hold the executable, loader,
+runtime, and toolchain identities immutable. Linux has a rootless network
+namespace enforcement path; Windows reports the network-denied gate BLOCKED
+until an equally enforceable platform boundary exists. Missing authority is
+never converted to a skip or PASS, and no receipt from this implementation
+closes `RP-M0-QUAL`.
+
+The GitHub workflow is transport and replay automation only. Actions artifacts
+are not external trust, signer identity, trusted time, provenance, or release
+approval. `RP-M0-QUAL` remains BLOCKED until both required lanes run on the
+exact merged default-branch SHA with authenticated first-attempt history,
+immutable gate applications, complete PASS receipts, independent offline
+replay, and no required skip. M1-M7, external trust, independent review, and
+stable release qualification remain unchanged and incomplete.
 
 ## Alpha.33 bounded offline policy-authority transition chain
 
