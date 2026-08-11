@@ -3,19 +3,20 @@ package main
 // Production facade adapter contract under test:
 //
 //	type productionControllerCommandOperations struct {
+//		produceLane     func(context.Context, sourcequalification.ProduceLaneRequest) (sourcequalification.ControllerResult, error)
 //		assemble        func(sourcequalification.AssembleRequest) (sourcequalification.ControllerResult, error)
 //		assembleTools   func(sourcequalification.AssembleToolsRequest) (sourcequalification.ControllerResult, error)
 //		verifyIntegrity func(sourcequalification.VerifyIntegrityRequest) (sourcequalification.ControllerResult, error)
 //		verifySubject   func(sourcequalification.VerifySubjectRequest) (sourcequalification.ControllerResult, error)
 //	}
 //
-// The four available methods map every private CLI request field into the
-// exported internal-only typed facade. ProduceLane remains explicitly
-// unavailable until its runtime facade exists. run uses this production
-// adapter by default, so a valid available command is never reported as a
-// parser/deferred-command failure.
+// The five available methods map every private CLI request field into the
+// exported internal-only typed facade. run uses this production adapter by
+// default, so a valid available command is never reported as a parser/deferred-
+// command failure.
 
 import (
+	"context"
 	"errors"
 	"math"
 	"os"
@@ -30,6 +31,19 @@ func TestProductionControllerOperationsMapEveryFacadeRequestField(t *testing.T) 
 	fixture := newCLICommandFixture(t)
 	const maximumAttempt = int(math.MaxInt32)
 
+	produceLaneInput := produceLaneCommandRequest{
+		RepoRoot:               fixture.repoRoot,
+		Lane:                   "linux-amd64",
+		Event:                  "push",
+		ExpectedRef:            "refs/heads/main",
+		ExpectedBaseRevision:   fixture.baseRevision,
+		ExpectedTestedRevision: fixture.testedRevision,
+		WorkflowRunID:          fixture.workflowRunID,
+		WorkflowRunAttempt:     1,
+		PrivateLogRoot:         fixture.privateLogRoot,
+		OutputDir:              fixture.laneOutputDir,
+	}
+	cliSetExpectedTreeSHA(t, &produceLaneInput, fixture.treeSHA)
 	assembleInput := assembleCommandRequest{
 		LinuxDir:                   fixture.linuxDir,
 		WindowsDir:                 fixture.windowsDir,
@@ -63,11 +77,19 @@ func TestProductionControllerOperationsMapEveryFacadeRequestField(t *testing.T) 
 		ExpectedExecutableDigest:   fixture.executableDigest,
 	}
 
+	var gotProduceLane sourcequalification.ProduceLaneRequest
 	var gotAssemble sourcequalification.AssembleRequest
 	var gotAssembleTools sourcequalification.AssembleToolsRequest
 	var gotVerifyIntegrity sourcequalification.VerifyIntegrityRequest
 	var gotVerifySubject sourcequalification.VerifySubjectRequest
 	results := map[string]sourcequalification.ControllerResult{
+		commandProduceLane: {
+			Code:                codeOK,
+			QualificationStatus: statusPass,
+			SHA256:              notApplicable,
+			TestedRevision:      fixture.testedRevision,
+			TreeSHA:             fixture.treeSHA,
+		},
 		commandAssemble: {
 			Code:                codeOK,
 			QualificationStatus: statusPass,
@@ -98,6 +120,10 @@ func TestProductionControllerOperationsMapEveryFacadeRequestField(t *testing.T) 
 		},
 	}
 	operations := productionControllerCommandOperations{
+		produceLane: func(_ context.Context, request sourcequalification.ProduceLaneRequest) (sourcequalification.ControllerResult, error) {
+			gotProduceLane = request
+			return results[commandProduceLane], nil
+		},
 		assemble: func(request sourcequalification.AssembleRequest) (sourcequalification.ControllerResult, error) {
 			gotAssemble = request
 			return results[commandAssemble], nil
@@ -121,6 +147,7 @@ func TestProductionControllerOperationsMapEveryFacadeRequestField(t *testing.T) 
 		invoke     func() (controllerRecord, error)
 		wantResult sourcequalification.ControllerResult
 	}{
+		{commandProduceLane, func() (controllerRecord, error) { return operations.ProduceLane(produceLaneInput) }, results[commandProduceLane]},
 		{commandAssemble, func() (controllerRecord, error) { return operations.Assemble(assembleInput) }, results[commandAssemble]},
 		{commandAssembleTools, func() (controllerRecord, error) { return operations.AssembleTools(assembleToolsInput) }, results[commandAssembleTools]},
 		{commandVerifyIntegrity, func() (controllerRecord, error) { return operations.VerifyIntegrity(verifyIntegrityInput) }, results[commandVerifyIntegrity]},
@@ -136,6 +163,20 @@ func TestProductionControllerOperationsMapEveryFacadeRequestField(t *testing.T) 
 		})
 	}
 
+	wantProduceLane := sourcequalification.ProduceLaneRequest{
+		RepoRoot:               produceLaneInput.RepoRoot,
+		Lane:                   sourcequalification.Lane(produceLaneInput.Lane),
+		Event:                  produceLaneInput.Event,
+		ExpectedRef:            produceLaneInput.ExpectedRef,
+		ExpectedBaseRevision:   produceLaneInput.ExpectedBaseRevision,
+		ExpectedTestedRevision: produceLaneInput.ExpectedTestedRevision,
+		WorkflowRunID:          produceLaneInput.WorkflowRunID,
+		WorkflowRunAttempt:     int64(produceLaneInput.WorkflowRunAttempt),
+		PrivateLogRoot:         produceLaneInput.PrivateLogRoot,
+		OutputDir:              produceLaneInput.OutputDir,
+	}
+	cliSetExpectedTreeSHA(t, &wantProduceLane, fixture.treeSHA)
+	adapterRequireEqual(t, gotProduceLane, wantProduceLane)
 	adapterRequireEqual(t, gotAssemble, sourcequalification.AssembleRequest{
 		LinuxDir:                   assembleInput.LinuxDir,
 		WindowsDir:                 assembleInput.WindowsDir,

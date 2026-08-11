@@ -34,6 +34,30 @@ const (
 	cliSubjectMatch        = "SUBJECT_MATCH"
 )
 
+func TestProduceLaneCommandRequestExactTypedSurface(t *testing.T) {
+	typeOf := reflect.TypeOf(produceLaneCommandRequest{})
+	want := []string{
+		"RepoRoot",
+		"Lane",
+		"Event",
+		"ExpectedRef",
+		"ExpectedBaseRevision",
+		"ExpectedTestedRevision",
+		"ExpectedTreeSHA",
+		"WorkflowRunID",
+		"WorkflowRunAttempt",
+		"PrivateLogRoot",
+		"OutputDir",
+	}
+	got := make([]string, typeOf.NumField())
+	for index := 0; index < typeOf.NumField(); index++ {
+		got[index] = typeOf.Field(index).Name
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("produceLaneCommandRequest fields = %#v, want exact %#v", got, want)
+	}
+}
+
 func TestRunControllerCommandsDispatchExactRequestsAndRecords(t *testing.T) {
 	fixture := newCLICommandFixture(t)
 
@@ -65,6 +89,7 @@ func TestRunControllerCommandsDispatchExactRequestsAndRecords(t *testing.T) {
 			PrivateLogRoot:         fixture.privateLogRoot,
 			OutputDir:              fixture.laneOutputDir,
 		}
+		cliSetExpectedTreeSHA(t, &want, fixture.treeSHA)
 		if !reflect.DeepEqual(operations.produceLaneRequest, want) {
 			t.Fatalf("produce-lane request mismatch\n got: %#v\nwant: %#v", operations.produceLaneRequest, want)
 		}
@@ -216,6 +241,7 @@ func TestRunControllerCommandsRejectsNonExactFlagGrammarBeforeDispatch(t *testin
 				cliReplaceMutation("event ref mismatch", flagExpectedRef, "refs/heads/other"),
 				cliReplaceMutation("invalid base revision", flagExpectedBaseRevision, strings.ToUpper(fixture.baseRevision)),
 				cliReplaceMutation("invalid tested revision", flagExpectedTestedRevision, fixture.testedRevision[:39]),
+				cliReplaceMutation("invalid expected tree", flagExpectedTree, strings.ToUpper(fixture.treeSHA)),
 				cliReplaceMutation("noncanonical workflow run id", flagWorkflowRunID, "01"),
 				cliReplaceMutation("zero workflow run attempt", flagWorkflowRunAttempt, "0"),
 				cliReplaceMutation("overflow workflow run attempt", flagWorkflowRunAttempt, "2147483648"),
@@ -516,11 +542,25 @@ func (fixture cliCommandFixture) produceLaneArgs() []string {
 		flagExpectedRef, "refs/heads/main",
 		flagExpectedBaseRevision, fixture.baseRevision,
 		flagExpectedTestedRevision, fixture.testedRevision,
+		flagExpectedTree, fixture.treeSHA,
 		flagWorkflowRunID, fixture.workflowRunID,
 		flagWorkflowRunAttempt, "1",
 		flagPrivateLogRoot, fixture.privateLogRoot,
 		flagOutDir, fixture.laneOutputDir,
 	}
+}
+
+func cliSetExpectedTreeSHA(t *testing.T, request any, treeSHA string) {
+	t.Helper()
+	value := reflect.ValueOf(request)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		t.Fatal("expected a non-nil pointer to a produce-lane request")
+	}
+	field := value.Elem().FieldByName("ExpectedTreeSHA")
+	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.String {
+		t.Fatalf("%s is missing writable string ExpectedTreeSHA", value.Elem().Type())
+	}
+	field.SetString(treeSHA)
 }
 
 func (fixture cliCommandFixture) assembleArgs() []string {

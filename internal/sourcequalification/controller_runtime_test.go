@@ -10,6 +10,7 @@ package sourcequalification
 //		ExpectedRef            string
 //		ExpectedBaseRevision   string
 //		ExpectedTestedRevision string
+//		ExpectedTreeSHA        string
 //		WorkflowRunID          string
 //		WorkflowRunAttempt     int64
 //		PrivateLogRoot         string
@@ -26,11 +27,15 @@ package sourcequalification
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -46,6 +51,7 @@ func TestProduceLaneFacadeExactTypedSurface(t *testing.T) {
 		"ExpectedRef",
 		"ExpectedBaseRevision",
 		"ExpectedTestedRevision",
+		"ExpectedTreeSHA",
 		"WorkflowRunID",
 		"WorkflowRunAttempt",
 		"PrivateLogRoot",
@@ -65,6 +71,88 @@ func TestProductionProduceLaneStageBlocksWithoutAuthenticatedHistory(t *testing.
 	}
 	if _, statErr := os.Lstat(request.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("unavailable production history published output: %v", statErr)
+	}
+}
+
+func TestProduceLaneRejectsInvalidExpectedTreeBeforeRuntimeAdapters(t *testing.T) {
+	request := controllerRuntimeRequest(t)
+	request.Lane = controllerRuntimeHostLane(t)
+	controllerRuntimeSetExpectedTreeSHA(t, &request, strings.Repeat("A", 40))
+
+	result, err := ProduceLane(context.Background(), request)
+	controllerRuntimeRequireFixedFailure(
+		t,
+		result,
+		err,
+		controllerCodeInvalidInput,
+		StatusFail,
+	)
+	for _, path := range []string{request.PrivateLogRoot, request.OutputDir} {
+		if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("invalid expected tree reached a runtime adapter at %q: %v", filepath.Base(path), statErr)
+		}
+	}
+}
+
+func TestProduceLanePublishesExactPreconstructionTombstoneWhenAuthenticatedHistoryIsUnavailable(t *testing.T) {
+	request := controllerRuntimeRequest(t)
+	request.Lane = controllerRuntimeHostLane(t)
+	controllerRuntimeSetExpectedTreeSHA(t, &request, strings.Repeat("3", 40))
+
+	result, err := ProduceLane(context.Background(), request)
+	controllerRuntimeRequireFixedFailure(
+		t,
+		result,
+		err,
+		controllerCodeGateBlocked,
+		StatusBlocked,
+	)
+
+	raw, readErr := os.ReadFile(filepath.Join(request.OutputDir, attemptTombstoneFilename))
+	if readErr != nil {
+		t.Fatalf("read authenticated-history tombstone: %v", readErr)
+	}
+	document, parseErr := parseCanonicalAttemptTombstone(raw)
+	if parseErr != nil {
+		t.Fatalf("parse authenticated-history tombstone: %v", parseErr)
+	}
+	runIdentityBytes := strings.Join([]string{
+		"github-actions",
+		canonicalWorkflowRepository,
+		canonicalWorkflowPath,
+		request.Event,
+		request.ExpectedRef,
+		request.WorkflowRunID,
+		strconv.FormatInt(request.WorkflowRunAttempt, 10),
+		request.ExpectedTestedRevision,
+	}, "\x00")
+	runIdentityDigest := sha256.Sum256([]byte(runIdentityBytes))
+	qualificationRunID := "sha256:" + hex.EncodeToString(runIdentityDigest[:])
+	want := qualificationAttemptTombstone{
+		ArtifactType:           attemptTombstoneArtifactType,
+		AttemptID:              qualificationRunID + ":" + string(request.Lane) + ":1",
+		Code:                   controllerCodeGateBlocked,
+		ExpectedBaseRevision:   request.ExpectedBaseRevision,
+		ExpectedTestedRevision: request.ExpectedTestedRevision,
+		ExpectedTreeSHA:        strings.Repeat("3", 40),
+		Lane:                   request.Lane,
+		Ordinal:                1,
+		QualificationRunID:     qualificationRunID,
+		QualificationStatus:    StatusBlocked,
+		SchemaVersion:          attemptTombstoneSchemaVersion,
+		WorkflowRunAttempt:     request.WorkflowRunAttempt,
+		WorkflowRunID:          request.WorkflowRunID,
+	}
+	if document != want {
+		t.Fatalf("authenticated-history tombstone mismatch\n got: %#v\nwant: %#v", document, want)
+	}
+	entries, readDirErr := os.ReadDir(request.OutputDir)
+	if readDirErr != nil || len(entries) != 1 || entries[0].Name() != attemptTombstoneFilename ||
+		!entries[0].Type().IsRegular() {
+		t.Fatalf("preconstruction artifact inventory = %v, %v; want one exact regular tombstone", entries, readDirErr)
+	}
+	if _, statErr := os.Lstat(request.PrivateLogRoot); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("private runtime workspace survived tombstone publication: %v", statErr)
 	}
 }
 
@@ -159,37 +247,46 @@ func TestProduceLaneRuntimePromotesSafeNonPassingAttemptAfterCleanup(t *testing.
 	}
 }
 
-func TestProduceLaneRuntimePreconstructionFailureDoesNotForgeATombstone(t *testing.T) {
-	request := controllerRuntimeRequest(t)
-	fake := newControllerRuntimeFake(request)
-	fake.outcome = produceLaneStageOutcome{
-		StageReady:          false,
-		QualificationStatus: StatusFail,
-		Code:                controllerCodeArchiveInvalid,
+func TestProduceLaneRuntimePublishesAllowlistedPreconstructionTombstoneAfterCleanupAndWithdrawal(t *testing.T) {
+	tests := []struct {
+		name   string
+		status QualificationStatus
+		code   string
+	}{
+		{name: "fail", status: StatusFail, code: controllerCodeArchiveInvalid},
+		{name: "blocked", status: StatusBlocked, code: controllerCodeGateBlocked},
+		{name: "not run", status: StatusNotRun, code: controllerCodeGateNotRun},
 	}
-	fake.produceErr = errors.New(controllerRuntimePrivateMarker + " source path " + request.RepoRoot)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := controllerRuntimeRequest(t)
+			fake := newControllerRuntimeFake(request)
+			fake.outcome = produceLaneStageOutcome{
+				StageReady:          false,
+				QualificationStatus: test.status,
+				Code:                test.code,
+			}
+			fake.produceErr = errors.New(controllerRuntimePrivateMarker + " source path " + request.RepoRoot)
 
-	result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
-	controllerRuntimeRequireFixedFailure(
-		t,
-		result,
-		err,
-		controllerCodeArchiveInvalid,
-		StatusFail,
-	)
-	controllerRuntimeRequireEvents(t, fake.events, []string{
-		"workspace:create",
-		"stage:allocate",
-		"producer:run",
-		"workspace:cleanup",
-		"stage:withdraw",
-	})
-	if fake.stageState != "withdrawn" || fake.outputKind != "absent" {
-		t.Fatalf("preconstruction state = stage %q output %q, want no public output",
-			fake.stageState, fake.outputKind)
-	}
-	if fake.tombstoneCalls != 0 {
-		t.Fatalf("preconstruction failure forged %d tombstones without a verified tree identity", fake.tombstoneCalls)
+			result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
+			controllerRuntimeRequireFixedFailure(t, result, err, test.code, test.status)
+			controllerRuntimeRequireEvents(t, fake.events, []string{
+				"workspace:create",
+				"stage:allocate",
+				"producer:run",
+				"workspace:cleanup",
+				"stage:withdraw",
+				"tombstone:publish",
+			})
+			if fake.stageState != "withdrawn" || fake.outputKind != "tombstone" {
+				t.Fatalf("preconstruction state = stage %q output %q, want withdrawn tombstone",
+					fake.stageState, fake.outputKind)
+			}
+			if fake.tombstoneCalls != 1 || fake.tombstoneCode != test.code || fake.tombstoneStatus != test.status {
+				t.Fatalf("preconstruction tombstone = calls %d code %q status %q",
+					fake.tombstoneCalls, fake.tombstoneCode, fake.tombstoneStatus)
+			}
+		})
 	}
 }
 
@@ -289,6 +386,63 @@ func TestProduceLaneRuntimeRejectsUnallowlistedProducerCodeWithoutDisclosure(t *
 	if fake.tombstoneCalls != 0 || fake.outputKind != "absent" || fake.stageState != "withdrawn" {
 		t.Fatalf("invalid producer result created public evidence: calls=%d output=%q stage=%q",
 			fake.tombstoneCalls, fake.outputKind, fake.stageState)
+	}
+}
+
+func TestProduceLaneRuntimeDoesNotPublishMalformedPreconstructionOutcome(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     QualificationStatus
+		code       string
+		produceErr error
+	}{
+		{
+			name:       "allowlisted code with mismatched status",
+			status:     StatusFail,
+			code:       controllerCodeGateBlocked,
+			produceErr: errors.New(controllerRuntimePrivateMarker),
+		},
+		{
+			name:       "preconstruction pass",
+			status:     StatusPass,
+			produceErr: errors.New(controllerRuntimePrivateMarker),
+		},
+		{
+			name:   "non-pass without producer error",
+			status: StatusNotRun,
+			code:   controllerCodeGateNotRun,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := controllerRuntimeRequest(t)
+			fake := newControllerRuntimeFake(request)
+			fake.outcome = produceLaneStageOutcome{
+				QualificationStatus: test.status,
+				Code:                test.code,
+			}
+			fake.produceErr = test.produceErr
+
+			result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
+			controllerRuntimeRequireFixedFailure(
+				t,
+				result,
+				err,
+				controllerCodeInvalidInput,
+				StatusFail,
+			)
+			controllerRuntimeRequireEvents(t, fake.events, []string{
+				"workspace:create",
+				"stage:allocate",
+				"producer:run",
+				"workspace:cleanup",
+				"stage:withdraw",
+			})
+			if fake.tombstoneCalls != 0 || fake.outputKind != "absent" || fake.stageState != "withdrawn" {
+				t.Fatalf("malformed outcome created public evidence: calls=%d output=%q stage=%q",
+					fake.tombstoneCalls, fake.outputKind, fake.stageState)
+			}
+		})
 	}
 }
 
@@ -416,7 +570,7 @@ func (fake *controllerRuntimeFake) dependencies() produceLaneRuntime {
 func controllerRuntimeRequest(t *testing.T) ProduceLaneRequest {
 	t.Helper()
 	root := t.TempDir()
-	return ProduceLaneRequest{
+	request := ProduceLaneRequest{
 		RepoRoot:               filepath.Join(root, "checkout-"+controllerRuntimePrivateMarker),
 		Lane:                   LaneLinuxAMD64,
 		Event:                  "push",
@@ -427,6 +581,48 @@ func controllerRuntimeRequest(t *testing.T) ProduceLaneRequest {
 		WorkflowRunAttempt:     1,
 		PrivateLogRoot:         filepath.Join(root, "private-logs-"+controllerRuntimePrivateMarker),
 		OutputDir:              filepath.Join(root, "public-attempt"),
+	}
+	controllerRuntimeSetExpectedTreeSHAIfPresent(&request, strings.Repeat("3", 40))
+	return request
+}
+
+func controllerRuntimeSetExpectedTreeSHAIfPresent(request any, treeSHA string) {
+	value := reflect.ValueOf(request)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return
+	}
+	field := value.Elem().FieldByName("ExpectedTreeSHA")
+	if field.IsValid() && field.CanSet() && field.Kind() == reflect.String {
+		field.SetString(treeSHA)
+	}
+}
+
+func controllerRuntimeSetExpectedTreeSHA(t *testing.T, request any, treeSHA string) {
+	t.Helper()
+	value := reflect.ValueOf(request)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		t.Fatal("expected a non-nil pointer to a produce-lane request")
+	}
+	field := value.Elem().FieldByName("ExpectedTreeSHA")
+	if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.String {
+		t.Fatalf("%s is missing writable string ExpectedTreeSHA", value.Elem().Type())
+	}
+	field.SetString(treeSHA)
+}
+
+func controllerRuntimeHostLane(t *testing.T) Lane {
+	t.Helper()
+	if runtime.GOARCH != "amd64" {
+		t.Skipf("production lane controller supports amd64, running %s", runtime.GOARCH)
+	}
+	switch runtime.GOOS {
+	case "linux":
+		return LaneLinuxAMD64
+	case "windows":
+		return LaneWindowsAMD64
+	default:
+		t.Skipf("production lane controller does not support %s", runtime.GOOS)
+		return ""
 	}
 }
 
