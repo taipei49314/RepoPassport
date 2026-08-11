@@ -72,10 +72,30 @@ func parseCanonicalToolManifest(
 	expected Subject,
 	linuxController, windowsController []byte,
 ) (sourceQualificationToolManifest, error) {
-	var result sourceQualificationToolManifest
 	if validateSourceSubject(expected) != nil || len(linuxController) == 0 || len(windowsController) == 0 {
-		return result, errToolManifestInput
+		return sourceQualificationToolManifest{}, errToolManifestInput
 	}
+	result, err := decodeCanonicalToolManifest(raw)
+	if err != nil {
+		return sourceQualificationToolManifest{}, err
+	}
+	want := expectedToolManifest(expected, linuxController, windowsController)
+	if result.ArtifactType != want.ArtifactType ||
+		result.SchemaVersion != want.SchemaVersion ||
+		result.Subject != want.Subject ||
+		len(result.Tools) != len(want.Tools) {
+		return sourceQualificationToolManifest{}, errToolManifestContract
+	}
+	for index := range want.Tools {
+		if result.Tools[index] != want.Tools[index] {
+			return sourceQualificationToolManifest{}, errToolManifestContract
+		}
+	}
+	return result, nil
+}
+
+func decodeCanonicalToolManifest(raw []byte) (sourceQualificationToolManifest, error) {
+	var result sourceQualificationToolManifest
 	if len(raw) == 0 || len(raw) > toolManifestMaxBytes {
 		return result, errToolManifestBytes
 	}
@@ -99,18 +119,6 @@ func parseCanonicalToolManifest(
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
 		return sourceQualificationToolManifest{}, errToolManifestShape
-	}
-	want := expectedToolManifest(expected, linuxController, windowsController)
-	if result.ArtifactType != want.ArtifactType ||
-		result.SchemaVersion != want.SchemaVersion ||
-		result.Subject != want.Subject ||
-		len(result.Tools) != len(want.Tools) {
-		return sourceQualificationToolManifest{}, errToolManifestContract
-	}
-	for index := range want.Tools {
-		if result.Tools[index] != want.Tools[index] {
-			return sourceQualificationToolManifest{}, errToolManifestContract
-		}
 	}
 	return result, nil
 }
