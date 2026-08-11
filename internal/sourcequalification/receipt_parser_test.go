@@ -125,6 +125,18 @@ func TestParseCanonicalReceiptRejectsCanonicalContractTampering(t *testing.T) {
 			},
 		},
 		{
+			name: "platform private path",
+			mutate: func(document map[string]any) {
+				receiptParserObject(document, "platform")["runnerImage"] = `C:\Users\private-user\runner-image`
+			},
+		},
+		{
+			name: "platform credential candidate",
+			mutate: func(document map[string]any) {
+				receiptParserObject(document, "platform")["runnerImageVersion"] = "ghp_0123456789abcdefghijklmnop"
+			},
+		},
+		{
 			name: "gate argv changed",
 			mutate: func(document map[string]any) {
 				gate := receiptParserArray(document, "gates")[0].(map[string]any)
@@ -196,6 +208,29 @@ func TestParseCanonicalReceiptRejectsCanonicalContractTampering(t *testing.T) {
 	}
 }
 
+func TestParseCanonicalReceiptAcceptsBlockedGateWithObservedTimes(t *testing.T) {
+	archive := []byte("canonical archive bytes")
+	manifest := []byte(`{"artifactType":"repopass-source-archive-manifest"}`)
+	raw := receiptParserCanonical(t, LaneLinuxAMD64, archive, manifest, func(document map[string]any) {
+		gates := receiptParserArray(document, "gates")
+		blocked := gates[0].(map[string]any)
+		blocked["exitCode"] = nil
+		blocked["status"] = "BLOCKED"
+		for _, value := range gates[1:] {
+			gate := value.(map[string]any)
+			gate["exitCode"] = nil
+			gate["finishedAt"] = nil
+			gate["startedAt"] = nil
+			gate["status"] = "NOT_RUN"
+		}
+		document["qualificationStatus"] = "BLOCKED"
+		receiptParserObject(document, "execution")["skippedGateCount"] = int64(len(gates) - 1)
+	})
+	if _, err := parseCanonicalReceipt(raw, LaneLinuxAMD64); err != nil {
+		t.Fatalf("parseCanonicalReceipt rejected RFC BLOCKED gate: %v", err)
+	}
+}
+
 func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *testing.T) {
 	archive := []byte("canonical archive bytes")
 	manifest := []byte(`{"artifactType":"repopass-source-archive-manifest"}`)
@@ -262,6 +297,34 @@ func TestVerifyReceiptPackageBindingsRejectsByteAndCrossLaneSubstitution(t *test
 				t.Fatal("verifyReceiptPackageBindings accepted substituted package inputs")
 			}
 		})
+	}
+}
+
+func TestVerifyReceiptPackageBindingsRejectsManifestReceiptSubjectSplit(t *testing.T) {
+	files := []archiveFile{
+		{Path: "go.mod", GitMode: "100644", Data: []byte("module github.com/taipei49314/RepoPassport\n")},
+	}
+	tree, err := reconstructGitTreeSHA1(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestSubject := Subject{
+		Repository:      canonicalRepositoryURL,
+		ModulePath:      canonicalModulePath,
+		ModuleVersion:   canonicalModuleVersion,
+		GitObjectFormat: "sha1",
+		BaseRevision:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		TestedRevision:  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		TreeSHA:         tree,
+	}
+	archive, manifest, err := buildSourcePackage(manifestSubject, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linux := receiptParserCanonical(t, LaneLinuxAMD64, archive, manifest, nil)
+	windows := receiptParserCanonical(t, LaneWindowsAMD64, archive, manifest, nil)
+	if err := verifyReceiptPackageBindings(archive, manifest, linux, windows); err == nil {
+		t.Fatal("receipt subject split from the parsed source manifest was accepted")
 	}
 }
 
