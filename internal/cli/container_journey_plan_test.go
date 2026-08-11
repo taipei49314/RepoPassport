@@ -4,7 +4,39 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/taipei49314/RepoPassport/internal/acquisition"
+	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/planner"
 )
+
+func resolveContainerHealthyJourneyPlan(
+	ctx context.Context,
+	manifestPath string,
+) (domain.ResolvedPlan, error) {
+	absoluteManifest, err := filepath.Abs(manifestPath)
+	if err != nil {
+		return domain.ResolvedPlan{}, err
+	}
+	document, err := manifest.Load(absoluteManifest)
+	if err != nil {
+		return domain.ResolvedPlan{}, err
+	}
+	provider := acquisition.NewLocalProvider()
+	resolved, err := provider.Resolve(ctx, domain.SourceRef{
+		Kind:  "local",
+		Value: filepath.Dir(absoluteManifest),
+	})
+	if err != nil {
+		return domain.ResolvedPlan{}, err
+	}
+	snapshot, err := provider.Fetch(ctx, resolved)
+	if err != nil {
+		return domain.ResolvedPlan{}, err
+	}
+	return planner.Resolve(document, snapshot, "quickstart")
+}
 
 func TestContainerHealthyJourneyPlanResolverMatchesCLI(t *testing.T) {
 	t.Parallel()

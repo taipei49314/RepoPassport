@@ -207,19 +207,10 @@ func TestContainerHealthyJourneys(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolve fixture manifest: %v", err)
 			}
-			document, err := manifest.Load(manifestPath)
-			if err != nil {
-				t.Fatalf("load fixture manifest: %v", err)
-			}
-			fixtureRoot := filepath.Dir(manifestPath)
-			snapshot, err := acquisition.NewLocalProvider().Fetch(
+			resolvedPlan, err := resolveContainerHealthyJourneyPlan(
 				context.Background(),
-				domain.ResolvedSource{Kind: "local", LocalPath: fixtureRoot},
+				manifestPath,
 			)
-			if err != nil {
-				t.Fatalf("snapshot fixture: %v", err)
-			}
-			resolvedPlan, err := planner.Resolve(document, snapshot, "quickstart")
 			if err != nil {
 				t.Fatalf("resolve fixture plan: %v", err)
 			}
@@ -272,6 +263,9 @@ func TestContainerHealthyJourneys(t *testing.T) {
 			decodeJSON(t, response.Data, &data)
 			result := data.Verification
 			if result.Plan.PlanDigest != resolvedPlan.PlanDigest ||
+				result.Plan.Scenario != resolvedPlan.Scenario ||
+				result.Plan.Environment != resolvedPlan.Environment ||
+				result.Plan.ResolvedPlanSchemaVersion != resolvedPlan.SchemaVersion ||
 				result.Plan.PolicyBundleDigest != resolvedPlan.PolicyBundleDigest ||
 				result.Plan.RepeatCount != resolvedPlan.RepeatCount ||
 				result.Plan.SuccessThreshold != resolvedPlan.SuccessThreshold ||
