@@ -405,6 +405,9 @@ func evaluateGateResult(
 	if result.TimedOut || result.Cancelled {
 		return StatusFail, nil, errGateFailed
 	}
+	if result.SourceChanged {
+		return StatusFail, validGateExitCode(result.ExitCode), errGateFailed
+	}
 	if result.Blocked {
 		if result.ExitCode != nil {
 			return StatusFail, nil, errGateFailed
@@ -419,23 +422,21 @@ func evaluateGateResult(
 	if executionErr != nil || *exitCode != 0 {
 		return StatusFail, exitCode, errGateFailed
 	}
-	if !gateSemanticPredicate(specification.ID, request, stdout, result.SourceChanged) {
+	if !gateSemanticPredicate(specification.ID, request, stdout) {
 		return StatusFail, exitCode, errGateFailed
 	}
 	return StatusPass, exitCode, nil
 }
 
-func gateSemanticPredicate(id string, request gateRunRequest, stdout []byte, sourceChanged bool) bool {
+func gateSemanticPredicate(id string, request gateRunRequest, stdout []byte) bool {
 	switch id {
 	case "RP-M0-QUAL-GO-VERSION":
 		want := "go version go1.26.5 " + request.GOOS + "/" + request.GOARCH + "\n"
 		return string(stdout) == want
 	case "RP-M0-QUAL-TIDY-DIFF":
-		return len(stdout) == 0 && !sourceChanged
+		return len(stdout) == 0
 	case "RP-M0-QUAL-FORMAT":
 		return len(stdout) == 0
-	case "RP-M0-QUAL-RELEASE-BUILD":
-		return !sourceChanged
 	default:
 		return true
 	}
