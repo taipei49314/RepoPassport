@@ -10,6 +10,7 @@ package sourcequalification
 import (
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -161,6 +162,100 @@ func TestAssembleQualificationPackageRejectsNonExactLaneEntries(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireExactPackageInventoryUsesBoundedReadsAndConfirmsEOF(t *testing.T) {
+	specifications := []packageFileSpec{
+		{name: "archive.tar"},
+		{name: "manifest.json"},
+		{name: "receipt.json"},
+	}
+	expectedEntries := []os.DirEntry{
+		packageInventoryDirEntry("archive.tar"),
+		packageInventoryDirEntry("manifest.json"),
+		packageInventoryDirEntry("receipt.json"),
+	}
+
+	tests := []struct {
+		name      string
+		responses []packageInventoryReadResponse
+		wantError bool
+		wantReads []int
+	}{
+		{
+			name: "exact inventory reaches EOF",
+			responses: []packageInventoryReadResponse{
+				{entries: expectedEntries},
+				{err: io.EOF},
+			},
+			wantReads: []int{len(specifications) + 1, 1},
+		},
+		{
+			name: "expected plus one is rejected without draining",
+			responses: []packageInventoryReadResponse{
+				{entries: append(
+					append([]os.DirEntry(nil), expectedEntries...),
+					packageInventoryDirEntry("unexpected.json"),
+				)},
+			},
+			wantError: true,
+			wantReads: []int{len(specifications) + 1},
+		},
+		{
+			name: "entry after exact first batch is rejected",
+			responses: []packageInventoryReadResponse{
+				{entries: expectedEntries},
+				{entries: []os.DirEntry{packageInventoryDirEntry("late.json")}},
+			},
+			wantError: true,
+			wantReads: []int{len(specifications) + 1, 1},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reader := &packageInventoryRecordingReader{responses: test.responses}
+			err := requireExactPackageInventory(reader, specifications)
+			if (err != nil) != test.wantError {
+				t.Fatalf("requireExactPackageInventory error = %v, wantError %v", err, test.wantError)
+			}
+			if len(reader.reads) != len(test.wantReads) {
+				t.Fatalf("ReadDir calls = %#v, want %#v", reader.reads, test.wantReads)
+			}
+			for index, want := range test.wantReads {
+				if reader.reads[index] != want {
+					t.Fatalf("ReadDir calls = %#v, want %#v", reader.reads, test.wantReads)
+				}
+			}
+		})
+	}
+}
+
+type packageInventoryReadResponse struct {
+	entries []os.DirEntry
+	err     error
+}
+
+type packageInventoryRecordingReader struct {
+	responses []packageInventoryReadResponse
+	reads     []int
+}
+
+func (reader *packageInventoryRecordingReader) ReadDir(n int) ([]os.DirEntry, error) {
+	reader.reads = append(reader.reads, n)
+	if len(reader.responses) == 0 {
+		return nil, errors.New("unexpected ReadDir call")
+	}
+	response := reader.responses[0]
+	reader.responses = reader.responses[1:]
+	return response.entries, response.err
+}
+
+type packageInventoryDirEntry string
+
+func (entry packageInventoryDirEntry) Name() string         { return string(entry) }
+func (packageInventoryDirEntry) IsDir() bool                { return false }
+func (packageInventoryDirEntry) Type() os.FileMode          { return 0 }
+func (packageInventoryDirEntry) Info() (os.FileInfo, error) { return nil, errors.New("unused") }
 
 func TestAssembleQualificationPackageRejectsCrossLaneByteSubstitution(t *testing.T) {
 	tests := []struct {
