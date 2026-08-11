@@ -28,6 +28,8 @@ const (
 	flagExpectedQualificationRunID = "--expected-qualification-run-id"
 	flagWorkflowRunID              = "--workflow-run-id"
 	flagWorkflowRunAttempt         = "--workflow-run-attempt"
+	flagExpectedWorkflowRunID      = "--expected-workflow-run-id"
+	flagExpectedWorkflowRunAttempt = "--expected-workflow-run-attempt"
 	flagPrivateLogRoot             = "--private-log-root"
 	flagOutDir                     = "--out-dir"
 	flagLinuxDir                   = "--linux-dir"
@@ -67,6 +69,10 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runWithControllerOperations(args, stdout, stderr, unavailableControllerCommandOperations{})
+}
+
+func runWithoutControllerOperations(args []string, stdout, stderr io.Writer) int {
 	// Public controller diagnostics never use stderr. Retain the parameter so
 	// callers can prove that flag parsing and underlying errors remain private.
 	_ = stderr
@@ -79,11 +85,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		exitCode = 0
 	} else if len(args) > 0 && args[0] == commandValidateSchemaJSON {
 		record, exitCode = runValidateSchemaJSON(args)
-	} else if len(args) > 0 && deferredCommand(args[0]) {
-		// These commands are part of the frozen interface but cannot report
-		// success until their production operations are implemented.
-		record = newControllerRecord(codeInvalidInput, controllerID, statusFail)
-		exitCode = 2
 	}
 
 	if !writeControllerRecord(stdout, record) {
@@ -163,6 +164,8 @@ var rfcCommandAndFlagVocabulary = [...]string{
 	flagExpectedQualificationRunID,
 	flagWorkflowRunID,
 	flagWorkflowRunAttempt,
+	flagExpectedWorkflowRunID,
+	flagExpectedWorkflowRunAttempt,
 	flagPrivateLogRoot,
 	flagOutDir,
 	flagLinuxDir,
