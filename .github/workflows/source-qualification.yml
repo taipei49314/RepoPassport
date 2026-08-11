@@ -52,8 +52,9 @@ jobs:
           test "$INPUT_RUN_ATTEMPT" -eq 1
           workflow_runs="$(gh api --paginate --slurp "/repos/$INPUT_REPOSITORY/actions/workflows/source-qualification.yml/runs?per_page=100")"
           jq -e --arg run "$INPUT_RUN_ID" --arg sha "$INPUT_SHA" '
-            [.[].workflow_runs[] | select((.id|tostring)==$run and .head_sha==$sha and .run_attempt==1)] | length == 1
-            and ([.[].workflow_runs[] | select(.head_sha==$sha and (.id|tostring)!=$run)] | length == 0)
+            . as $pages
+            | ([$pages[].workflow_runs[] | select((.id|tostring)==$run and .head_sha==$sha and .run_attempt==1)] | length == 1)
+              and ([$pages[].workflow_runs[] | select(.head_sha==$sha and (.id|tostring)!=$run)] | length == 0)
           ' <<<"$workflow_runs" >/dev/null
           live_commit="$(gh api "/repos/$INPUT_REPOSITORY/commits/main")"
           default_branch="$(gh api "/repos/$INPUT_REPOSITORY" --jq .default_branch)"
@@ -680,8 +681,9 @@ jobs:
           test "$(jq -r '.parents[0].sha' <<<"$live_commit")" = "$BASE_REVISION"
           runs="$(gh api --paginate --slurp "/repos/$REPOSITORY/actions/workflows/source-qualification.yml/runs?per_page=100")"
           jq -e --arg run "$RUN_ID" --arg sha "$TESTED_REVISION" '
-            [.[].workflow_runs[] | select((.id|tostring)==$run and .head_sha==$sha and .run_attempt==1)] | length == 1
-            and ([.[].workflow_runs[] | select(.head_sha==$sha and (.id|tostring)!=$run)
+            . as $pages
+            | ([$pages[].workflow_runs[] | select((.id|tostring)==$run and .head_sha==$sha and .run_attempt==1)] | length == 1)
+              and ([$pages[].workflow_runs[] | select(.head_sha==$sha and (.id|tostring)!=$run)
               | {conclusion:.conclusion, disqualifying:(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out" or .conclusion=="skipped")}]
               | length == 0)
           ' <<<"$runs" >/dev/null
