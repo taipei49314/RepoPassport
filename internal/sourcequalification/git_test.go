@@ -192,6 +192,40 @@ func TestInspectRepositoryRejectsUnsupportedGitMode(t *testing.T) {
 	requireRepositoryInspectionRejected(t, request)
 }
 
+func TestInspectRepositoryParsesReplacementNamespaces(t *testing.T) {
+	t.Run("unrelated replacement is permitted", func(t *testing.T) {
+		fixture := newGitRepositoryFixture(t)
+		module := append([]byte(nil), fixture.fileData["go.mod"]...)
+		module = append(module, []byte("\nreplace example.invalid/dependency => example.invalid/fork v1.0.0\n")...)
+		writeGitFixtureFile(t, filepath.Join(fixture.root, "go.mod"), module)
+		fixture.git(t, "add", "go.mod")
+		fixture.commit(t, "unrelated-replace", "2000-01-03T00:00:00Z")
+		request := RepositoryRequest{
+			Root:                   fixture.root,
+			ExpectedBaseRevision:   fixture.tested,
+			ExpectedTestedRevision: strings.TrimSpace(fixture.git(t, "rev-parse", "HEAD")),
+		}
+		if _, err := InspectRepository(request); err != nil {
+			t.Fatalf("InspectRepository rejected unrelated replacement: %v", err)
+		}
+	})
+
+	t.Run("escaped canonical replacement is rejected", func(t *testing.T) {
+		fixture := newGitRepositoryFixture(t)
+		module := append([]byte(nil), fixture.fileData["go.mod"]...)
+		module = append(module, []byte("\nreplace \"github.com/taipei49314/RepoPass\\x70ort\" => example.invalid/fork v1.0.0\n")...)
+		writeGitFixtureFile(t, filepath.Join(fixture.root, "go.mod"), module)
+		fixture.git(t, "add", "go.mod")
+		fixture.commit(t, "canonical-replace", "2000-01-03T00:00:00Z")
+		request := RepositoryRequest{
+			Root:                   fixture.root,
+			ExpectedBaseRevision:   fixture.tested,
+			ExpectedTestedRevision: strings.TrimSpace(fixture.git(t, "rev-parse", "HEAD")),
+		}
+		requireRepositoryInspectionRejected(t, request)
+	})
+}
+
 func TestInspectRepositoryRejectsMismatchedExpectedIdentity(t *testing.T) {
 	fixture := newGitRepositoryFixture(t)
 	wrong := strings.Repeat("0", 40)
