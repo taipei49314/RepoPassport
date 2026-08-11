@@ -257,6 +257,28 @@ func TestAssembleQualificationPackageNeverReplacesPreexistingOutput(t *testing.T
 	})
 }
 
+func TestAssembleQualificationPackageRollsBackAfterPublicationSyncFailure(t *testing.T) {
+	fixture := newPackageFilesFixture(t)
+	original := syncPublishedPackageParent
+	syncPublishedPackageParent = func(*os.File) error {
+		return errors.New("injected private parent sync failure")
+	}
+	t.Cleanup(func() { syncPublishedPackageParent = original })
+
+	digest, err := assembleQualificationPackage(
+		fixture.linuxDir,
+		fixture.windowsDir,
+		fixture.outputDir,
+	)
+	if err == nil || err.Error() != "source qualification package parent could not be synchronized" {
+		t.Fatalf("sync failure = %v, want fixed parent synchronization error", err)
+	}
+	if digest != "" {
+		t.Fatalf("failed publication returned package digest %q", digest)
+	}
+	packageFilesRequireAbsent(t, fixture.outputDir)
+}
+
 func newPackageFilesFixture(t *testing.T) *packageFilesFixture {
 	t.Helper()
 	root := t.TempDir()
