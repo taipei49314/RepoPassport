@@ -271,6 +271,9 @@ func newGitRepositoryFixture(t *testing.T) *gitRepositoryFixture {
 	}
 	fixture.git(t, "add", "--all")
 	fixture.git(t, "update-index", "--chmod=+x", "scripts/run.sh")
+	if err := os.Chmod(filepath.Join(fixture.root, "scripts", "run.sh"), 0o700); err != nil {
+		t.Fatalf("make executable fixture path match Git mode: %v", err)
+	}
 	fixture.commit(t, "base", "2000-01-01T00:00:00Z")
 	fixture.base = strings.TrimSpace(fixture.git(t, "rev-parse", "HEAD"))
 
