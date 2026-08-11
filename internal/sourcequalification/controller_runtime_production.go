@@ -215,6 +215,7 @@ func produceControllerLaneStage(
 	if parseErr != nil || receipt.QualificationStatus != status ||
 		receipt.Subject.BaseRevision != request.ExpectedBaseRevision ||
 		receipt.Subject.TestedRevision != request.ExpectedTestedRevision ||
+		receipt.Subject.TreeSHA != request.ExpectedTreeSHA ||
 		receipt.Run.WorkflowRunID != request.WorkflowRunID ||
 		receipt.Run.WorkflowRunAttempt != request.WorkflowRunAttempt {
 		return produceLaneStageOutcome{

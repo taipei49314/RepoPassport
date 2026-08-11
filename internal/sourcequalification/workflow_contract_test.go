@@ -655,7 +655,7 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		t.Errorf("%s produce-lane does not reserve exit 3 exclusively for a safely published non-PASS attempt", lane)
 	}
 	if lane == "linux" {
-		if !strings.Contains(script, "env -u GITHUB_OUTPUT") {
+		if !strings.Contains(script, "unset GITHUB_OUTPUT") {
 			t.Error("linux produce-lane must hide the step-output channel from the candidate controller")
 		}
 	} else {

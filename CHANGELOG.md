@@ -18,6 +18,10 @@
   remains BLOCKED until authenticated attempt history and lane-lifetime
   immutable gate-application authority are available; no required skip is
   treated as PASS.
+- Preserve an RFC-0002 preconstruction non-PASS as one canonical attempt
+  tombstone bound to the successful workflow context's exact base, tested
+  revision, tree, run, and lane. Missing authenticated history remains
+  BLOCKED; the tombstone records that result without converting it to PASS.
 - `minimal-public-v1alpha3` accepts specification-valid
   `git:<40-lower-hex>` source identities so attestations can be built from Git
   worktrees. The base and derived frozen ruleset identities are advanced; this

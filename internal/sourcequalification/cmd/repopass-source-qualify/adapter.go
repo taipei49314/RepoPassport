@@ -37,6 +37,7 @@ func (operations productionControllerCommandOperations) ProduceLane(
 		ExpectedRef:            request.ExpectedRef,
 		ExpectedBaseRevision:   request.ExpectedBaseRevision,
 		ExpectedTestedRevision: request.ExpectedTestedRevision,
+		ExpectedTreeSHA:        request.ExpectedTreeSHA,
 		WorkflowRunID:          request.WorkflowRunID,
 		WorkflowRunAttempt:     int64(request.WorkflowRunAttempt),
 		PrivateLogRoot:         request.PrivateLogRoot,

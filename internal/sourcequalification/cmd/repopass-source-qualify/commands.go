@@ -5,6 +5,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
+
+	"github.com/taipei49314/RepoPassport/internal/sourcequalification"
 )
 
 const canonicalRepository = "https://github.com/taipei49314/RepoPassport"
@@ -24,6 +26,7 @@ type produceLaneCommandRequest struct {
 	ExpectedRef            string
 	ExpectedBaseRevision   string
 	ExpectedTestedRevision string
+	ExpectedTreeSHA        string
 	WorkflowRunID          string
 	WorkflowRunAttempt     int
 	PrivateLogRoot         string
@@ -165,6 +168,7 @@ func parseProduceLaneCommand(args []string) (produceLaneCommandRequest, error) {
 		flagExpectedRef,
 		flagExpectedBaseRevision,
 		flagExpectedTestedRevision,
+		flagExpectedTree,
 		flagWorkflowRunID,
 		flagWorkflowRunAttempt,
 		flagPrivateLogRoot,
@@ -173,10 +177,10 @@ func parseProduceLaneCommand(args []string) (produceLaneCommandRequest, error) {
 	if !ok {
 		return produceLaneCommandRequest{}, errInvalidControllerCommand
 	}
-	attempt, ok := parseWorkflowRunAttempt(values[7])
+	attempt, ok := parseWorkflowRunAttempt(values[8])
 	if !ok || !validLane(values[1]) || !validEventRef(values[2], values[3]) ||
 		!validLowerHex(values[4], 40) || !validLowerHex(values[5], 40) ||
-		!validWorkflowRunID(values[6]) {
+		!validLowerHex(values[6], 40) || !validWorkflowRunID(values[7]) {
 		return produceLaneCommandRequest{}, errInvalidControllerCommand
 	}
 	return produceLaneCommandRequest{
@@ -186,10 +190,11 @@ func parseProduceLaneCommand(args []string) (produceLaneCommandRequest, error) {
 		ExpectedRef:            values[3],
 		ExpectedBaseRevision:   values[4],
 		ExpectedTestedRevision: values[5],
-		WorkflowRunID:          values[6],
+		ExpectedTreeSHA:        values[6],
+		WorkflowRunID:          values[7],
 		WorkflowRunAttempt:     attempt,
-		PrivateLogRoot:         values[8],
-		OutputDir:              values[9],
+		PrivateLogRoot:         values[9],
+		OutputDir:              values[10],
 	}, nil
 }
 
@@ -411,6 +416,9 @@ func sanitizeControllerRecord(command string, record controllerRecord, operation
 	if record.Code == codeOK || record.QualificationStatus != failureStatusForCode(record.Code) ||
 		record.SHA256 != notApplicable || record.TestedRevision != notApplicable || record.TreeSHA != notApplicable {
 		return fallback, 1
+	}
+	if command == commandProduceLane && errors.Is(operationErr, sourcequalification.ErrAttemptArtifactPublished) {
+		return record, 3
 	}
 	return record, 1
 }
