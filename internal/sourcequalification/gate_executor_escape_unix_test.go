@@ -4,6 +4,7 @@ package sourcequalification
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,9 +35,8 @@ func TestOSGateExecutorRejectsDescendantThatEscapesTheProcessGroup(t *testing.T)
 		StderrLimit: 1024,
 	}
 
-	isolationUnavailable := gateExecutorIsolationUnavailableForTest(request.Network)
 	result, err := newOSGateExecutor().Execute(context.Background(), request)
-	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err, isolationUnavailable) {
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
 		return
 	}
 	if err != nil {
@@ -49,6 +49,18 @@ func TestOSGateExecutorRejectsDescendantThatEscapesTheProcessGroup(t *testing.T)
 	time.Sleep(900 * time.Millisecond)
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("setsid descendant escaped process-tree containment: %v", err)
+	}
+}
+
+func TestGateExecutorBlockedClassificationRequiresIsolationSentinel(t *testing.T) {
+	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
+	result := gateProcessResult{Blocked: true}
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, errGateProcessBlocked) {
+		t.Fatal("generic BLOCKED result was accepted as unavailable isolation")
+	}
+	isolationErr := errors.Join(errGateProcessBlocked, errGateIsolationUnavailable)
+	if !gateExecutorBlockedByUnavailableIsolation(t, request, result, isolationErr) {
+		t.Fatal("exact unavailable-isolation result was rejected")
 	}
 }
 

@@ -28,9 +28,8 @@ const gateExecutorHelperEnvironment = "REPOPASS_GATE_EXECUTOR_HELPER"
 func TestOSGateExecutorCapturesExitAndIndependentStreams(t *testing.T) {
 	executor := newOSGateExecutor()
 	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
-	isolationUnavailable := gateExecutorIsolationUnavailableForTest(request.Network)
 	result, err := executor.Execute(context.Background(), request)
-	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err, isolationUnavailable) {
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
 		return
 	}
 	if err != nil {
@@ -50,9 +49,8 @@ func TestOSGateExecutorFailsClosedOnIndependentOutputOverflow(t *testing.T) {
 		t.Run(stream, func(t *testing.T) {
 			executor := newOSGateExecutor()
 			request := gateExecutorRequest(t, stream, 5*time.Second, 1024, 1024)
-			isolationUnavailable := gateExecutorIsolationUnavailableForTest(request.Network)
 			result, err := executor.Execute(context.Background(), request)
-			if gateExecutorBlockedByUnavailableIsolation(t, request, result, err, isolationUnavailable) {
+			if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
 				return
 			}
 			if err != nil {
@@ -79,9 +77,8 @@ func TestOSGateExecutorTimeoutKillsCompleteProcessTree(t *testing.T) {
 	executor := newOSGateExecutor()
 	request := gateExecutorRequest(t, "spawn-descendant", 150*time.Millisecond, 1024, 1024)
 	request.Env = append(request.Env, "REPOPASS_GATE_DESCENDANT_MARKER="+marker)
-	isolationUnavailable := gateExecutorIsolationUnavailableForTest(request.Network)
 	result, err := executor.Execute(context.Background(), request)
-	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err, isolationUnavailable) {
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
 		return
 	}
 	if err != nil {
@@ -101,9 +98,8 @@ func TestOSGateExecutorCancellationKillsProcessTree(t *testing.T) {
 	request := gateExecutorRequest(t, "sleep", 10*time.Second, 1024, 1024)
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
-	isolationUnavailable := gateExecutorIsolationUnavailableForTest(request.Network)
 	result, err := executor.Execute(ctx, request)
-	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err, isolationUnavailable) {
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
 		return
 	}
 	if err != nil {
@@ -157,10 +153,9 @@ func gateExecutorBlockedByUnavailableIsolation(
 	request gateProcessRequest,
 	result gateProcessResult,
 	err error,
-	isolationUnavailable bool,
 ) bool {
 	t.Helper()
-	if runtime.GOOS != "linux" || !isolationUnavailable || !errors.Is(err, errGateProcessBlocked) {
+	if runtime.GOOS != "linux" || !errors.Is(err, errGateIsolationUnavailable) {
 		return false
 	}
 	if !availableGateApplication(request.Application) || !validGateProcessDirectory(request.Dir) {
