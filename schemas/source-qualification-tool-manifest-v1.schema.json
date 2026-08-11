@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/source-qualification-tool-manifest-v1.schema.json",
+  "title": "RepoPassport source qualification tool manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactType", "schemaVersion", "subject", "tools"],
+  "properties": {
+    "artifactType": {"const": "repopass-source-qualification-toolset"},
+    "schemaVersion": {"const": "1"},
+    "subject": {"$ref": "#/$defs/subject"},
+    "tools": {
+      "type": "array",
+      "prefixItems": [
+        {"$ref": "#/$defs/linuxTool"},
+        {"$ref": "#/$defs/windowsTool"}
+      ],
+      "items": false,
+      "minItems": 2,
+      "maxItems": 2
+    }
+  },
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseRevision",
+        "dirty",
+        "gitObjectFormat",
+        "modulePath",
+        "moduleVersion",
+        "repository",
+        "testedRevision",
+        "treeSHA"
+      ],
+      "properties": {
+        "baseRevision": {"$ref": "#/$defs/sha1"},
+        "dirty": {"const": false},
+        "gitObjectFormat": {"const": "sha1"},
+        "modulePath": {"const": "github.com/taipei49314/RepoPassport"},
+        "moduleVersion": {"const": "0.1.0-alpha.33"},
+        "repository": {"const": "https://github.com/taipei49314/RepoPassport"},
+        "testedRevision": {"$ref": "#/$defs/sha1"},
+        "treeSHA": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "goarch",
+        "goos",
+        "goVersion",
+        "mainPackage",
+        "modulePath",
+        "path",
+        "sha256",
+        "size",
+        "vcsModified",
+        "vcsRevision"
+      ],
+      "properties": {
+        "goarch": {"const": "amd64"},
+        "goos": {"enum": ["linux", "windows"]},
+        "goVersion": {"const": "go1.26.5"},
+        "mainPackage": {"const": "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify"},
+        "modulePath": {"const": "github.com/taipei49314/RepoPassport"},
+        "path": {
+          "enum": [
+            "repopass-source-qualify-linux-amd64",
+            "repopass-source-qualify-windows-amd64.exe"
+          ]
+        },
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+        "vcsModified": {"const": false},
+        "vcsRevision": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "linuxTool": {
+      "allOf": [
+        {"$ref": "#/$defs/tool"},
+        {
+          "properties": {
+            "goos": {"const": "linux"},
+            "path": {"const": "repopass-source-qualify-linux-amd64"}
+          },
+          "required": ["goos", "path"]
+        }
+      ]
+    },
+    "windowsTool": {
+      "allOf": [
+        {"$ref": "#/$defs/tool"},
+        {
+          "properties": {
+            "goos": {"const": "windows"},
+            "path": {"const": "repopass-source-qualify-windows-amd64.exe"}
+          },
+          "required": ["goos", "path"]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,699 @@
+name: Source qualification
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  cancel-in-progress: false
+  group: source-qualification-${{ github.sha }}
+
+jobs:
+  context:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      base-revision: ${{ steps.resolve-context.outputs.base-revision }}
+      event: ${{ steps.resolve-context.outputs.event }}
+      qualification-run-id: ${{ steps.resolve-context.outputs.qualification-run-id }}
+      ref: ${{ steps.resolve-context.outputs.ref }}
+      repository: ${{ steps.resolve-context.outputs.repository }}
+      tested-revision: ${{ steps.resolve-context.outputs.tested-revision }}
+      tree-sha: ${{ steps.resolve-context.outputs.tree-sha }}
+      workflow-run-attempt: ${{ steps.resolve-context.outputs.workflow-run-attempt }}
+      workflow-run-id: ${{ steps.resolve-context.outputs.workflow-run-id }}
+    steps:
+      - id: resolve-context
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_REPOSITORY: taipei49314/RepoPassport
+          INPUT_REPOSITORY: ${{ github.repository }}
+          INPUT_EVENT: ${{ github.event_name }}
+          INPUT_REF: ${{ github.ref }}
+          INPUT_SHA: ${{ github.sha }}
+          INPUT_BEFORE: ${{ github.event.before }}
+          INPUT_RUN_ID: ${{ github.run_id }}
+          INPUT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$INPUT_REPOSITORY" = "$EXPECTED_REPOSITORY"
+          case "$INPUT_EVENT" in
+            push) test "$INPUT_REF" = refs/heads/main ;;
+            workflow_dispatch) case "$INPUT_REF" in refs/heads/*) ;; *) exit 1 ;; esac ;;
+            *) exit 1 ;;
+          esac
+          test "$INPUT_RUN_ATTEMPT" -eq 1
+          workflow_runs="$(gh api --paginate --slurp "/repos/$INPUT_REPOSITORY/actions/workflows/source-qualification.yml/runs?per_page=100")"
+          jq -e --arg run "$INPUT_RUN_ID" --arg sha "$INPUT_SHA" '
+            [.[].workflow_runs[] | select((.id|tostring)==$run and .head_sha==$sha and .run_attempt==1)] | length == 1
+            and ([.[].workflow_runs[] | select(.head_sha==$sha and (.id|tostring)!=$run)] | length == 0)
+          ' <<<"$workflow_runs" >/dev/null
+          live_commit="$(gh api "/repos/$INPUT_REPOSITORY/commits/main")"
+          default_branch="$(gh api "/repos/$INPUT_REPOSITORY" --jq .default_branch)"
+          test "$default_branch" = main
+          tested_revision="$(jq -r .sha <<<"$live_commit")"
+          tree_sha="$(jq -r .commit.tree.sha <<<"$live_commit")"
+          parent_revision="$(jq -r '.parents | if length == 0 then "" else .[0].sha end' <<<"$live_commit")"
+          remote_revision="$(git ls-remote "https://github.com/$INPUT_REPOSITORY.git" refs/heads/main | cut -f1)"
+          test "$tested_revision" = "$INPUT_SHA"
+          test "$tested_revision" = "$remote_revision"
+          test "$tested_revision" != "$tree_sha"
+          test "$parent_revision" != ""
+          if test "$INPUT_EVENT" = push && test "$INPUT_BEFORE" != 0000000000000000000000000000000000000000; then
+            test "$parent_revision" = "$INPUT_BEFORE"
+          fi
+          qualification_run_id="sha256:$(printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s' \
+            github-actions "$INPUT_REPOSITORY" .github/workflows/source-qualification.yml \
+            "$INPUT_EVENT" "$INPUT_REF" "$INPUT_RUN_ID" "$INPUT_RUN_ATTEMPT" "$tested_revision" | sha256sum | cut -d' ' -f1)"
+          {
+            echo "base-revision=$parent_revision"
+            echo "event=$INPUT_EVENT"
+            echo "qualification-run-id=$qualification_run_id"
+            echo "ref=$INPUT_REF"
+            echo "repository=$INPUT_REPOSITORY"
+            echo "tested-revision=$tested_revision"
+            echo "tree-sha=$tree_sha"
+            echo "workflow-run-attempt=$INPUT_RUN_ATTEMPT"
+            echo "workflow-run-id=$INPUT_RUN_ID"
+          } >>"$GITHUB_OUTPUT"
+
+  linux:
+    needs:
+      - context
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      controller-artifact-id: ${{ steps.upload-controller.outputs.artifact-id }}
+      lane-artifact-id: ${{ steps.upload-lane.outputs.artifact-id }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          path: qualification-source
+          persist-credentials: false
+          ref: ${{ needs.context.outputs.tested-revision }}
+      - id: setup-go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          cache: false
+          go-version: 1.26.5
+      - id: build-controller
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source-qualification-controller-linux"
+          export CGO_ENABLED=0
+          go build -trimpath -buildvcs=true \
+            -o "$RUNNER_TEMP/source-qualification-controller-linux/repopass-source-qualify-linux-amd64" \
+            ./internal/sourcequalification/cmd/repopass-source-qualify
+      - id: produce-lane
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: bash
+        env:
+          SQ_EVENT: ${{ needs.context.outputs.event }}
+          SQ_REF: ${{ needs.context.outputs.ref }}
+          SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
+          SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
+          SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/source-qualification-controller-linux/repopass-source-qualify-linux-amd64" produce-lane \
+            --repo-root "$GITHUB_WORKSPACE/qualification-source" \
+            --lane linux-amd64 \
+            --event "$SQ_EVENT" \
+            --expected-ref "$SQ_REF" \
+            --expected-base-revision "$SQ_BASE_REVISION" \
+            --expected-tested-revision "$SQ_TESTED_REVISION" \
+            --workflow-run-id "$SQ_WORKFLOW_RUN_ID" \
+            --workflow-run-attempt "$SQ_WORKFLOW_RUN_ATTEMPT" \
+            --private-log-root "$RUNNER_TEMP/source-qualification-private-linux" \
+            --out-dir "$RUNNER_TEMP/source-qualification-lane-linux"
+      - id: upload-lane
+        if: ${{ always() && steps.produce-lane.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-linux-amd64-${{ needs.context.outputs.tested-revision }}
+          overwrite: false
+          path: ${{ runner.temp }}/source-qualification-lane-linux
+          retention-days: 90
+      - id: upload-controller
+        if: ${{ always() && steps.produce-lane.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-controller-linux-amd64-${{ needs.context.outputs.tested-revision }}
+          overwrite: false
+          path: ${{ runner.temp }}/source-qualification-controller-linux/repopass-source-qualify-linux-amd64
+          retention-days: 90
+      - id: upload-attempt
+        if: ${{ always() && steps.produce-lane.outcome != 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-attempt-linux-amd64-${{ needs.context.outputs.tested-revision }}-1
+          overwrite: false
+          path: ${{ runner.temp }}/source-qualification-lane-linux
+          retention-days: 90
+
+  windows:
+    needs:
+      - context
+    runs-on: windows-2025
+    timeout-minutes: 60
+    outputs:
+      controller-artifact-id: ${{ steps.upload-controller.outputs.artifact-id }}
+      lane-artifact-id: ${{ steps.upload-lane.outputs.artifact-id }}
+    steps:
+      - id: checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          path: qualification-source
+          persist-credentials: false
+          ref: ${{ needs.context.outputs.tested-revision }}
+      - id: setup-go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          cache: false
+          go-version: 1.26.5
+      - id: build-controller
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $controllerRoot = Join-Path $env:RUNNER_TEMP 'source-qualification-controller-windows'
+          [IO.Directory]::CreateDirectory($controllerRoot) | Out-Null
+          $env:CGO_ENABLED = '0'
+          go build -trimpath -buildvcs=true -o (Join-Path $controllerRoot 'repopass-source-qualify-windows-amd64.exe') ./internal/sourcequalification/cmd/repopass-source-qualify
+          if ($LASTEXITCODE -ne 0) { throw 'controller build failed' }
+      - id: produce-lane
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: pwsh
+        env:
+          SQ_EVENT: ${{ needs.context.outputs.event }}
+          SQ_REF: ${{ needs.context.outputs.ref }}
+          SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
+          SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
+          SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $controller = Join-Path $env:RUNNER_TEMP 'source-qualification-controller-windows\repopass-source-qualify-windows-amd64.exe'
+          & $controller produce-lane `
+            --repo-root "$env:GITHUB_WORKSPACE\qualification-source" `
+            --lane windows-amd64 `
+            --event $env:SQ_EVENT `
+            --expected-ref $env:SQ_REF `
+            --expected-base-revision $env:SQ_BASE_REVISION `
+            --expected-tested-revision $env:SQ_TESTED_REVISION `
+            --workflow-run-id $env:SQ_WORKFLOW_RUN_ID `
+            --workflow-run-attempt $env:SQ_WORKFLOW_RUN_ATTEMPT `
+            --private-log-root (Join-Path $env:RUNNER_TEMP 'source-qualification-private-windows') `
+            --out-dir (Join-Path $env:RUNNER_TEMP 'source-qualification-lane-windows')
+          if ($LASTEXITCODE -ne 0) { throw 'lane production failed closed' }
+      - id: upload-lane
+        if: ${{ always() && steps.produce-lane.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-windows-amd64-${{ needs.context.outputs.tested-revision }}
+          overwrite: false
+          path: ${{ runner.temp }}/source-qualification-lane-windows
+          retention-days: 90
+      - id: upload-controller
+        if: ${{ always() && steps.produce-lane.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-controller-windows-amd64-${{ needs.context.outputs.tested-revision }}
+          overwrite: false
+          path: ${{ runner.temp }}/source-qualification-controller-windows/repopass-source-qualify-windows-amd64.exe
+          retention-days: 90
+      - id: upload-attempt
+        if: ${{ always() && steps.produce-lane.outcome != 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-attempt-windows-amd64-${{ needs.context.outputs.tested-revision }}-1
+          overwrite: false
+          path: ${{ runner.temp }}/source-qualification-lane-windows
+          retention-days: 90
+
+  aggregate:
+    if: ${{ always() }}
+    needs:
+      - context
+      - linux
+      - windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      linux-executable-digest: ${{ steps.assemble-tools.outputs.linux-executable-digest }}
+      package-artifact-id: ${{ steps.upload-aggregate.outputs.artifact-id }}
+      package-digest: ${{ steps.assemble.outputs.package-digest }}
+      tool-artifact-id: ${{ steps.upload-tools.outputs.artifact-id }}
+      tool-manifest-digest: ${{ steps.assemble-tools.outputs.tool-manifest-digest }}
+      windows-executable-digest: ${{ steps.assemble-tools.outputs.windows-executable-digest }}
+    steps:
+      - id: validate-artifact-ids
+        shell: bash
+        env:
+          LINUX_LANE_ID: ${{ needs.linux.outputs.lane-artifact-id }}
+          LINUX_CONTROLLER_ID: ${{ needs.linux.outputs.controller-artifact-id }}
+          WINDOWS_LANE_ID: ${{ needs.windows.outputs.lane-artifact-id }}
+          WINDOWS_CONTROLLER_ID: ${{ needs.windows.outputs.controller-artifact-id }}
+        run: |
+          set -euo pipefail
+          for id in "$LINUX_LANE_ID" "$LINUX_CONTROLLER_ID" "$WINDOWS_LANE_ID" "$WINDOWS_CONTROLLER_ID"; do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]]
+          done
+      - id: checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          path: qualification-source
+          persist-credentials: false
+          ref: ${{ needs.context.outputs.tested-revision }}
+      - id: setup-go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          cache: false
+          go-version: 1.26.5
+      - id: build-controller
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source-qualification-controller-aggregate"
+          export CGO_ENABLED=0
+          go build -trimpath -buildvcs=true \
+            -o "$RUNNER_TEMP/source-qualification-controller-aggregate/repopass-source-qualify-aggregate-linux-amd64" \
+            ./internal/sourcequalification/cmd/repopass-source-qualify
+      - id: download-linux-lane
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.linux.outputs.lane-artifact-id }}
+          path: ${{ runner.temp }}/linux-lane
+      - id: download-linux-controller
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.linux.outputs.controller-artifact-id }}
+          path: ${{ runner.temp }}/linux-controller
+      - id: download-windows-lane
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.windows.outputs.lane-artifact-id }}
+          path: ${{ runner.temp }}/windows-lane
+      - id: download-windows-controller
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.windows.outputs.controller-artifact-id }}
+          path: ${{ runner.temp }}/windows-controller
+      - id: assemble
+        shell: bash
+        env:
+          SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
+          SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
+          SQ_QUALIFICATION_RUN_ID: ${{ needs.context.outputs.qualification-run-id }}
+          SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
+          SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+        run: |
+          set -euo pipefail
+          controller="$RUNNER_TEMP/source-qualification-controller-aggregate/repopass-source-qualify-aggregate-linux-amd64"
+          record="$($controller assemble \
+            --linux-dir "$RUNNER_TEMP/linux-lane" \
+            --windows-dir "$RUNNER_TEMP/windows-lane" \
+            --expected-base-revision "$SQ_BASE_REVISION" \
+            --expected-tested-revision "$SQ_TESTED_REVISION" \
+            --expected-tree "$SQ_TREE_SHA" \
+            --expected-qualification-run-id "$SQ_QUALIFICATION_RUN_ID" \
+            --expected-workflow-run-id "$SQ_WORKFLOW_RUN_ID" \
+            --expected-workflow-run-attempt "$SQ_WORKFLOW_RUN_ATTEMPT" \
+            --out-dir "$RUNNER_TEMP/qualification-package")"
+          package_digest="$(jq -er .sha256 <<<"$record")"
+          echo "package-digest=$package_digest" >>"$GITHUB_OUTPUT"
+      - id: assemble-tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          controller="$RUNNER_TEMP/source-qualification-controller-aggregate/repopass-source-qualify-aggregate-linux-amd64"
+          linux_controller="$RUNNER_TEMP/linux-controller/repopass-source-qualify-linux-amd64"
+          windows_controller="$RUNNER_TEMP/windows-controller/repopass-source-qualify-windows-amd64.exe"
+          record="$($controller assemble-tools \
+            --package-dir "$RUNNER_TEMP/qualification-package" \
+            --linux-controller "$linux_controller" \
+            --windows-controller "$windows_controller" \
+            --out-dir "$RUNNER_TEMP/qualification-tools")"
+          tool_digest="$(jq -er .sha256 <<<"$record")"
+          echo "tool-manifest-digest=$tool_digest" >>"$GITHUB_OUTPUT"
+          echo "linux-executable-digest=sha256:$(sha256sum "$linux_controller" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+          echo "windows-executable-digest=sha256:$(sha256sum "$windows_controller" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+      - id: upload-aggregate
+        if: ${{ always() && steps.assemble.outcome == 'success' && steps.assemble-tools.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-aggregate-${{ needs.context.outputs.tested-revision }}
+          overwrite: false
+          path: ${{ runner.temp }}/qualification-package
+          retention-days: 90
+      - id: upload-tools
+        if: ${{ always() && steps.assemble.outcome == 'success' && steps.assemble-tools.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          compression-level: 0
+          if-no-files-found: error
+          include-hidden-files: false
+          name: source-qualification-tools-${{ needs.context.outputs.tested-revision }}
+          overwrite: false
+          path: ${{ runner.temp }}/qualification-tools
+          retention-days: 90
+
+  replay-linux:
+    needs:
+      - aggregate
+      - context
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - id: validate-artifact-ids
+        shell: bash
+        env:
+          SQ_PACKAGE_ARTIFACT_ID: ${{ needs.aggregate.outputs.package-artifact-id }}
+          SQ_TOOL_ARTIFACT_ID: ${{ needs.aggregate.outputs.tool-artifact-id }}
+        run: |
+          set -euo pipefail
+          for id in "$SQ_PACKAGE_ARTIFACT_ID" "$SQ_TOOL_ARTIFACT_ID"; do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]]
+          done
+      - id: prepare-empty-directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e "$RUNNER_TEMP/qualification-package"
+          test ! -e "$RUNNER_TEMP/qualification-tools"
+          mkdir "$RUNNER_TEMP/qualification-package" "$RUNNER_TEMP/qualification-tools"
+      - id: download-package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.aggregate.outputs.package-artifact-id }}
+          path: ${{ runner.temp }}/qualification-package
+      - id: download-tools
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.aggregate.outputs.tool-artifact-id }}
+          path: ${{ runner.temp }}/qualification-tools
+      - id: pre-execution-hashes
+        shell: bash
+        env:
+          SQ_TOOL_MANIFEST_DIGEST: ${{ needs.aggregate.outputs.tool-manifest-digest }}
+          SQ_EXECUTABLE_DIGEST: ${{ needs.aggregate.outputs.linux-executable-digest }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          sha256sum \
+            qualification-package/repopass-source.tar \
+            qualification-package/source-archive-manifest-v1.json \
+            qualification-package/source-qualification-linux-amd64-v1.json \
+            qualification-package/source-qualification-windows-amd64-v1.json \
+            qualification-tools/source-qualification-tool-manifest-v1.json \
+            qualification-tools/repopass-source-qualify-linux-amd64 >qualification-pre-linux.sha256
+          actual_tool_manifest_digest="sha256:$(sha256sum qualification-tools/source-qualification-tool-manifest-v1.json | cut -d' ' -f1)"
+          actual_executable_digest="sha256:$(sha256sum qualification-tools/repopass-source-qualify-linux-amd64 | cut -d' ' -f1)"
+          test "$actual_tool_manifest_digest" = "$SQ_TOOL_MANIFEST_DIGEST"
+          test "$actual_executable_digest" = "$SQ_EXECUTABLE_DIGEST"
+      - id: verify-subject
+        shell: bash
+        env:
+          SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
+          SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
+          SQ_QUALIFICATION_RUN_ID: ${{ needs.context.outputs.qualification-run-id }}
+          SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
+          SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+          SQ_PACKAGE_DIGEST: ${{ needs.aggregate.outputs.package-digest }}
+          SQ_TOOL_MANIFEST_DIGEST: ${{ needs.aggregate.outputs.tool-manifest-digest }}
+          SQ_EXECUTABLE_DIGEST: ${{ needs.aggregate.outputs.linux-executable-digest }}
+        run: |
+          set -euo pipefail
+          chmod 0500 "$RUNNER_TEMP/qualification-tools/repopass-source-qualify-linux-amd64"
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+          [[ "$runner_uid" =~ ^[1-9][0-9]{0,9}$ ]]
+          [[ "$runner_gid" =~ ^[1-9][0-9]{0,9}$ ]]
+          sudo unshare --net --pid --mount-proc --fork --kill-child -- \
+            setpriv --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
+              --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs \
+              env -i HOME=/nonexistent TMPDIR=/tmp \
+                "$RUNNER_TEMP/qualification-tools/repopass-source-qualify-linux-amd64" verify-subject \
+            --package-dir "$RUNNER_TEMP/qualification-package" \
+            --expected-repository https://github.com/taipei49314/RepoPassport \
+            --expected-base-revision "$SQ_BASE_REVISION" \
+            --expected-tested-revision "$SQ_TESTED_REVISION" \
+            --expected-tree "$SQ_TREE_SHA" \
+            --expected-qualification-run-id "$SQ_QUALIFICATION_RUN_ID" \
+            --expected-workflow-run-id "$SQ_WORKFLOW_RUN_ID" \
+            --expected-workflow-run-attempt "$SQ_WORKFLOW_RUN_ATTEMPT" \
+            --expected-package-digest "$SQ_PACKAGE_DIGEST" \
+            --tool-manifest "$RUNNER_TEMP/qualification-tools/source-qualification-tool-manifest-v1.json" \
+            --expected-tool-manifest-digest "$SQ_TOOL_MANIFEST_DIGEST" \
+            --expected-executable-digest "$SQ_EXECUTABLE_DIGEST"
+      - id: post-execution-hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          sha256sum \
+            qualification-package/repopass-source.tar \
+            qualification-package/source-archive-manifest-v1.json \
+            qualification-package/source-qualification-linux-amd64-v1.json \
+            qualification-package/source-qualification-windows-amd64-v1.json \
+            qualification-tools/source-qualification-tool-manifest-v1.json \
+            qualification-tools/repopass-source-qualify-linux-amd64 >qualification-post-linux.sha256
+          cmp qualification-pre-linux.sha256 qualification-post-linux.sha256
+
+  replay-windows:
+    needs:
+      - aggregate
+      - context
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - id: validate-artifact-ids
+        shell: pwsh
+        env:
+          SQ_PACKAGE_ARTIFACT_ID: ${{ needs.aggregate.outputs.package-artifact-id }}
+          SQ_TOOL_ARTIFACT_ID: ${{ needs.aggregate.outputs.tool-artifact-id }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($id in @($env:SQ_PACKAGE_ARTIFACT_ID, $env:SQ_TOOL_ARTIFACT_ID)) {
+            if ($id -cnotmatch '^[1-9][0-9]{0,19}$') { throw 'invalid artifact ID' }
+          }
+      - id: prepare-empty-directories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $env:RUNNER_TEMP 'qualification-package'
+          $tools = Join-Path $env:RUNNER_TEMP 'qualification-tools'
+          if ((Test-Path -LiteralPath $package) -or (Test-Path -LiteralPath $tools)) { throw 'replay directory already exists' }
+          New-Item -ItemType Directory -Path $package,$tools | Out-Null
+      - id: download-package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.aggregate.outputs.package-artifact-id }}
+          path: ${{ runner.temp }}/qualification-package
+      - id: download-tools
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ needs.aggregate.outputs.tool-artifact-id }}
+          path: ${{ runner.temp }}/qualification-tools
+      - id: pre-execution-hashes
+        shell: pwsh
+        env:
+          SQ_TOOL_MANIFEST_DIGEST: ${{ needs.aggregate.outputs.tool-manifest-digest }}
+          SQ_EXECUTABLE_DIGEST: ${{ needs.aggregate.outputs.windows-executable-digest }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $paths = @(
+            'repopass-source.tar',
+            'source-archive-manifest-v1.json',
+            'source-qualification-linux-amd64-v1.json',
+            'source-qualification-windows-amd64-v1.json'
+          ) | ForEach-Object { Join-Path $env:RUNNER_TEMP "qualification-package\$_" }
+          $paths += Join-Path $env:RUNNER_TEMP 'qualification-tools\source-qualification-tool-manifest-v1.json'
+          $paths += Join-Path $env:RUNNER_TEMP 'qualification-tools\repopass-source-qualify-windows-amd64.exe'
+          Get-FileHash -Algorithm SHA256 -LiteralPath $paths | ConvertTo-Json -Compress | Set-Content -NoNewline (Join-Path $env:RUNNER_TEMP 'qualification-pre-windows.json')
+          $toolManifestPath = Join-Path $env:RUNNER_TEMP 'qualification-tools\source-qualification-tool-manifest-v1.json'
+          $executablePath = Join-Path $env:RUNNER_TEMP 'qualification-tools\repopass-source-qualify-windows-amd64.exe'
+          $actualToolManifestDigest = 'sha256:' + (Get-FileHash -Algorithm SHA256 -LiteralPath $toolManifestPath).Hash.ToLowerInvariant()
+          $actualExecutableDigest = 'sha256:' + (Get-FileHash -Algorithm SHA256 -LiteralPath $executablePath).Hash.ToLowerInvariant()
+          if ($actualToolManifestDigest -cne $env:SQ_TOOL_MANIFEST_DIGEST -or $actualExecutableDigest -cne $env:SQ_EXECUTABLE_DIGEST) { throw 'replay digest mismatch' }
+      - id: disable-network
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          throw 'SOURCE_QUAL_GATE_BLOCKED: enforceable Windows network-none authority is unavailable'
+      - id: verify-subject
+        shell: pwsh
+        env:
+          SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
+          SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
+          SQ_QUALIFICATION_RUN_ID: ${{ needs.context.outputs.qualification-run-id }}
+          SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
+          SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+          SQ_PACKAGE_DIGEST: ${{ needs.aggregate.outputs.package-digest }}
+          SQ_TOOL_MANIFEST_DIGEST: ${{ needs.aggregate.outputs.tool-manifest-digest }}
+          SQ_EXECUTABLE_DIGEST: ${{ needs.aggregate.outputs.windows-executable-digest }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $controller = Join-Path $env:RUNNER_TEMP 'qualification-tools\repopass-source-qualify-windows-amd64.exe'
+          & $controller verify-subject `
+            --package-dir (Join-Path $env:RUNNER_TEMP 'qualification-package') `
+            --expected-repository https://github.com/taipei49314/RepoPassport `
+            --expected-base-revision $env:SQ_BASE_REVISION `
+            --expected-tested-revision $env:SQ_TESTED_REVISION `
+            --expected-tree $env:SQ_TREE_SHA `
+            --expected-qualification-run-id $env:SQ_QUALIFICATION_RUN_ID `
+            --expected-workflow-run-id $env:SQ_WORKFLOW_RUN_ID `
+            --expected-workflow-run-attempt $env:SQ_WORKFLOW_RUN_ATTEMPT `
+            --expected-package-digest $env:SQ_PACKAGE_DIGEST `
+            --tool-manifest (Join-Path $env:RUNNER_TEMP 'qualification-tools\source-qualification-tool-manifest-v1.json') `
+            --expected-tool-manifest-digest $env:SQ_TOOL_MANIFEST_DIGEST `
+            --expected-executable-digest $env:SQ_EXECUTABLE_DIGEST
+          if ($LASTEXITCODE -ne 0) { throw 'offline subject verification failed' }
+      - id: post-execution-hashes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $paths = @(
+            'repopass-source.tar',
+            'source-archive-manifest-v1.json',
+            'source-qualification-linux-amd64-v1.json',
+            'source-qualification-windows-amd64-v1.json'
+          ) | ForEach-Object { Join-Path $env:RUNNER_TEMP "qualification-package\$_" }
+          $paths += Join-Path $env:RUNNER_TEMP 'qualification-tools\source-qualification-tool-manifest-v1.json'
+          $paths += Join-Path $env:RUNNER_TEMP 'qualification-tools\repopass-source-qualify-windows-amd64.exe'
+          Get-FileHash -Algorithm SHA256 -LiteralPath $paths | ConvertTo-Json -Compress | Set-Content -NoNewline (Join-Path $env:RUNNER_TEMP 'qualification-post-windows.json')
+          $before = Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'qualification-pre-windows.json')
+          $after = Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'qualification-post-windows.json')
+          if (Compare-Object $before $after) { throw 'replay bytes changed' }
+      - id: restore-network
+        if: ${{ always() }}
+        shell: pwsh
+        env:
+          SQ_FIREWALL_RULE: RepoPassportSourceQualification-${{ github.run_id }}
+        run: |
+          Remove-NetFirewallRule -DisplayName $env:SQ_FIREWALL_RULE -ErrorAction SilentlyContinue
+
+  accept:
+    if: ${{ always() }}
+    needs:
+      - aggregate
+      - context
+      - linux
+      - replay-linux
+      - replay-windows
+      - windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: accept
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          BASE_REVISION: ${{ needs.context.outputs.base-revision }}
+          TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          TREE_SHA: ${{ needs.context.outputs.tree-sha }}
+          QUALIFICATION_RUN_ID: ${{ needs.context.outputs.qualification-run-id }}
+          CONTEXT_RESULT: ${{ needs.context.result }}
+          LINUX_RESULT: ${{ needs.linux.result }}
+          WINDOWS_RESULT: ${{ needs.windows.result }}
+          AGGREGATE_RESULT: ${{ needs.aggregate.result }}
+          REPLAY_LINUX_RESULT: ${{ needs.replay-linux.result }}
+          REPLAY_WINDOWS_RESULT: ${{ needs.replay-windows.result }}
+          PACKAGE_ARTIFACT_ID: ${{ needs.aggregate.outputs.package-artifact-id }}
+          PACKAGE_DIGEST: ${{ needs.aggregate.outputs.package-digest }}
+          TOOL_ARTIFACT_ID: ${{ needs.aggregate.outputs.tool-artifact-id }}
+          TOOL_MANIFEST_DIGEST: ${{ needs.aggregate.outputs.tool-manifest-digest }}
+        run: |
+          set -euo pipefail
+          workflow_url="https://github.com/$REPOSITORY/actions/runs/$RUN_ID"
+          failure_record() {
+            jq -cS -n \
+              --arg code SOURCE_QUAL_GATE_FAILED \
+              --arg packageArtifactId "${PACKAGE_ARTIFACT_ID:-NOT_APPLICABLE}" \
+              --arg packageDigest "${PACKAGE_DIGEST:-NOT_APPLICABLE}" \
+              --arg qualificationRunId "${QUALIFICATION_RUN_ID:-NOT_APPLICABLE}" \
+              --arg qualificationStatus FAIL \
+              --arg testedRevision "${TESTED_REVISION:-NOT_APPLICABLE}" \
+              --arg toolArtifactId "${TOOL_ARTIFACT_ID:-NOT_APPLICABLE}" \
+              --arg toolManifestDigest "${TOOL_MANIFEST_DIGEST:-NOT_APPLICABLE}" \
+              --arg treeSHA "${TREE_SHA:-NOT_APPLICABLE}" \
+              --arg workflowURL "$workflow_url" \
+              '{code:$code,packageArtifactId:$packageArtifactId,packageDigest:$packageDigest,qualificationRunId:$qualificationRunId,qualificationStatus:$qualificationStatus,testedRevision:$testedRevision,toolArtifactId:$toolArtifactId,toolManifestDigest:$toolManifestDigest,treeSHA:$treeSHA,workflowURL:$workflowURL}'
+          }
+          if test "$EVENT" != push || test "$REF" != refs/heads/main || test "$RUN_ATTEMPT" -ne 1; then
+            failure_record
+            exit 1
+          fi
+          for result in "$CONTEXT_RESULT" "$LINUX_RESULT" "$WINDOWS_RESULT" "$AGGREGATE_RESULT" "$REPLAY_LINUX_RESULT" "$REPLAY_WINDOWS_RESULT"; do
+            case "$result" in failure|cancelled|timed_out|skipped) failure_record; exit 1 ;; esac
+            test "$result" = success || { failure_record; exit 1; }
+          done
+          repository_state="$(gh api "/repos/$REPOSITORY")"
+          test "$(jq -r .default_branch <<<"$repository_state")" = main
+          live_commit="$(gh api "/repos/$REPOSITORY/commits/main")"
+          test "$(jq -r .sha <<<"$live_commit")" = "$TESTED_REVISION"
+          test "$(jq -r .commit.tree.sha <<<"$live_commit")" = "$TREE_SHA"
+          test "$(jq -r '.parents[0].sha' <<<"$live_commit")" = "$BASE_REVISION"
+          runs="$(gh api --paginate --slurp "/repos/$REPOSITORY/actions/workflows/source-qualification.yml/runs?per_page=100")"
+          jq -e --arg run "$RUN_ID" --arg sha "$TESTED_REVISION" '
+            [.[].workflow_runs[] | select((.id|tostring)==$run and .head_sha==$sha and .run_attempt==1)] | length == 1
+            and ([.[].workflow_runs[] | select(.head_sha==$sha and (.id|tostring)!=$run)
+              | {conclusion:.conclusion, disqualifying:(.conclusion=="failure" or .conclusion=="cancelled" or .conclusion=="timed_out" or .conclusion=="skipped")}]
+              | length == 0)
+          ' <<<"$runs" >/dev/null
+          jq -cS -n \
+            --arg code SOURCE_QUAL_OK \
+            --arg packageArtifactId "$PACKAGE_ARTIFACT_ID" \
+            --arg packageDigest "$PACKAGE_DIGEST" \
+            --arg qualificationRunId "$QUALIFICATION_RUN_ID" \
+            --arg qualificationStatus PASS \
+            --arg testedRevision "$TESTED_REVISION" \
+            --arg toolArtifactId "$TOOL_ARTIFACT_ID" \
+            --arg toolManifestDigest "$TOOL_MANIFEST_DIGEST" \
+            --arg treeSHA "$TREE_SHA" \
+            --arg workflowURL "$workflow_url" \
+            '{code:$code,packageArtifactId:$packageArtifactId,packageDigest:$packageDigest,qualificationRunId:$qualificationRunId,qualificationStatus:$qualificationStatus,testedRevision:$testedRevision,toolArtifactId:$toolArtifactId,toolManifestDigest:$toolManifestDigest,treeSHA:$treeSHA,workflowURL:$workflowURL}'
