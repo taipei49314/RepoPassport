@@ -31,6 +31,27 @@ type qualificationLaneDependencies struct {
 	Clock          laneClock
 	SelfController laneSelfController
 	PrivateLogs    gatePrivateLogSink
+	AttemptHistory laneAttemptHistoryProvider
+}
+
+// laneAttemptHistoryScope is the complete RFC-0002 attempt scope plus the
+// current authenticated workflow execution that a provider must exclude from
+// its prior-execution answer.
+type laneAttemptHistoryScope struct {
+	WorkflowRepository     string
+	WorkflowPath           string
+	TestedRevision         string
+	Lane                   Lane
+	CurrentWorkflowRunID   string
+	CurrentWorkflowAttempt int64
+}
+
+// laneAttemptHistoryProvider is a trusted boundary. Implementations must use
+// authenticated workflow history and return an error unless the answer is
+// complete for the exact scope. Artifact content and receipt claims are not a
+// history source.
+type laneAttemptHistoryProvider interface {
+	HasPriorExecution(context.Context, laneAttemptHistoryScope) (bool, error)
 }
 
 type laneRepositoryInspector interface {
@@ -53,6 +74,16 @@ func produceQualificationLane(
 	outputPath, err := validateQualificationLaneRequest(ctx, request, dependencies)
 	if err != nil {
 		return StatusFail, err
+	}
+	prior, historyErr := dependencies.AttemptHistory.HasPriorExecution(
+		ctx,
+		qualificationLaneAttemptHistoryScope(request),
+	)
+	if historyErr != nil {
+		return StatusBlocked, errGateBlocked
+	}
+	if prior {
+		return StatusFail, errGateFailed
 	}
 
 	snapshot, err := dependencies.Repository.InspectRepository(request.Repository)
@@ -130,7 +161,8 @@ func validateQualificationLaneRequest(
 ) (string, error) {
 	if ctx == nil || ctx.Err() != nil || nilGateDependency(dependencies.Repository) ||
 		nilGateDependency(dependencies.Executor) || nilGateDependency(dependencies.Clock) ||
-		nilGateDependency(dependencies.SelfController) || nilGateDependency(dependencies.PrivateLogs) {
+		nilGateDependency(dependencies.SelfController) || nilGateDependency(dependencies.PrivateLogs) ||
+		nilGateDependency(dependencies.AttemptHistory) {
 		return "", errQualificationLaneInvalidInput
 	}
 	if !validRepositoryOID(request.Repository.ExpectedBaseRevision) ||
@@ -185,6 +217,19 @@ func validateQualificationLaneRequest(
 		return "", errQualificationLaneInvalidInput
 	}
 	return outputPath, nil
+}
+
+func qualificationLaneAttemptHistoryScope(
+	request qualificationLaneRequest,
+) laneAttemptHistoryScope {
+	return laneAttemptHistoryScope{
+		WorkflowRepository:     request.Run.WorkflowRepository,
+		WorkflowPath:           request.Run.WorkflowPath,
+		TestedRevision:         request.Run.TestedRevision,
+		Lane:                   request.Gate.Lane,
+		CurrentWorkflowRunID:   request.Run.WorkflowRunID,
+		CurrentWorkflowAttempt: int64(request.Run.WorkflowRunAttempt),
+	}
 }
 
 func sourceFromRepositorySnapshot(

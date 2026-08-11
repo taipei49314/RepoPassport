@@ -2,6 +2,7 @@ package sourcequalification
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,40 @@ import (
 )
 
 const controllerRuntimeFactLimit int64 = 4096
+
+var errAuthenticatedLaneAttemptHistoryUnavailable = errors.New(
+	"authenticated source qualification attempt history is unavailable",
+)
+
+// unavailableLaneAttemptHistoryProvider is the only production provider until
+// an authenticated GitHub history adapter is added. It deliberately reads no
+// token or environment value and can never authorize an ordinal-1 attempt.
+type unavailableLaneAttemptHistoryProvider struct{}
+
+func (unavailableLaneAttemptHistoryProvider) HasPriorExecution(
+	context.Context,
+	laneAttemptHistoryScope,
+) (bool, error) {
+	return false, errAuthenticatedLaneAttemptHistoryUnavailable
+}
+
+// verifiedLaneAttemptHistoryProvider carries one complete authenticated
+// answer across the production preflight into the lane producer without a
+// second external query. A scope mismatch fails closed.
+type verifiedLaneAttemptHistoryProvider struct {
+	scope laneAttemptHistoryScope
+	prior bool
+}
+
+func (provider verifiedLaneAttemptHistoryProvider) HasPriorExecution(
+	ctx context.Context,
+	scope laneAttemptHistoryScope,
+) (bool, error) {
+	if ctx == nil || ctx.Err() != nil || scope != provider.scope {
+		return false, errAuthenticatedLaneAttemptHistoryUnavailable
+	}
+	return provider.prior, nil
+}
 
 type productionLaneRepositoryInspector struct{}
 
@@ -116,7 +151,28 @@ func produceControllerLaneStage(
 	ctx context.Context,
 	request ProduceLaneRequest,
 ) (produceLaneStageOutcome, *qualificationReceipt, error) {
-	configuration, err := buildProductionLaneConfiguration(ctx, request)
+	historyScope := productionLaneAttemptHistoryScope(request)
+	prior, historyErr := (unavailableLaneAttemptHistoryProvider{}).HasPriorExecution(
+		ctx,
+		historyScope,
+	)
+	if historyErr != nil {
+		return produceLaneStageOutcome{
+			QualificationStatus: StatusBlocked,
+			Code:                controllerCodeGateBlocked,
+		}, nil, errGateBlocked
+	}
+	if prior {
+		return produceLaneStageOutcome{
+			QualificationStatus: StatusFail,
+			Code:                controllerCodeGateFailed,
+		}, nil, errGateFailed
+	}
+	configuration, err := buildProductionLaneConfiguration(
+		ctx,
+		request,
+		verifiedLaneAttemptHistoryProvider{scope: historyScope, prior: prior},
+	)
 	if err != nil {
 		return produceLaneStageOutcome{
 			QualificationStatus: StatusFail,
@@ -175,8 +231,10 @@ func produceControllerLaneStage(
 func buildProductionLaneConfiguration(
 	ctx context.Context,
 	request ProduceLaneRequest,
+	history laneAttemptHistoryProvider,
 ) (productionLaneConfiguration, error) {
 	if ctx == nil || ctx.Err() != nil ||
+		history == nil || nilGateDependency(history) ||
 		(request.Lane == LaneLinuxAMD64 && runtime.GOOS != "linux") ||
 		(request.Lane == LaneWindowsAMD64 && runtime.GOOS != "windows") ||
 		runtime.GOARCH != "amd64" {
@@ -268,9 +326,21 @@ func buildProductionLaneConfiguration(
 				expectedGOOS:   runtime.GOOS,
 				testedRevision: request.ExpectedTestedRevision,
 			},
-			PrivateLogs: logs,
+			PrivateLogs:    logs,
+			AttemptHistory: history,
 		},
 	}, nil
+}
+
+func productionLaneAttemptHistoryScope(request ProduceLaneRequest) laneAttemptHistoryScope {
+	return laneAttemptHistoryScope{
+		WorkflowRepository:     canonicalWorkflowRepository,
+		WorkflowPath:           canonicalWorkflowPath,
+		TestedRevision:         request.ExpectedTestedRevision,
+		Lane:                   request.Lane,
+		CurrentWorkflowRunID:   request.WorkflowRunID,
+		CurrentWorkflowAttempt: request.WorkflowRunAttempt,
+	}
 }
 
 func createControllerRuntimeDirectories(root string) (map[string]string, error) {
