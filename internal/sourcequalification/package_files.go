@@ -39,6 +39,10 @@ type packageDirectoryRead struct {
 	snapshot packageFileSnapshot
 }
 
+type packageInventoryReader interface {
+	ReadDir(n int) ([]os.DirEntry, error)
+}
+
 type qualificationPackageExpectation struct {
 	baseRevision       string
 	testedRevision     string
@@ -356,11 +360,7 @@ func readExactPackageDirectory(
 	return result, nil
 }
 
-func requireExactPackageInventory(directory *os.File, specifications []packageFileSpec) error {
-	entries, err := directory.ReadDir(-1)
-	if err != nil || len(entries) != len(specifications) {
-		return errors.New("source qualification directory inventory is invalid")
-	}
+func requireExactPackageInventory(directory packageInventoryReader, specifications []packageFileSpec) error {
 	expected := make(map[string]struct{}, len(specifications))
 	for _, specification := range specifications {
 		if specification.name == "" {
@@ -370,6 +370,20 @@ func requireExactPackageInventory(directory *os.File, specifications []packageFi
 	}
 	if len(expected) != len(specifications) {
 		return errors.New("source qualification directory contract is duplicated")
+	}
+
+	entries, err := directory.ReadDir(len(specifications) + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return errors.New("source qualification directory inventory is invalid")
+	}
+	if len(entries) != len(specifications) {
+		return errors.New("source qualification directory inventory is invalid")
+	}
+	if err == nil {
+		trailing, trailingErr := directory.ReadDir(1)
+		if len(trailing) != 0 || !errors.Is(trailingErr, io.EOF) {
+			return errors.New("source qualification directory inventory is invalid")
+		}
 	}
 	for _, entry := range entries {
 		if _, ok := expected[entry.Name()]; !ok {
