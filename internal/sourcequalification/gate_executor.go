@@ -21,6 +21,7 @@ const (
 var (
 	errGateProcessInvalid                = errors.New("gate process request is invalid")
 	errGateProcessBlocked                = errors.New("gate process prerequisite is unavailable")
+	errGateIsolationUnavailable          = errors.New("gate isolation prerequisite is unavailable")
 	errGateApplicationBindingUnavailable = errors.New("immutable gate application binding is unavailable")
 )
 

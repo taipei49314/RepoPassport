@@ -35,7 +35,10 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	if !ok || !linuxGateIsolationAvailable(ctx, isolationApplication, request.Network) {
 		_ = stdoutWriter.Close()
 		_ = stderrWriter.Close()
-		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		return gateProcessResult{Blocked: true}, errors.Join(
+			errGateProcessBlocked,
+			errGateIsolationUnavailable,
+		)
 	}
 	isolationArguments := linuxGateIsolationArguments(request.Network, request.Application, request.Args)
 	command := exec.Command(isolationApplication, isolationArguments...)
