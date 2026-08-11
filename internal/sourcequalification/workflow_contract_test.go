@@ -827,6 +827,11 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 	verify := workflowRequiredStep(t, job, "verify-subject")
 	verifyScript := workflowScript(t, verify)
 	if platform == "linux" {
+		requireWorkflowScriptFragments(t, verify,
+			"sudo unshare --net", "--pid", "--mount-proc", "--fork", "--kill-child",
+			"setpriv", "--reuid", "--regid", "--clear-groups", "--inh-caps=-all",
+			"--ambient-caps=-all", "--bounding-set=-all", "--no-new-privs",
+		)
 		pattern := regexp.MustCompile(`(?m)^\s*sudo\s+unshare\s+--net(?:\s+[^\n]*)?repopass-source-qualify-linux-amd64["']?\s+verify-subject(?:\s|$)`)
 		if !pattern.MatchString(verifyScript) {
 			t.Error("replay-linux must execute verify-subject inside a fresh network-disabled namespace")
