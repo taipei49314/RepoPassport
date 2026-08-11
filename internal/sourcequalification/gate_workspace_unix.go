@@ -81,6 +81,56 @@ func createQualificationWorkspacePlatform(
 	return workspace, nil
 }
 
+func bindQualificationWorkspacePlatform(
+	parent *os.File,
+	parentIdentity packageFileIdentity,
+	parentPath string,
+	name string,
+	path string,
+	expected packageFileIdentity,
+) (qualificationWorkspacePlatform, error) {
+	if !qualificationWorkspaceHandleHasIdentity(parent, parentIdentity) ||
+		!qualificationWorkspacePathHasIdentity(parentPath, parentIdentity) {
+		return nil, errQualificationWorkspaceCreate
+	}
+	descriptor, err := unix.Openat(
+		int(parent.Fd()),
+		name,
+		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW,
+		0,
+	)
+	if err != nil {
+		return nil, errQualificationWorkspaceCreate
+	}
+	var metadata unix.Stat_t
+	if err := unix.Fstat(descriptor, &metadata); err != nil ||
+		!validUnixQualificationWorkspaceMetadata(&metadata, expected, false) {
+		_ = unix.Close(descriptor)
+		return nil, errQualificationWorkspaceCreate
+	}
+	root := os.NewFile(uintptr(descriptor), path)
+	if root == nil {
+		_ = unix.Close(descriptor)
+		return nil, errQualificationWorkspaceCreate
+	}
+	workspace := &unixQualificationWorkspace{
+		parent:         parent,
+		root:           root,
+		parentPath:     parentPath,
+		path:           path,
+		name:           name,
+		parentIdentity: parentIdentity,
+		rootIdentity:   expected,
+	}
+	if !qualificationWorkspaceHandleHasIdentity(parent, parentIdentity) ||
+		!qualificationWorkspacePathHasIdentity(parentPath, parentIdentity) ||
+		!qualificationWorkspacePathHasIdentity(path, expected) {
+		_ = workspace.release()
+		return nil, errQualificationWorkspaceCreate
+	}
+	return workspace, nil
+}
+
 func rollbackCreatedUnixQualificationWorkspace(
 	parentDescriptor int,
 	name string,
@@ -117,6 +167,20 @@ func (workspace *unixQualificationWorkspace) cleanup() error {
 	return workspace.cleanupInternal(true)
 }
 
+func (workspace *unixQualificationWorkspace) release() error {
+	if workspace == nil || workspace.parent == nil || workspace.root == nil {
+		return errQualificationWorkspaceCleanup
+	}
+	rootErr := workspace.root.Close()
+	parentErr := workspace.parent.Close()
+	workspace.root = nil
+	workspace.parent = nil
+	if rootErr != nil || parentErr != nil {
+		return errQualificationWorkspaceCleanup
+	}
+	return nil
+}
+
 func (workspace *unixQualificationWorkspace) cleanupWithoutPathVerification() error {
 	return workspace.cleanupInternal(false)
 }
@@ -126,11 +190,7 @@ func (workspace *unixQualificationWorkspace) cleanupInternal(verifyPaths bool) (
 		return errQualificationWorkspaceCleanup
 	}
 	defer func() {
-		rootErr := workspace.root.Close()
-		parentErr := workspace.parent.Close()
-		workspace.root = nil
-		workspace.parent = nil
-		if rootErr != nil || parentErr != nil {
+		if err := workspace.release(); err != nil {
 			returnErr = errQualificationWorkspaceCleanup
 		}
 	}()

@@ -511,16 +511,21 @@ func publishQualificationLane(
 	defer parent.Close()
 
 	stagingPath := ""
+	var cleanupStaging func() error
+	var releaseStaging func() error
 	defer func() {
-		if stagingPath == "" {
+		if cleanupStaging == nil {
 			return
 		}
-		if err := os.RemoveAll(stagingPath); err != nil {
+		if err := cleanupStaging(); err != nil {
 			returnErr = errQualificationLaneCleanupFailed
 		}
 	}()
 
-	stagingPath, err = os.MkdirTemp(outputParent, qualificationStagingPrefix)
+	stagingPath, cleanupStaging, releaseStaging, err = createPrivateQualificationStaging(
+		outputParent,
+		qualificationStagingPrefix,
+	)
 	if err != nil {
 		return errQualificationLaneInvalidInput
 	}
@@ -582,6 +587,20 @@ func publishQualificationLane(
 		}
 		return errQualificationLaneInvalidInput
 	}
+	if err := releaseStaging(); err != nil {
+		cleanupStaging = nil
+		if cleanupErr := cleanupPublishedPackage(
+			outputPath,
+			staged.snapshot.identity,
+			specifications,
+			parent,
+		); cleanupErr != nil {
+			return errQualificationLaneCleanupFailed
+		}
+		return errQualificationLaneCleanupFailed
+	}
+	cleanupStaging = nil
+	releaseStaging = nil
 	stagingPath = ""
 	if err := syncPackageDirectory(parent); err != nil {
 		if cleanupErr := cleanupPublishedPackage(

@@ -2,7 +2,6 @@ package sourcequalification
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 )
 
@@ -126,17 +125,22 @@ func assembleQualificationToolsWithSubject(
 	}
 
 	stagingPath := ""
+	var cleanupStaging func() error
+	var releaseStaging func() error
 	defer func() {
-		if stagingPath == "" {
+		if cleanupStaging == nil {
 			return
 		}
-		if err := os.RemoveAll(stagingPath); err != nil {
+		if err := cleanupStaging(); err != nil {
 			toolManifestDigest = ""
 			returnErr = errors.New("source qualification tool staging cleanup failed")
 		}
 	}()
 
-	stagingPath, err = os.MkdirTemp(outputParent, qualificationToolStagingPrefix)
+	stagingPath, cleanupStaging, releaseStaging, err = createPrivateQualificationStaging(
+		outputParent,
+		qualificationToolStagingPrefix,
+	)
 	if err != nil {
 		return "", errors.New("source qualification tool staging directory could not be created")
 	}
@@ -192,6 +196,20 @@ func assembleQualificationToolsWithSubject(
 	if err := publishPackageDirectoryNoReplace(stagingPath, outputPath); err != nil {
 		return "", errors.New("source qualification tool directory publication failed")
 	}
+	if err := releaseStaging(); err != nil {
+		cleanupStaging = nil
+		if cleanupErr := cleanupPublishedPackage(
+			outputPath,
+			stagedTools.snapshot.identity,
+			outputSpecifications,
+			parent,
+		); cleanupErr != nil {
+			return "", errors.New("source qualification published tool directory cleanup failed")
+		}
+		return "", errors.New("source qualification tool staging cleanup failed")
+	}
+	cleanupStaging = nil
+	releaseStaging = nil
 	stagingPath = ""
 	if err := syncPublishedPackageParent(parent); err != nil {
 		if cleanupErr := cleanupPublishedPackage(

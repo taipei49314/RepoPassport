@@ -148,17 +148,22 @@ func assembleQualificationPackageWithExpectation(
 	}
 
 	stagingPath := ""
+	var cleanupStaging func() error
+	var releaseStaging func() error
 	defer func() {
-		if stagingPath == "" {
+		if cleanupStaging == nil {
 			return
 		}
-		if err := os.RemoveAll(stagingPath); err != nil {
+		if err := cleanupStaging(); err != nil {
 			packageDigest = ""
 			returnErr = errors.New("source qualification staging cleanup failed")
 		}
 	}()
 
-	stagingPath, err = os.MkdirTemp(outputParent, qualificationStagingPrefix)
+	stagingPath, cleanupStaging, releaseStaging, err = createPrivateQualificationStaging(
+		outputParent,
+		qualificationStagingPrefix,
+	)
 	if err != nil {
 		return "", errors.New("source qualification staging directory could not be created")
 	}
@@ -215,6 +220,20 @@ func assembleQualificationPackageWithExpectation(
 	if err := publishPackageDirectoryNoReplace(stagingPath, outputPath); err != nil {
 		return "", errors.New("source qualification package publication failed")
 	}
+	if err := releaseStaging(); err != nil {
+		cleanupStaging = nil
+		if cleanupErr := cleanupPublishedPackage(
+			outputPath,
+			stagedPackage.snapshot.identity,
+			outputFiles,
+			parent,
+		); cleanupErr != nil {
+			return "", errors.New("source qualification published package cleanup failed")
+		}
+		return "", errors.New("source qualification staging cleanup failed")
+	}
+	cleanupStaging = nil
+	releaseStaging = nil
 	stagingPath = ""
 	if err := syncPublishedPackageParent(parent); err != nil {
 		if cleanupErr := cleanupPublishedPackage(
@@ -254,6 +273,10 @@ func cleanupPublishedPackage(
 	specifications []packageFileSpec,
 	parent *os.File,
 ) error {
+	parentSnapshot, err := snapshotPackageHandle(parent, true)
+	if err != nil {
+		return errors.New("source qualification published package cleanup parent is invalid")
+	}
 	directory, snapshot, err := openValidatedPackageDirectory(outputPath)
 	if err != nil {
 		return errors.New("source qualification published package cleanup target is invalid")
@@ -272,7 +295,15 @@ func cleanupPublishedPackage(
 		inventoryErr != nil || closeErr != nil {
 		return errors.New("source qualification published package cleanup target changed")
 	}
-	if err := os.RemoveAll(outputPath); err != nil {
+	cleanup, err := bindPrivateQualificationCleanup(
+		outputPath,
+		expectedIdentity,
+		parentSnapshot.identity,
+	)
+	if err != nil {
+		return errors.New("source qualification published package cleanup target changed")
+	}
+	if err := cleanup(); err != nil {
 		return errors.New("source qualification published package could not be removed")
 	}
 	if err := requirePackageOutputAbsent(outputPath); err != nil {

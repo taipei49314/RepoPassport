@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"strconv"
 
@@ -179,16 +178,21 @@ func publishAttemptTombstone(outputDir string, document qualificationAttemptTomb
 	defer parent.Close()
 
 	stagingPath := ""
+	var cleanupStaging func() error
+	var releaseStaging func() error
 	defer func() {
-		if stagingPath == "" {
+		if cleanupStaging == nil {
 			return
 		}
-		if err := os.RemoveAll(stagingPath); err != nil {
+		if err := cleanupStaging(); err != nil {
 			returnErr = errors.New("source qualification attempt staging cleanup failed")
 		}
 	}()
 
-	stagingPath, err = os.MkdirTemp(parentPath, attemptTombstoneStagingPrefix)
+	stagingPath, cleanupStaging, releaseStaging, err = createPrivateQualificationStaging(
+		parentPath,
+		attemptTombstoneStagingPrefix,
+	)
 	if err != nil {
 		return errAttemptTombstonePublication
 	}
@@ -239,6 +243,20 @@ func publishAttemptTombstone(outputDir string, document qualificationAttemptTomb
 	if err := publishPackageDirectoryNoReplace(stagingPath, outputPath); err != nil {
 		return errAttemptTombstonePublication
 	}
+	if err := releaseStaging(); err != nil {
+		cleanupStaging = nil
+		if cleanupErr := cleanupPublishedPackage(
+			outputPath,
+			staged.snapshot.identity,
+			specifications,
+			parent,
+		); cleanupErr != nil {
+			return errors.New("source qualification published attempt cleanup failed")
+		}
+		return errors.New("source qualification attempt staging cleanup failed")
+	}
+	cleanupStaging = nil
+	releaseStaging = nil
 	stagingPath = ""
 	if err := syncPublishedPackageParent(parent); err != nil {
 		if cleanupErr := cleanupPublishedPackage(

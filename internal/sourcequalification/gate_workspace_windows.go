@@ -82,8 +82,58 @@ func createQualificationWorkspacePlatform(
 	return workspace, nil
 }
 
+func bindQualificationWorkspacePlatform(
+	parent *os.File,
+	parentIdentity packageFileIdentity,
+	parentPath string,
+	_ string,
+	path string,
+	expected packageFileIdentity,
+) (qualificationWorkspacePlatform, error) {
+	if !qualificationWorkspaceHandleHasIdentity(parent, parentIdentity) ||
+		!qualificationWorkspacePathHasIdentity(parentPath, parentIdentity) {
+		return nil, errQualificationWorkspaceCreate
+	}
+	root, err := openWindowsQualificationWorkspaceEntry(path)
+	if err != nil || !validWindowsQualificationWorkspaceDirectory(root, expected, false, true) {
+		if root != nil {
+			_ = root.Close()
+		}
+		return nil, errQualificationWorkspaceCreate
+	}
+	workspace := &windowsQualificationWorkspace{
+		parent:         parent,
+		root:           root,
+		parentPath:     parentPath,
+		path:           path,
+		parentIdentity: parentIdentity,
+		rootIdentity:   expected,
+	}
+	if !qualificationWorkspaceHandleHasIdentity(parent, parentIdentity) ||
+		!qualificationWorkspacePathHasIdentity(parentPath, parentIdentity) ||
+		!qualificationWorkspacePathHasIdentity(path, expected) {
+		_ = workspace.release()
+		return nil, errQualificationWorkspaceCreate
+	}
+	return workspace, nil
+}
+
 func (workspace *windowsQualificationWorkspace) cleanup() error {
 	return workspace.cleanupInternal(true, true)
+}
+
+func (workspace *windowsQualificationWorkspace) release() error {
+	if workspace == nil || workspace.parent == nil || workspace.root == nil {
+		return errQualificationWorkspaceCleanup
+	}
+	rootErr := workspace.root.Close()
+	parentErr := workspace.parent.Close()
+	workspace.root = nil
+	workspace.parent = nil
+	if rootErr != nil || parentErr != nil {
+		return errQualificationWorkspaceCleanup
+	}
+	return nil
 }
 
 func (workspace *windowsQualificationWorkspace) cleanupInternal(
@@ -94,11 +144,7 @@ func (workspace *windowsQualificationWorkspace) cleanupInternal(
 		return errQualificationWorkspaceCleanup
 	}
 	defer func() {
-		rootErr := workspace.root.Close()
-		parentErr := workspace.parent.Close()
-		workspace.root = nil
-		workspace.parent = nil
-		if rootErr != nil || parentErr != nil {
+		if err := workspace.release(); err != nil {
 			returnErr = errQualificationWorkspaceCleanup
 		}
 	}()
