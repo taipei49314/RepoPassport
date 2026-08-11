@@ -270,9 +270,9 @@ func TestProduceLaneRuntimeRejectsUnallowlistedProducerCodeWithoutDisclosure(t *
 		controllerCodeInvalidInput,
 		StatusFail,
 	)
-	if fake.tombstoneCode != controllerCodeInvalidInput || fake.tombstoneStatus != StatusFail {
-		t.Fatalf("invalid producer result escaped tombstone boundary: (%q, %q)",
-			fake.tombstoneCode, fake.tombstoneStatus)
+	if fake.tombstoneCalls != 0 || fake.outputKind != "absent" || fake.stageState != "withdrawn" {
+		t.Fatalf("invalid producer result created public evidence: calls=%d output=%q stage=%q",
+			fake.tombstoneCalls, fake.outputKind, fake.stageState)
 	}
 }
 
