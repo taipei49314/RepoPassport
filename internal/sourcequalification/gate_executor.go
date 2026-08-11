@@ -19,14 +19,26 @@ const (
 )
 
 var (
-	errGateProcessInvalid = errors.New("gate process request is invalid")
-	errGateProcessBlocked = errors.New("gate process prerequisite is unavailable")
+	errGateProcessInvalid                = errors.New("gate process request is invalid")
+	errGateProcessBlocked                = errors.New("gate process prerequisite is unavailable")
+	errGateApplicationBindingUnavailable = errors.New("immutable gate application binding is unavailable")
 )
 
 type osGateExecutor struct{}
 
 func newOSGateExecutor() gateExecutor {
 	return osGateExecutor{}
+}
+
+func (osGateExecutor) BindApplications(
+	context.Context,
+	map[string]string,
+) (gateApplicationBinding, error) {
+	// Process-group/job containment does not make the host toolchain immutable.
+	// Until a platform implementation can hold and execute fixed executable and
+	// dependency identities for the entire lane, production qualification must
+	// report BLOCKED rather than accept mutable pathnames as trusted tools.
+	return nil, errGateApplicationBindingUnavailable
 }
 
 func (osGateExecutor) Execute(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {

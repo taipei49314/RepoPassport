@@ -73,7 +73,18 @@ type gateProcessResult struct {
 }
 
 type gateExecutor interface {
+	BindApplications(context.Context, map[string]string) (gateApplicationBinding, error)
 	Execute(context.Context, gateProcessRequest) (gateProcessResult, error)
+}
+
+// gateApplicationBinding is a lane-lifetime authority over every executable
+// byte and executable dependency reachable through the logical application
+// map. Verify MUST fail if any byte, name binding, loader, runtime, or toolchain
+// dependency can change. Implementations that cannot prove that property MUST
+// refuse BindApplications instead of authorizing a gate.
+type gateApplicationBinding interface {
+	Verify(context.Context) error
+	Release() error
 }
 
 type gatePrivateLogSink interface {
@@ -85,7 +96,7 @@ func runRequiredGates(
 	request gateRunRequest,
 	executor gateExecutor,
 	logs gatePrivateLogSink,
-) ([]receiptGate, error) {
+) (records []receiptGate, runErr error) {
 	if ctx == nil || nilGateDependency(ctx) {
 		return nil, errGateInvalidInput
 	}
@@ -94,7 +105,7 @@ func runRequiredGates(
 		return nil, errGateInvalidInput
 	}
 
-	records := make([]receiptGate, len(registry))
+	records = make([]receiptGate, len(registry))
 	for index, specification := range registry {
 		records[index] = receiptGate{
 			Argv:           substituteGateArgv(specification.Argv, request.TestedRevision),
@@ -105,10 +116,35 @@ func runRequiredGates(
 			TimeoutSeconds: int64(specification.TimeoutSeconds),
 		}
 	}
+	if ctx.Err() != nil {
+		return records, errGateNotRun
+	}
+
+	applicationsToBind := make(map[string]string, len(applications))
+	for logicalName, application := range applications {
+		applicationsToBind[logicalName] = application
+	}
+	binding, bindingErr := executor.BindApplications(ctx, applicationsToBind)
+	if binding != nil && !nilGateDependency(binding) {
+		defer func() {
+			if err := binding.Release(); err != nil {
+				markLastEvaluatedGateCleanupFailure(records)
+				runErr = errGateCleanupFailed
+			}
+		}()
+	}
+	if bindingErr != nil || binding == nil || nilGateDependency(binding) {
+		markGateBindingFailure(&records[0], StatusBlocked)
+		return records, errGateBlocked
+	}
 
 	for index, specification := range registry {
 		if ctx.Err() != nil {
 			return records, errGateNotRun
+		}
+		if err := binding.Verify(ctx); err != nil {
+			markGateBindingFailure(&records[index], StatusFail)
+			return records, errGateFailed
 		}
 
 		started := time.Now().UTC().Truncate(time.Second)
@@ -124,6 +160,9 @@ func runRequiredGates(
 		}
 
 		result, executionErr := executor.Execute(ctx, processRequest)
+		if err := binding.Verify(ctx); err != nil {
+			result.SourceChanged = true
+		}
 		if ctx.Err() != nil {
 			result.Cancelled = true
 		}
@@ -163,6 +202,27 @@ func runRequiredGates(
 	}
 
 	return records, nil
+}
+
+func markGateBindingFailure(record *receiptGate, status QualificationStatus) {
+	now := gateTimestamp(time.Now().UTC().Truncate(time.Second))
+	record.Status = status
+	record.ExitCode = nil
+	record.StartedAt = now
+	record.FinishedAt = now
+}
+
+func markLastEvaluatedGateCleanupFailure(records []receiptGate) {
+	if len(records) == 0 {
+		return
+	}
+	index := 0
+	for current := range records {
+		if records[current].StartedAt != nil {
+			index = current
+		}
+	}
+	markGateBindingFailure(&records[index], StatusFail)
 }
 
 func validateGateRunRequest(
