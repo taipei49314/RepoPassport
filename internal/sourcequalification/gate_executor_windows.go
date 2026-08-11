@@ -159,8 +159,8 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	); err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
-	defer windows.CloseHandle(process.Process)
-	defer windows.CloseHandle(process.Thread)
+	defer func() { _ = releaseWindowsGateHandle(&process.Process, windows.CloseHandle) }()
+	defer func() { _ = releaseWindowsGateHandle(&process.Thread, windows.CloseHandle) }()
 	_ = stdin.Close()
 	_ = stdoutWriter.Close()
 	_ = stderrWriter.Close()
@@ -183,6 +183,11 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 			cleanupFailed = true
 		}
 		return gateProcessResult{Blocked: true, CleanupFailed: cleanupFailed}, errGateProcessBlocked
+	}
+	if !releaseWindowsGateHandle(&process.Thread, windows.CloseHandle) {
+		_ = windows.TerminateJobObject(job, gateWindowsTerminateExitCode)
+		_, _ = windows.WaitForSingleObject(process.Process, uint32(gateProcessCleanupTimeout/time.Millisecond))
+		return gateProcessResult{Blocked: true, CleanupFailed: true}, errGateProcessBlocked
 	}
 
 	waitDone := make(chan windowsGateWaitResult, 1)
@@ -222,8 +227,11 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	if ctx.Err() != nil {
 		result.Cancelled = true
 	}
+	if rootFinished && !releaseWindowsGateHandle(&process.Process, windows.CloseHandle) {
+		result.CleanupFailed = true
+	}
 
-	terminate := result.TimedOut || result.Cancelled
+	terminate := result.TimedOut || result.Cancelled || result.CleanupFailed
 	if !terminate && rootFinished {
 		// ActiveProcesses can retain the signaled root until its references are
 		// released. TotalProcesses is lifetime accounting, so only a job that has
@@ -255,6 +263,9 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 			rootFinished = true
 		}
 	}
+	if rootFinished && !releaseWindowsGateHandle(&process.Process, windows.CloseHandle) {
+		result.CleanupFailed = true
+	}
 	if !waitWindowsGateJob(job, cleanupDeadline) {
 		result.CleanupFailed = true
 	}
@@ -280,6 +291,24 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		result.ExitCode = waitResult.exitCode
 	}
 	return result, nil
+}
+
+func releaseWindowsGateHandle(
+	handle *windows.Handle,
+	closeHandle func(windows.Handle) error,
+) bool {
+	if handle == nil || closeHandle == nil {
+		return false
+	}
+	if *handle == 0 {
+		return true
+	}
+	value := *handle
+	if err := closeHandle(value); err != nil {
+		return false
+	}
+	*handle = 0
+	return true
 }
 
 func windowsGateEnvironmentBlock(environment []string) []uint16 {
