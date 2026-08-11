@@ -64,6 +64,97 @@ func TestParseCanonicalReceiptRejectsAdditionalPrivacyCandidatesWithoutEcho(t *t
 	}
 }
 
+func TestParseCanonicalReceiptRejectsFieldAwarePrivacyCandidatesWithoutEcho(t *testing.T) {
+	archive := []byte("canonical archive bytes")
+	manifest := []byte(`{"artifactType":"repopass-source-archive-manifest"}`)
+	tests := []struct {
+		name              string
+		candidate         string
+		sensitiveFragment string
+		mutate            func(map[string]any, string)
+	}{
+		{
+			name:              "kernel version endpoint",
+			candidate:         "6.11.0 runner.internal:443",
+			sensitiveFragment: "runner.internal",
+			mutate: func(document map[string]any, candidate string) {
+				receiptParserObject(document, "platform")["kernelVersion"] = candidate
+			},
+		},
+		{
+			name:              "temporary POSIX path",
+			candidate:         "/tmp/repopass-private/runner-image",
+			sensitiveFragment: "repopass-private",
+			mutate: func(document map[string]any, candidate string) {
+				receiptParserObject(document, "platform")["runnerImage"] = candidate
+			},
+		},
+		{
+			name:              "manual ref email",
+			candidate:         "refs/heads/private.builder@example.invalid",
+			sensitiveFragment: "private.builder@example.invalid",
+			mutate: func(document map[string]any, candidate string) {
+				receiptPrivacySetManualRef(document, LaneLinuxAMD64, candidate)
+			},
+		},
+		{
+			name:              "manual ref high entropy",
+			candidate:         "refs/heads/f9Q2vL7mK4pR8xT1wY6cN3bH0sJ5dG9uI2oE7aZ4nM8rP6kV1qC5",
+			sensitiveFragment: "f9Q2vL7mK4pR8xT1wY6c",
+			mutate: func(document map[string]any, candidate string) {
+				receiptPrivacySetManualRef(document, LaneLinuxAMD64, candidate)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := receiptParserCanonical(t, LaneLinuxAMD64, archive, manifest, func(document map[string]any) {
+				test.mutate(document, test.candidate)
+			})
+			_, err := parseCanonicalReceipt(raw, LaneLinuxAMD64)
+			if err == nil {
+				t.Fatal("parseCanonicalReceipt accepted a forbidden field-aware privacy candidate")
+			}
+			message := strings.ToLower(err.Error())
+			for _, forbidden := range []string{test.candidate, test.sensitiveFragment} {
+				if strings.Contains(message, strings.ToLower(forbidden)) {
+					t.Fatal("parseCanonicalReceipt error echoed rejected private content")
+				}
+			}
+		})
+	}
+}
+
+func receiptPrivacySetManualRef(document map[string]any, lane Lane, ref string) {
+	run := receiptParserObject(document, "run")
+	run["event"] = "workflow_dispatch"
+	run["ref"] = ref
+	identity := RunIdentity{
+		WorkflowRepository: run["workflowRepository"].(string),
+		WorkflowPath:       run["workflowPath"].(string),
+		Event:              run["event"].(string),
+		Ref:                ref,
+		WorkflowRunID:      run["workflowRunId"].(string),
+		WorkflowRunAttempt: run["workflowRunAttempt"].(int),
+		TestedRevision:     run["headSHA"].(string),
+	}
+	qualificationRunID := QualificationRunID(identity)
+	run["qualificationRunId"] = qualificationRunID
+	receiptParserObject(document, "attempt")["attemptId"] = AttemptID(qualificationRunID, lane, 1)
+}
+
+func TestParseCanonicalReceiptFieldAwarePrivacyKeepsStrictValuesExempt(t *testing.T) {
+	archive := []byte("canonical archive bytes")
+	manifest := []byte(`{"artifactType":"repopass-source-archive-manifest"}`)
+	raw := receiptParserCanonical(t, LaneLinuxAMD64, archive, manifest, func(document map[string]any) {
+		receiptPrivacySetManualRef(document, LaneLinuxAMD64, "refs/heads/release/v0.1.0-alpha.33")
+	})
+	if _, err := parseCanonicalReceipt(raw, LaneLinuxAMD64); err != nil {
+		t.Fatalf("parseCanonicalReceipt rejected strict digests, IDs, timestamps, or safe manual ref: %v", err)
+	}
+}
+
 func TestParseCanonicalReceiptAcceptsRFCFailExitVariants(t *testing.T) {
 	archive := []byte("canonical archive bytes")
 	manifest := []byte(`{"artifactType":"repopass-source-archive-manifest"}`)
