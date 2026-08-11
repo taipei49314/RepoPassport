@@ -602,9 +602,13 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 	if !strings.HasSuffix(controllerPath, "/"+binary) || strings.ContainsAny(controllerPath, "*?[]\n") {
 		t.Errorf("%s controller artifact path = %q, want exactly the one named controller file", lane, controllerPath)
 	}
-	requireWorkflowUploadStep(t, job, "upload-attempt",
+	attempt := requireWorkflowUploadStep(t, job, "upload-attempt",
 		"source-qualification-attempt-"+wantLane+"-"+testedRevision+"-1",
 		"steps.produce-lane.outcome != 'success'")
+	attemptPath := strings.ReplaceAll(workflowRequiredScalar(t, workflowRequiredMapping(t, attempt, "with"), "path"), "\\", "/")
+	if !strings.HasSuffix(attemptPath, "/source-qualification-lane-"+lane) || strings.ContainsAny(attemptPath, "*?[]\n") {
+		t.Errorf("%s non-PASS artifact path = %q, want the exact producer output directory", lane, attemptPath)
+	}
 }
 
 func requireWorkflowControllerBuild(t *testing.T, job *yaml.Node, binary string) {
@@ -779,6 +783,17 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 			t.Errorf("replay-%s must be a no-checkout offline replay, found %s", platform, action)
 		}
 	}
+	validateIDs := workflowRequiredStep(t, job, "validate-artifact-ids")
+	validateScript := requireWorkflowScriptFragments(t, validateIDs, "^[1-9][0-9]{0,19}$")
+	validateOperational := validateScript + "\n" + workflowOperationalScalarText(validateIDs)
+	for _, expected := range []string{
+		"needs.aggregate.outputs.package-artifact-id",
+		"needs.aggregate.outputs.tool-artifact-id",
+	} {
+		if !strings.Contains(validateOperational, expected) {
+			t.Errorf("replay-%s artifact-ID validation is missing exact upstream binding %q", platform, expected)
+		}
+	}
 
 	prepare := workflowRequiredStep(t, job, "prepare-empty-directories")
 	packagePath := "${{ runner.temp }}/qualification-package"
@@ -808,10 +823,16 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 		binary,
 	}
 	if platform == "linux" {
-		requireWorkflowScriptFragments(t, pre, append([]string{"sha256sum"}, inventory...)...)
+		requireWorkflowScriptFragments(t, pre, append([]string{
+			"sha256sum", "actual_tool_manifest_digest", "actual_executable_digest",
+			"SQ_TOOL_MANIFEST_DIGEST", "SQ_EXECUTABLE_DIGEST",
+		}, inventory...)...)
 		requireWorkflowScriptFragments(t, post, append([]string{"sha256sum", "cmp"}, inventory...)...)
 	} else {
-		requireWorkflowScriptFragments(t, pre, append([]string{"Get-FileHash"}, inventory...)...)
+		requireWorkflowScriptFragments(t, pre, append([]string{
+			"Get-FileHash", "actualToolManifestDigest", "actualExecutableDigest",
+			"SQ_TOOL_MANIFEST_DIGEST", "SQ_EXECUTABLE_DIGEST",
+		}, inventory...)...)
 		requireWorkflowScriptFragments(t, post, append([]string{"Get-FileHash", "Compare-Object"}, inventory...)...)
 	}
 	preText := workflowScript(t, pre) + "\n" + workflowOperationalScalarText(pre)
@@ -832,15 +853,20 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 			"setpriv", "--reuid", "--regid", "--clear-groups", "--inh-caps=-all",
 			"--ambient-caps=-all", "--bounding-set=-all", "--no-new-privs",
 		)
-		pattern := regexp.MustCompile(`(?m)^\s*sudo\s+unshare\s+--net(?:\s+[^\n]*)?repopass-source-qualify-linux-amd64["']?\s+verify-subject(?:\s|$)`)
-		if !pattern.MatchString(verifyScript) {
+		unshareIndex := strings.Index(verifyScript, "sudo unshare --net")
+		setprivIndex := strings.Index(verifyScript, "setpriv")
+		verifyIndex := strings.Index(verifyScript, "repopass-source-qualify-linux-amd64\" verify-subject")
+		if unshareIndex < 0 || setprivIndex <= unshareIndex || verifyIndex <= setprivIndex {
 			t.Error("replay-linux must execute verify-subject inside a fresh network-disabled namespace")
 		}
 	} else {
 		disable := workflowRequiredStep(t, job, "disable-network")
-		requireWorkflowScriptFragments(t, disable,
-			"New-NetFirewallRule", "-Direction Outbound", "-Action Block", "-Program", binary,
+		disableScript := requireWorkflowScriptFragments(t, disable,
+			"SOURCE_QUAL_GATE_BLOCKED", "throw",
 		)
+		if strings.Contains(disableScript, "New-NetFirewallRule") || strings.Contains(disableScript, "-Program") {
+			t.Error("replay-windows must fail closed until a non-bypassable network authority exists; per-program firewall rules are insufficient")
+		}
 		if !regexp.MustCompile(`(?m)^\s*&\s+[^\n]*(?:repopass-source-qualify-windows-amd64\.exe|controller)[^\n]*\s+verify-subject(?:\s|$)`).MatchString(verifyScript) {
 			t.Error("replay-windows must execute the downloaded Windows controller verify-subject command")
 		}
@@ -878,6 +904,7 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 	}
 
 	wantOrder := []string{
+		"validate-artifact-ids",
 		"prepare-empty-directories",
 		"download-package",
 		"download-tools",
