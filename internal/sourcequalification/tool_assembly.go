@@ -44,10 +44,9 @@ func assembleQualificationToolsWithSubject(
 		return "", err
 	}
 	outputParent := filepath.Dir(outputPath)
-	if outputParent == outputPath || packagePathContains(packagePath, outputPath) ||
-		packagePathContains(outputPath, packagePath) ||
-		packagePathContains(outputPath, linuxControllerPath) ||
-		packagePathContains(outputPath, windowsControllerPath) {
+	if outputParent == outputPath || packagePathsOverlapOrUnsafe(packagePath, outputPath) ||
+		packagePathsOverlapOrUnsafe(outputPath, linuxControllerPath) ||
+		packagePathsOverlapOrUnsafe(outputPath, windowsControllerPath) {
 		return "", errors.New("source qualification tool assembly paths overlap")
 	}
 	if err := requirePackageOutputAbsent(outputPath); err != nil {

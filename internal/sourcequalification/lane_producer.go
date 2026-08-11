@@ -13,6 +13,7 @@ var (
 	errQualificationLaneInvalidInput      = errors.New("SOURCE_QUAL_INVALID_INPUT")
 	errQualificationLaneArchiveInvalid    = errors.New("SOURCE_QUAL_ARCHIVE_INVALID")
 	errQualificationLaneReceiptInvalid    = errors.New("SOURCE_QUAL_RECEIPT_INVALID")
+	errQualificationLaneSourceDirty       = errors.New("SOURCE_QUAL_SOURCE_DIRTY")
 	errQualificationLaneCleanupFailed     = errors.New("SOURCE_QUAL_CLEANUP_FAILED")
 	errQualificationLaneDestinationExists = errors.New("SOURCE_QUAL_DESTINATION_EXISTS")
 )
@@ -139,12 +140,23 @@ func produceQualificationLane(
 	if err != nil {
 		return StatusFail, errQualificationLaneReceiptInvalid
 	}
+	publication := qualificationLanePublication{}
 	if err := publishQualificationLane(
 		outputPath,
 		request.Gate.Lane,
 		archive,
 		manifest,
 		receiptRaw,
+		&publication,
+	); err != nil {
+		return StatusFail, err
+	}
+	if err := verifyQualificationLanePublicationSource(
+		outputPath,
+		request.Repository,
+		dependencies.Repository,
+		snapshot,
+		publication,
 	); err != nil {
 		return StatusFail, err
 	}
@@ -193,8 +205,7 @@ func validateQualificationLaneRequest(
 		return "", errQualificationLaneInvalidInput
 	}
 	if outputPath == filepath.Dir(outputPath) ||
-		packagePathContains(request.Repository.Root, outputPath) ||
-		packagePathContains(outputPath, request.Repository.Root) {
+		packagePathsOverlapOrUnsafe(request.Repository.Root, outputPath) {
 		return "", errQualificationLaneInvalidInput
 	}
 	if _, err := os.Lstat(outputPath); err == nil {
@@ -468,13 +479,19 @@ func qualificationLaneReceiptName(lane Lane) (string, bool) {
 	}
 }
 
+type qualificationLanePublication struct {
+	identity       packageFileIdentity
+	specifications []packageFileSpec
+}
+
 func publishQualificationLane(
 	outputPath string,
 	lane Lane,
 	archive, manifest, receipt []byte,
+	publication *qualificationLanePublication,
 ) (returnErr error) {
 	receiptName, ok := qualificationLaneReceiptName(lane)
-	if !ok || len(archive) == 0 || int64(len(archive)) > maxArchiveBytes ||
+	if publication == nil || !ok || len(archive) == 0 || int64(len(archive)) > maxArchiveBytes ||
 		len(manifest) == 0 || len(manifest) > maxManifestBytes ||
 		len(receipt) == 0 || len(receipt) > receiptMaxBytes {
 		return errQualificationLaneInvalidInput
@@ -577,5 +594,54 @@ func publishQualificationLane(
 		}
 		return errQualificationLaneInvalidInput
 	}
+	publication.identity = staged.snapshot.identity
+	publication.specifications = make([]packageFileSpec, len(specifications))
+	for index, specification := range specifications {
+		publication.specifications[index] = specification
+		publication.specifications[index].expected = append([]byte(nil), specification.expected...)
+	}
 	return nil
+}
+
+func verifyQualificationLanePublicationSource(
+	outputPath string,
+	request RepositoryRequest,
+	inspector laneRepositoryInspector,
+	expected RepositorySnapshot,
+	publication qualificationLanePublication,
+) error {
+	if nilGateDependency(inspector) || len(publication.specifications) != 3 {
+		return errQualificationLaneCleanupFailed
+	}
+	parent, parentSnapshot, err := openValidatedPackageDirectory(filepath.Dir(outputPath))
+	if err != nil {
+		return errQualificationLaneCleanupFailed
+	}
+
+	observed, inspectionErr := inspector.InspectRepository(request)
+	read, readErr := readExactPackageDirectory(outputPath, publication.specifications)
+	parentErr := requirePackageDirectoryIdentity(filepath.Dir(outputPath), parentSnapshot.identity)
+	sourceChanged := inspectionErr != nil || !sameQualificationLaneSnapshot(expected, observed)
+	publicationChanged := readErr != nil || read.snapshot.identity != publication.identity || parentErr != nil
+	if !sourceChanged && !publicationChanged {
+		if err := parent.Close(); err != nil {
+			return errQualificationLaneCleanupFailed
+		}
+		return nil
+	}
+
+	cleanupErr := cleanupPublishedPackage(
+		outputPath,
+		publication.identity,
+		publication.specifications,
+		parent,
+	)
+	closeErr := parent.Close()
+	if cleanupErr != nil || closeErr != nil {
+		return errQualificationLaneCleanupFailed
+	}
+	if sourceChanged {
+		return errQualificationLaneSourceDirty
+	}
+	return errQualificationLaneInvalidInput
 }

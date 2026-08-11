@@ -27,13 +27,42 @@ const (
 	maximumGitOutputSize                     = int64(16 << 20)
 	maximumGitErrorSize                      = int64(64 << 10)
 	maximumGitMetadataEntries                = 1_000_000
+	maximumGitWorktreeEntries                = 1_000_000
+	maximumGitTraversalDepth                 = 64
+	gitTraversalBatchSize                    = 128
 	gitCommandTimeout                        = 30 * time.Second
 	repositoryScratchPrefix                  = "repopass-sourcequalification-"
 	repositoryScratchEntropyBytes            = 16
 	maximumRepositoryScratchCreationAttempts = 8
 )
 
-var errRepositoryScratchCleanup = errors.New("isolated Git environment cleanup failed")
+var (
+	errRepositoryScratchCleanup = errors.New("isolated Git environment cleanup failed")
+	errGitTraversalInvalid      = errors.New("Git filesystem traversal configuration is invalid")
+	errGitTraversalUnsafe       = errors.New("Git filesystem traversal is unsafe")
+	errGitTraversalEntryLimit   = errors.New("Git filesystem traversal entry bound exceeded")
+	errGitTraversalDepthLimit   = errors.New("Git filesystem traversal depth bound exceeded")
+)
+
+type gitTraversalBudget struct {
+	entries        int
+	maximumEntries int
+	maximumDepth   int
+}
+
+func (budget *gitTraversalBudget) consume(depth int) error {
+	if budget == nil || budget.maximumEntries <= 0 || budget.maximumDepth < 0 || depth < 0 {
+		return errGitTraversalInvalid
+	}
+	if budget.entries >= budget.maximumEntries {
+		return errGitTraversalEntryLimit
+	}
+	budget.entries++
+	if depth > budget.maximumDepth {
+		return errGitTraversalDepthLimit
+	}
+	return nil
+}
 
 type repositoryScratchCreator func(parent, name string) (
 	path string,
@@ -256,11 +285,8 @@ func resolveTrustedGitExecutable(repositoryRoot string) (string, error) {
 }
 
 func pathWithinRepository(repositoryRoot, candidate string) bool {
-	relative, err := filepath.Rel(repositoryRoot, candidate)
-	if err != nil || filepath.IsAbs(relative) {
-		return false
-	}
-	return relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+	contains, err := securePackagePathContains(repositoryRoot, candidate)
+	return err != nil || contains
 }
 
 func isolatedGitEnvironment(gitPath, scratch string) []string {
@@ -468,29 +494,169 @@ func (inspector *repositoryInspector) validateMetadataLayout() error {
 }
 
 func validateObjectStoreLayout(objectRoot string) error {
-	entries := 0
-	err := filepath.WalkDir(objectRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return errors.New("Git object store could not be traversed")
-		}
-		entries++
-		if entries > maximumGitMetadataEntries {
-			return errors.New("Git object store exceeds the metadata entry bound")
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return errors.New("Git object-store metadata could not be inspected")
-		}
-		if err := validateNoLinkMetadata(path, info); err != nil {
-			return err
-		}
-		if !info.IsDir() && !info.Mode().IsRegular() {
-			return errors.New("Git object store contains a special entry")
-		}
-		return nil
-	})
-	if err != nil {
+	return validateObjectStoreLayoutWithLimits(
+		objectRoot,
+		maximumGitMetadataEntries,
+		maximumGitTraversalDepth,
+	)
+}
+
+func validateObjectStoreLayoutWithLimits(objectRoot string, maximumEntries, maximumDepth int) error {
+	budget := &gitTraversalBudget{
+		maximumEntries: maximumEntries,
+		maximumDepth:   maximumDepth,
+	}
+	err := walkGitTreeBounded(
+		objectRoot,
+		budget,
+		func(_ string, info os.FileInfo, _ int) error {
+			if !info.IsDir() && !info.Mode().IsRegular() {
+				return errors.New("Git object store contains a special entry")
+			}
+			return nil
+		},
+	)
+	switch {
+	case errors.Is(err, errGitTraversalEntryLimit):
+		return errors.New("Git object store exceeds the metadata entry bound")
+	case errors.Is(err, errGitTraversalDepthLimit):
+		return errors.New("Git object store exceeds the metadata depth bound")
+	case errors.Is(err, errGitTraversalInvalid):
+		return errors.New("Git object store traversal bound is invalid")
+	default:
 		return err
+	}
+}
+
+func walkGitTreeBounded(
+	root string,
+	budget *gitTraversalBudget,
+	visit func(path string, info os.FileInfo, depth int) error,
+) error {
+	if root == "" || visit == nil || budget == nil {
+		return errGitTraversalInvalid
+	}
+	before, err := os.Lstat(root)
+	if err != nil || !before.IsDir() {
+		return errGitTraversalUnsafe
+	}
+	if err := validateNoLinkMetadata(root, before); err != nil {
+		return err
+	}
+
+	directory, _, err := openValidatedPackageDirectory(root)
+	if err != nil {
+		return errGitTraversalUnsafe
+	}
+	opened, err := directory.Stat()
+	if err != nil || !os.SameFile(before, opened) {
+		_ = directory.Close()
+		return errGitTraversalUnsafe
+	}
+	if err := budget.consume(0); err != nil {
+		_ = directory.Close()
+		return err
+	}
+	if err := visit(root, opened, 0); err != nil {
+		_ = directory.Close()
+		return err
+	}
+
+	walkErr := walkOpenedGitDirectory(directory, root, 0, budget, visit)
+	closeErr := directory.Close()
+	if walkErr != nil {
+		return walkErr
+	}
+	if closeErr != nil {
+		return errGitTraversalUnsafe
+	}
+	return requireGitTraversalDirectoryIdentity(root, opened)
+}
+
+func walkOpenedGitDirectory(
+	directory *os.File,
+	directoryPath string,
+	depth int,
+	budget *gitTraversalBudget,
+	visit func(path string, info os.FileInfo, depth int) error,
+) error {
+	for {
+		entries, readErr := directory.ReadDir(gitTraversalBatchSize)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return errGitTraversalUnsafe
+		}
+		if len(entries) > gitTraversalBatchSize {
+			return errGitTraversalUnsafe
+		}
+
+		childDepth := depth + 1
+		for range entries {
+			if err := budget.consume(childDepth); err != nil {
+				return err
+			}
+		}
+		sort.Slice(entries, func(left, right int) bool {
+			return entries[left].Name() < entries[right].Name()
+		})
+		for _, entry := range entries {
+			name := entry.Name()
+			if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+				return errGitTraversalUnsafe
+			}
+			path := filepath.Join(directoryPath, name)
+			info, err := os.Lstat(path)
+			if err != nil {
+				return errGitTraversalUnsafe
+			}
+			if err := validateNoLinkMetadata(path, info); err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				if err := visit(path, info, childDepth); err != nil {
+					return err
+				}
+				continue
+			}
+
+			child, _, err := openValidatedPackageDirectory(path)
+			if err != nil {
+				return errGitTraversalUnsafe
+			}
+			opened, statErr := child.Stat()
+			if statErr != nil || !os.SameFile(info, opened) {
+				_ = child.Close()
+				return errGitTraversalUnsafe
+			}
+			visitErr := visit(path, opened, childDepth)
+			if visitErr == nil {
+				visitErr = walkOpenedGitDirectory(child, path, childDepth, budget, visit)
+			}
+			closeErr := child.Close()
+			if visitErr != nil {
+				return visitErr
+			}
+			if closeErr != nil {
+				return errGitTraversalUnsafe
+			}
+			if err := requireGitTraversalDirectoryIdentity(path, opened); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+	}
+}
+
+func requireGitTraversalDirectoryIdentity(path string, expected os.FileInfo) error {
+	directory, _, err := openValidatedPackageDirectory(path)
+	if err != nil {
+		return errGitTraversalUnsafe
+	}
+	actual, statErr := directory.Stat()
+	closeErr := directory.Close()
+	if statErr != nil || closeErr != nil || !os.SameFile(expected, actual) {
+		return errGitTraversalUnsafe
 	}
 	return nil
 }
@@ -734,6 +900,18 @@ func (inspector *repositoryInspector) readBlobBatch(entries []repositoryTreeEntr
 }
 
 func (inspector *repositoryInspector) verifyWorktree(files []RepositoryFile) error {
+	return inspector.verifyWorktreeWithTraversalLimits(
+		files,
+		maximumGitWorktreeEntries,
+		maximumGitTraversalDepth,
+	)
+}
+
+func (inspector *repositoryInspector) verifyWorktreeWithTraversalLimits(
+	files []RepositoryFile,
+	maximumEntries int,
+	maximumDepth int,
+) error {
 	expectedFiles := make(map[string]RepositoryFile, len(files))
 	expectedDirectories := make(map[string]struct{})
 	for _, file := range files {
@@ -750,12 +928,13 @@ func (inspector *repositoryInspector) verifyWorktree(files []RepositoryFile) err
 
 	seenFiles := make(map[string]struct{}, len(files))
 	seenDirectories := make(map[string]struct{}, len(expectedDirectories))
-	priorFileInfo := make([]os.FileInfo, 0, len(files))
-	err := filepath.WalkDir(inspector.root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return errors.New("worktree inventory could not be traversed")
-		}
-		if path == inspector.root {
+	seenFileIdentities := make(map[packageFileIdentity]struct{}, len(files))
+	budget := &gitTraversalBudget{
+		maximumEntries: maximumEntries,
+		maximumDepth:   maximumDepth,
+	}
+	err := walkGitTreeBounded(inspector.root, budget, func(path string, info os.FileInfo, depth int) error {
+		if depth == 0 {
 			return nil
 		}
 		relative, err := filepath.Rel(inspector.root, path)
@@ -764,17 +943,16 @@ func (inspector *repositoryInspector) verifyWorktree(files []RepositoryFile) err
 		}
 		portablePath := filepath.ToSlash(relative)
 		if portablePath == ".git" {
-			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			if !info.IsDir() {
 				return errors.New("Git metadata path is redirected")
 			}
-			return filepath.SkipDir
+			return nil
 		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return errors.New("worktree entry metadata could not be inspected")
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("worktree contains a symlink or reparse point")
+		if strings.HasPrefix(portablePath, ".git/") {
+			if !info.IsDir() && !info.Mode().IsRegular() {
+				return errors.New("Git metadata contains a special filesystem entry")
+			}
+			return nil
 		}
 		if info.IsDir() {
 			if err := validateWorktreeEntryMetadata(path, info, ""); err != nil {
@@ -796,7 +974,7 @@ func (inspector *repositoryInspector) verifyWorktree(files []RepositoryFile) err
 		if err := validateWorktreeEntryMetadata(path, info, expected.GitMode); err != nil {
 			return err
 		}
-		opened, err := os.Open(path)
+		opened, err := openPackageRegularFile(path)
 		if err != nil {
 			return errors.New("tracked worktree file could not be opened")
 		}
@@ -809,13 +987,16 @@ func (inspector *repositoryInspector) verifyWorktree(files []RepositoryFile) err
 			_ = opened.Close()
 			return err
 		}
-		for _, previous := range priorFileInfo {
-			if os.SameFile(previous, openedInfo) {
-				_ = opened.Close()
-				return errors.New("worktree contains a hard-link alias")
-			}
+		identity, identityErr := validatePackageHandleMetadata(opened, openedInfo, false)
+		if identityErr != nil {
+			_ = opened.Close()
+			return errors.New("tracked worktree file identity is unsafe")
 		}
-		priorFileInfo = append(priorFileInfo, openedInfo)
+		if _, duplicate := seenFileIdentities[identity]; duplicate {
+			_ = opened.Close()
+			return errors.New("worktree contains a hard-link alias")
+		}
+		seenFileIdentities[identity] = struct{}{}
 		if openedInfo.Size() != expected.Size || openedInfo.Size() < 0 || openedInfo.Size() > maximumRepositoryFileSize {
 			_ = opened.Close()
 			return errors.New("worktree file size differs from the tested Git tree")
@@ -838,7 +1019,16 @@ func (inspector *repositoryInspector) verifyWorktree(files []RepositoryFile) err
 		seenFiles[portablePath] = struct{}{}
 		return nil
 	})
-	if err != nil {
+	switch {
+	case errors.Is(err, errGitTraversalEntryLimit):
+		return errors.New("worktree exceeds the inventory entry bound")
+	case errors.Is(err, errGitTraversalDepthLimit):
+		return errors.New("worktree exceeds the inventory depth bound")
+	case errors.Is(err, errGitTraversalInvalid):
+		return errors.New("worktree inventory traversal bound is invalid")
+	case errors.Is(err, errGitTraversalUnsafe):
+		return errors.New("worktree inventory could not be traversed safely")
+	case err != nil:
 		return err
 	}
 	if len(seenFiles) != len(expectedFiles) || len(seenDirectories) != len(expectedDirectories) {

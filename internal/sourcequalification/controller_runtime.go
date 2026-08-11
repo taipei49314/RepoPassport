@@ -14,6 +14,7 @@ const (
 	controllerCodeGateFailed  = "SOURCE_QUAL_GATE_FAILED"
 	controllerCodeGateBlocked = "SOURCE_QUAL_GATE_BLOCKED"
 	controllerCodeGateNotRun  = "SOURCE_QUAL_GATE_NOT_RUN"
+	controllerCodeSourceDirty = "SOURCE_QUAL_SOURCE_DIRTY"
 	controllerRuntimePrefix   = ".repopass-source-qualification-runtime-"
 	controllerStagePrefix     = ".repopass-source-qualification-stage-"
 )
@@ -216,9 +217,9 @@ func validProduceLaneRequest(ctx context.Context, request ProduceLaneRequest) bo
 	if !ok {
 		return false
 	}
-	if packagePathContains(repository, privateRoot) || packagePathContains(privateRoot, repository) ||
-		packagePathContains(repository, output) || packagePathContains(output, repository) ||
-		packagePathContains(privateRoot, output) || packagePathContains(output, privateRoot) {
+	if packagePathsOverlapOrUnsafe(repository, privateRoot) ||
+		packagePathsOverlapOrUnsafe(repository, output) ||
+		packagePathsOverlapOrUnsafe(privateRoot, output) {
 		return false
 	}
 	if !validQualificationWorkspaceName(filepath.Base(privateRoot)) ||
@@ -357,6 +358,8 @@ func qualificationLaneErrorCode(err error, status QualificationStatus) string {
 		return controllerCodeArchiveInvalid
 	case errors.Is(err, errQualificationLaneReceiptInvalid):
 		return controllerCodeReceiptInvalid
+	case errors.Is(err, errQualificationLaneSourceDirty):
+		return controllerCodeSourceDirty
 	case errors.Is(err, errGateBlocked), status == StatusBlocked:
 		return controllerCodeGateBlocked
 	case errors.Is(err, errGateNotRun), status == StatusNotRun:

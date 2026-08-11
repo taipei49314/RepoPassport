@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 const (
@@ -90,8 +89,8 @@ func assembleQualificationPackageWithExpectation(
 		return "", err
 	}
 	outputParent := filepath.Dir(outputPath)
-	if outputParent == outputPath || packagePathContains(linuxPath, outputPath) ||
-		packagePathContains(windowsPath, outputPath) {
+	if outputParent == outputPath || packagePathsOverlapOrUnsafe(linuxPath, outputPath) ||
+		packagePathsOverlapOrUnsafe(windowsPath, outputPath) {
 		return "", errors.New("source qualification package paths overlap")
 	}
 	if err := requirePackageOutputAbsent(outputPath); err != nil {
@@ -621,12 +620,8 @@ func canonicalPackageFilesystemPath(path string) (string, error) {
 }
 
 func packagePathContains(parent, child string) bool {
-	relative, err := filepath.Rel(parent, child)
-	if err != nil || filepath.IsAbs(relative) {
-		return false
-	}
-	return relative == "." ||
-		(relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+	contains, err := securePackagePathContains(parent, child)
+	return err == nil && contains
 }
 
 func requirePackageOutputAbsent(path string) error {
