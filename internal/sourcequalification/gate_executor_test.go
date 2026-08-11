@@ -57,7 +57,7 @@ func TestOSGateExecutorFailsClosedOnIndependentOutputOverflow(t *testing.T) {
 				t.Fatalf("Execute: %v", err)
 			}
 			if result.ExitCode == nil || *result.ExitCode != 0 {
-				t.Fatalf("overflow helper exit = %#v", result.ExitCode)
+				t.Fatalf("overflow helper result = %#v", result)
 			}
 			if len(result.Stdout) > int(request.StdoutLimit) || len(result.Stderr) > int(request.StderrLimit) {
 				t.Fatalf("bounded output lengths = %d/%d", len(result.Stdout), len(result.Stderr))

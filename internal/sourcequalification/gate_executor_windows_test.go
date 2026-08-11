@@ -6,6 +6,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWaitWindowsGateProcessesAllowsRootAccountingToSettle(t *testing.T) {
@@ -34,6 +36,47 @@ func TestWaitWindowsGateProcessesFailsClosedOnQueryError(t *testing.T) {
 	}) {
 		t.Fatal("job accounting query failure was accepted as quiescent")
 	}
+}
+
+func TestReleaseWindowsGateHandleClearsOnlyAfterSuccessfulClose(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		handle := windows.Handle(41)
+		calls := 0
+		if !releaseWindowsGateHandle(&handle, func(got windows.Handle) error {
+			calls++
+			if got != 41 {
+				t.Fatalf("closed handle = %d, want 41", got)
+			}
+			return nil
+		}) {
+			t.Fatal("successful handle release was rejected")
+		}
+		if handle != 0 || calls != 1 {
+			t.Fatalf("release result handle=%d calls=%d, want 0/1", handle, calls)
+		}
+	})
+
+	t.Run("failure retains handle for cleanup retry", func(t *testing.T) {
+		handle := windows.Handle(42)
+		if releaseWindowsGateHandle(&handle, func(windows.Handle) error {
+			return errors.New("private close failure")
+		}) {
+			t.Fatal("failed handle release was accepted")
+		}
+		if handle != 42 {
+			t.Fatalf("failed release changed handle to %d, want 42", handle)
+		}
+	})
+
+	t.Run("already released", func(t *testing.T) {
+		var handle windows.Handle
+		if !releaseWindowsGateHandle(&handle, func(windows.Handle) error {
+			t.Fatal("close callback invoked for a zero handle")
+			return nil
+		}) {
+			t.Fatal("zero handle was not treated as released")
+		}
+	})
 }
 
 func TestClassifyWindowsGateAccountingDistinguishesRootLagFromResidue(t *testing.T) {
