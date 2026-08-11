@@ -91,6 +91,39 @@ func TestSourceQualificationWorkflowContract(t *testing.T) {
 	})
 }
 
+func TestSourceQualificationWorkflowHistoryQueriesRetainPageRoot(t *testing.T) {
+	t.Parallel()
+
+	root := workflowRepositoryRoot(t)
+	path := filepath.Join(root, ".github", "workflows", "source-qualification.yml")
+	raw := readWorkflowContractFile(t, path)
+	document := parseWorkflowContractYAML(t, raw)
+	workflow := workflowDocumentMapping(t, document)
+	jobs := workflowRequiredMapping(t, workflow, "jobs")
+
+	for _, test := range []struct {
+		job  string
+		step string
+	}{
+		{job: "context", step: "resolve-context"},
+		{job: "accept", step: "accept"},
+	} {
+		t.Run(test.job, func(t *testing.T) {
+			step := workflowRequiredStep(t, workflowRequiredMapping(t, jobs, test.job), test.step)
+			script := workflowRequiredScalar(t, step, "run")
+			if !regexp.MustCompile(`(?s)\.\s+as\s+\$pages\s*\|`).MatchString(script) {
+				t.Errorf("%s history query must bind the slurped page root before boolean pipelines", test.job)
+			}
+			if got := strings.Count(script, "$pages[].workflow_runs[]"); got < 2 {
+				t.Errorf("%s history query reads the bound page root %d times, want at least 2", test.job, got)
+			}
+			if strings.Contains(script, "[.[].workflow_runs[]") {
+				t.Errorf("%s history query reuses a pipeline-local dot instead of the bound page root", test.job)
+			}
+		})
+	}
+}
+
 func TestPrivateSourceQualificationCLIContract(t *testing.T) {
 	root := workflowRepositoryRoot(t)
 	directory := filepath.Join(root, "internal", "sourcequalification", "cmd", "repopass-source-qualify")
