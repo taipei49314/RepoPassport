@@ -52,7 +52,7 @@ func TestAssembleQualificationPackagePublishesExactPrivateWindowsDACL(t *testing
 
 func packageFilesSetPermissiveWindowsDACL(t *testing.T, path string) {
 	t.Helper()
-	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;;FA;;;WD)")
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;WD)")
 	if err != nil {
 		t.Fatalf("parse permissive DACL: %v", err)
 	}
