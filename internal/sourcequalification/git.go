@@ -252,22 +252,7 @@ func newRepositoryScratchName(entropy io.Reader) (string, error) {
 }
 
 func resolveTrustedGitExecutable(repositoryRoot string) (string, error) {
-	candidate, err := exec.LookPath("git")
-	if err != nil || !filepath.IsAbs(candidate) {
-		return "", errors.New("fixed Git application could not be resolved to an absolute path")
-	}
-	if pathWithinRepository(repositoryRoot, candidate) {
-		return "", errors.New("fixed Git application is inside the repository")
-	}
-	resolved, err := filepath.EvalSymlinks(candidate)
-	if err != nil || !filepath.IsAbs(resolved) || pathWithinRepository(repositoryRoot, resolved) {
-		return "", errors.New("fixed Git application could not be resolved outside the repository")
-	}
-	info, err := os.Lstat(resolved)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("resolved Git application is not a regular file")
-	}
-	return resolved, nil
+	return resolveTrustedGitExecutablePlatform(repositoryRoot)
 }
 
 func pathWithinRepository(repositoryRoot, candidate string) bool {
