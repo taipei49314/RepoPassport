@@ -863,6 +863,7 @@ func requireWorkflowReplayJob(t *testing.T, platform string, job *yaml.Node) {
 			"sudo unshare --net", "--pid", "--mount-proc", "--fork", "--kill-child",
 			"setpriv", "--reuid", "--regid", "--clear-groups", "--inh-caps=-all",
 			"--ambient-caps=-all", "--bounding-set=-all", "--no-new-privs",
+			"env -i", "HOME=/nonexistent", "TMPDIR=/tmp",
 		)
 		unshareIndex := strings.Index(verifyScript, "sudo unshare --net")
 		setprivIndex := strings.Index(verifyScript, "setpriv")
