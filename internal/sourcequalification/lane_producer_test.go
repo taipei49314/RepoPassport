@@ -50,9 +50,10 @@ func TestProduceQualificationLanePublishesCanonicalPassingAttempt(t *testing.T) 
 	if status != StatusPass {
 		t.Fatalf("status = %q, want PASS", status)
 	}
-	if len(fixture.inspector.requests) != 1 || fixture.controller.calls != 1 || fixture.clock.calls != 2 {
-		t.Fatalf("dependency calls inspector/controller/clock = %d/%d/%d, want 1/1/2",
-			len(fixture.inspector.requests), fixture.controller.calls, fixture.clock.calls)
+	wantInspections := 1 + len(RequiredGates(fixture.request.Gate.Lane))
+	if len(fixture.inspector.requests) != wantInspections || fixture.controller.calls != 1 || fixture.clock.calls != 2 {
+		t.Fatalf("dependency calls inspector/controller/clock = %d/%d/%d, want %d/1/2",
+			len(fixture.inspector.requests), fixture.controller.calls, fixture.clock.calls, wantInspections)
 	}
 	if !reflect.DeepEqual(fixture.inspector.requests[0], fixture.request.Repository) {
 		t.Fatalf("repository request = %#v, want %#v", fixture.inspector.requests[0], fixture.request.Repository)
@@ -166,6 +167,60 @@ func TestProduceQualificationLanePublishesFirstFailOrBlockedAttempt(t *testing.T
 			}
 			assertLaneProducerPrivateBytesAbsent(t, files, laneProducerRawMarker)
 		})
+	}
+}
+
+func TestProduceQualificationLaneFailsGateWhenRepositoryChangesAfterExecution(t *testing.T) {
+	fixture := newLaneProducerFixture(t, LaneLinuxAMD64)
+	mutated := cloneLaneProducerSnapshot(fixture.snapshot)
+	mutated.Files[0].Data = []byte("mutated tracked bytes\n")
+	mutated.Files[0].Size = int64(len(mutated.Files[0].Data))
+	mutated.Files[0].GitBlobSHA1 = gitBlobSHA1(mutated.Files[0].Data)
+	fixture.inspector.afterInitial = &mutated
+
+	status, err := produceQualificationLane(context.Background(), fixture.request, fixture.dependencies)
+	if err == nil || status != StatusFail {
+		t.Fatalf("mutated repository result = (%q, %v), want FAIL error", status, err)
+	}
+	if got := len(fixture.executor.requests); got != 1 {
+		t.Fatalf("mutated repository executed %d gates, want exactly first gate", got)
+	}
+	if got := len(fixture.inspector.requests); got != 2 {
+		t.Fatalf("repository was inspected %d times, want initial plus first gate", got)
+	}
+	if got := len(fixture.logs.entries); got != 1 {
+		t.Fatalf("mutated repository wrote %d private gate logs, want 1", got)
+	}
+
+	files := readExactLaneProducerOutput(t, fixture.request.OutputDir, fixture.request.Gate.Lane)
+	archive := files[archiveFilename]
+	manifest := files[qualificationManifestFilename]
+	if err := verifySourcePackage(archive, manifest, laneProducerSourceSubject(fixture.snapshot.Subject)); err != nil {
+		t.Fatalf("mutated attempt source package is invalid: %v", err)
+	}
+	receipt, err := parseCanonicalReceipt(
+		files[laneProducerReceiptFilename(fixture.request.Gate.Lane)],
+		fixture.request.Gate.Lane,
+	)
+	if err != nil {
+		t.Fatalf("mutated attempt receipt is not canonical: %v", err)
+	}
+	requireLaneProducerReceiptFacts(
+		t,
+		receipt,
+		fixture,
+		archive,
+		manifest,
+		StatusFail,
+		int64(len(RequiredGates(fixture.request.Gate.Lane))-1),
+	)
+	if receipt.Gates[0].Status != StatusFail || receipt.Gates[0].ExitCode == nil || *receipt.Gates[0].ExitCode != 0 {
+		t.Fatalf("mutating first gate = %#v, want FAIL with its exit 0", receipt.Gates[0])
+	}
+	for index := 1; index < len(receipt.Gates); index++ {
+		if receipt.Gates[index].Status != StatusNotRun || receipt.Gates[index].StartedAt != nil || receipt.Gates[index].FinishedAt != nil {
+			t.Fatalf("gate %d = %#v, want untouched NOT_RUN", index, receipt.Gates[index])
+		}
 	}
 }
 
@@ -346,9 +401,10 @@ func newLaneProducerFixture(t *testing.T, lane Lane) laneProducerFixture {
 }
 
 type laneProducerRepositoryFake struct {
-	snapshot RepositorySnapshot
-	err      error
-	requests []RepositoryRequest
+	snapshot     RepositorySnapshot
+	afterInitial *RepositorySnapshot
+	err          error
+	requests     []RepositoryRequest
 }
 
 func (fake *laneProducerRepositoryFake) InspectRepository(request RepositoryRequest) (RepositorySnapshot, error) {
@@ -357,11 +413,19 @@ func (fake *laneProducerRepositoryFake) InspectRepository(request RepositoryRequ
 		return RepositorySnapshot{}, fake.err
 	}
 	result := fake.snapshot
-	result.Files = append([]RepositoryFile(nil), fake.snapshot.Files...)
+	if len(fake.requests) > 1 && fake.afterInitial != nil {
+		result = *fake.afterInitial
+	}
+	return cloneLaneProducerSnapshot(result), nil
+}
+
+func cloneLaneProducerSnapshot(snapshot RepositorySnapshot) RepositorySnapshot {
+	result := snapshot
+	result.Files = append([]RepositoryFile(nil), snapshot.Files...)
 	for index := range result.Files {
 		result.Files[index].Data = append([]byte(nil), result.Files[index].Data...)
 	}
-	return result, nil
+	return result
 }
 
 type laneProducerClockFake struct {
