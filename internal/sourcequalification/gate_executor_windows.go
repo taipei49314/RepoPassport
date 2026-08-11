@@ -17,9 +17,26 @@ import (
 
 const gateWindowsTerminateExitCode = 0xc000013a
 
+const gateWindowsJobQuiescenceTimeout = time.Second
+
 type windowsGateWaitResult struct {
 	err      error
 	exitCode *int64
+}
+
+type windowsGateProcessDisposition uint8
+
+const (
+	windowsGateProcessesInvalid windowsGateProcessDisposition = iota
+	windowsGateProcessesQuiescent
+	windowsGateProcessesRootAccounting
+	windowsGateProcessesResidue
+)
+
+type windowsJobProcessIDList struct {
+	NumberOfAssignedProcesses uint32
+	NumberOfProcessIdsInList  uint32
+	ProcessIDList             [2]uintptr
 }
 
 type windowsJobBasicAccounting struct {
@@ -214,10 +231,14 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 
 	terminate := result.TimedOut || result.Cancelled
 	if !terminate && rootFinished {
-		active, queryErr := windowsGateActiveProcesses(job)
-		if queryErr != nil {
-			result.CleanupFailed = true
-		} else if active != 0 {
+		// A signaled root process handle can precede the Job Object accounting
+		// update that removes that same process. Only that exact root PID gets a
+		// bounded accounting grace period; any descendant remains residue.
+		if !waitWindowsGateRootAccounting(
+			time.Now().Add(gateWindowsJobQuiescenceTimeout),
+			process.ProcessId,
+			func() (uint32, []uintptr, error) { return windowsGateJobProcessIDs(job) },
+		) {
 			terminate = true
 			result.CleanupFailed = true
 		}
@@ -297,9 +318,78 @@ func windowsGateActiveProcesses(job windows.Handle) (uint32, error) {
 	return accounting.ActiveProcesses, nil
 }
 
-func waitWindowsGateJob(job windows.Handle, deadline time.Time) bool {
+func windowsGateJobProcessIDs(job windows.Handle) (uint32, []uintptr, error) {
+	processes := windowsJobProcessIDList{}
+	if err := windows.QueryInformationJobObject(
+		job,
+		windows.JobObjectBasicProcessIdList,
+		uintptr(unsafe.Pointer(&processes)),
+		uint32(unsafe.Sizeof(processes)),
+		nil,
+	); err != nil {
+		return 0, nil, err
+	}
+	if processes.NumberOfProcessIdsInList > uint32(len(processes.ProcessIDList)) {
+		return processes.NumberOfAssignedProcesses, nil, errGateProcessBlocked
+	}
+	listed := append([]uintptr(nil), processes.ProcessIDList[:processes.NumberOfProcessIdsInList]...)
+	return processes.NumberOfAssignedProcesses, listed, nil
+}
+
+func classifyWindowsGateProcessSnapshot(
+	rootProcessID uint32,
+	assigned uint32,
+	listed []uintptr,
+) windowsGateProcessDisposition {
+	if rootProcessID == 0 || assigned != uint32(len(listed)) {
+		return windowsGateProcessesInvalid
+	}
+	if assigned == 0 {
+		return windowsGateProcessesQuiescent
+	}
+	if assigned == 1 && listed[0] == uintptr(rootProcessID) {
+		return windowsGateProcessesRootAccounting
+	}
+	return windowsGateProcessesResidue
+}
+
+func waitWindowsGateRootAccounting(
+	deadline time.Time,
+	rootProcessID uint32,
+	snapshot func() (uint32, []uintptr, error),
+) bool {
 	for {
-		active, err := windowsGateActiveProcesses(job)
+		assigned, listed, err := snapshot()
+		if err != nil {
+			return false
+		}
+		switch classifyWindowsGateProcessSnapshot(rootProcessID, assigned, listed) {
+		case windowsGateProcessesQuiescent:
+			return true
+		case windowsGateProcessesRootAccounting:
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return false
+			}
+			if remaining > 10*time.Millisecond {
+				remaining = 10 * time.Millisecond
+			}
+			time.Sleep(remaining)
+		default:
+			return false
+		}
+	}
+}
+
+func waitWindowsGateJob(job windows.Handle, deadline time.Time) bool {
+	return waitWindowsGateProcesses(deadline, func() (uint32, error) {
+		return windowsGateActiveProcesses(job)
+	})
+}
+
+func waitWindowsGateProcesses(deadline time.Time, activeProcesses func() (uint32, error)) bool {
+	for {
+		active, err := activeProcesses()
 		if err != nil {
 			return false
 		}
