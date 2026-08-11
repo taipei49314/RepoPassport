@@ -654,6 +654,17 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 	if !regexp.MustCompile(`(?m)(?:controller_exit|controllerExit)[^\n]*(?:-eq|==)[^\n]*3`).MatchString(script) {
 		t.Errorf("%s produce-lane does not reserve exit 3 exclusively for a safely published non-PASS attempt", lane)
 	}
+	if lane == "linux" {
+		if !strings.Contains(script, "env -u GITHUB_OUTPUT") {
+			t.Error("linux produce-lane must hide the step-output channel from the candidate controller")
+		}
+	} else {
+		for _, fragment := range []string{"$githubOutput", "Remove-Item Env:GITHUB_OUTPUT"} {
+			if !strings.Contains(script, fragment) {
+				t.Errorf("windows produce-lane must hide and privately restore the step-output channel: missing %q", fragment)
+			}
+		}
+	}
 
 	testedRevision := "${{ needs.context.outputs.tested-revision }}"
 	requireWorkflowUploadStep(t, job, "upload-lane", "source-qualification-"+wantLane+"-"+testedRevision,
