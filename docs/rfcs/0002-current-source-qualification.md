@@ -539,7 +539,8 @@ repopass-source-qualify produce-lane --repo-root PATH \
   --lane linux-amd64|windows-amd64 \
   --event push|pull_request|workflow_dispatch --expected-ref REF \
   --expected-base-revision 40HEX \
-  --expected-tested-revision 40HEX --workflow-run-id DECIMAL \
+  --expected-tested-revision 40HEX --expected-tree 40HEX \
+  --workflow-run-id DECIMAL \
   --workflow-run-attempt UINT \
   --private-log-root NEW_PATH --out-dir NEW_PATH
 
@@ -569,7 +570,14 @@ repopass-source-qualify version
 
 There are no default expected identities and no caller-selected command,
 registry, status, platform, archive inventory, or receipt input. `produce-lane`
-resolves facts and executes compiled-in gates. `assemble` strictly verifies
+receives the expected base, tested revision, and tree only from the successful
+`context` job. It MUST reject any safely inspected source whose actual tree
+does not equal `--expected-tree`. Before safe source construction is complete,
+that explicit context-bound tree is the only permitted source for the
+preconstruction tombstone's `expectedTreeSHA`; the controller MUST NOT infer it
+from an error, partial receipt, ambient environment value, or unverified
+working-tree bytes. `produce-lane` otherwise resolves facts and executes
+compiled-in gates. `assemble` strictly verifies
 two exact three-file lane directories and requires byte-identical archive and
 manifest bytes before publishing a new exact four-file directory.
 `assemble-tools` first verifies that four-file directory, then verifies and
@@ -1001,3 +1009,9 @@ M3 and stable-release decisions, not unresolved parts of this RFC.
 - Known limitations: No signer identity, trusted time, transparency,
   revocation, external review, container qualification, or release approval;
   currentness requires an explicit expected default-branch commit and tree.
+- Amendment (2026-08-11): Add the required `produce-lane --expected-tree`
+  input so a preconstruction non-PASS can preserve a context-bound tombstone
+  without guessing a tree from unverified source or diagnostics. The same
+  value is required to equal the safely inspected tree on constructed lane
+  outputs. This amendment does not authorize a PASS, alter receipt or
+  tombstone schema version 1, or relax any acceptance condition.
