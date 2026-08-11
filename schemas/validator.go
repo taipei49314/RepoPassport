@@ -22,6 +22,9 @@ const (
 	MaxReleaseAuthorityTransitionChainJSONBytes            = 256 << 10
 	MaxOfflineTrustPolicyAuthorityTransitionJSONBytes      = 16 << 10
 	MaxOfflineTrustPolicyAuthorityTransitionChainJSONBytes = 256 << 10
+	MaxSourceArchiveManifestV1JSONBytes                    = 16 << 20
+	MaxSourceQualificationReceiptV1JSONBytes               = 1 << 20
+	MaxSourceQualificationToolManifestV1JSONBytes          = 64 << 10
 	verificationMaxDepth                                   = 128
 	verificationMaxNodes                                   = 500_000
 )
@@ -91,6 +94,15 @@ var releaseAuthorityTransitionEnvelopeV1SchemaDocument []byte
 
 //go:embed release-authority-transition-chain-v1.schema.json
 var releaseAuthorityTransitionChainV1SchemaDocument []byte
+
+//go:embed source-archive-manifest-v1.schema.json
+var sourceArchiveManifestV1SchemaDocument []byte
+
+//go:embed source-qualification-receipt-v1.schema.json
+var sourceQualificationReceiptV1SchemaDocument []byte
+
+//go:embed source-qualification-tool-manifest-v1.schema.json
+var sourceQualificationToolManifestV1SchemaDocument []byte
 
 var (
 	manifestSchemaOnce sync.Once
@@ -303,6 +315,25 @@ func ValidateReleaseAuthorityTransitionChainV1JSON(raw []byte) error {
 	return validateDerivedSchemaJSON(raw, MaxReleaseAuthorityTransitionChainJSONBytes, 8, 64, "release-authority-transition-chain-v1.schema.json")
 }
 
+// ValidateSourceArchiveManifestV1JSON validates the bounded public source
+// archive manifest transport. Canonical bytes and Git-tree reconstruction are
+// enforced by the source-qualification controller.
+func ValidateSourceArchiveManifestV1JSON(raw []byte) error {
+	return validateDerivedSchemaJSON(raw, MaxSourceArchiveManifestV1JSONBytes, 16, 200_000, "source-archive-manifest-v1.schema.json")
+}
+
+// ValidateSourceQualificationReceiptV1JSON validates one bounded public
+// platform receipt before semantic run, gate, privacy, and cross-lane checks.
+func ValidateSourceQualificationReceiptV1JSON(raw []byte) error {
+	return validateDerivedSchemaJSON(raw, MaxSourceQualificationReceiptV1JSONBytes, 16, 32_768, "source-qualification-receipt-v1.schema.json")
+}
+
+// ValidateSourceQualificationToolManifestV1JSON validates the bounded
+// producer-owned offline controller tool manifest transport.
+func ValidateSourceQualificationToolManifestV1JSON(raw []byte) error {
+	return validateDerivedSchemaJSON(raw, MaxSourceQualificationToolManifestV1JSONBytes, 8, 256, "source-qualification-tool-manifest-v1.schema.json")
+}
+
 func validateDerivedSchemaJSON(raw []byte, maxBytes, maxDepth, maxNodes int, name string) error {
 	value, err := structuredjson.Decode(raw, structuredjson.DecodeLimits{
 		MaxBytes: maxBytes, MaxDepth: maxDepth, MaxNodes: maxNodes,
@@ -353,6 +384,9 @@ func loadDerivedSchemas() error {
 			{"release-authority-transition-v1.schema.json", releaseAuthorityTransitionV1SchemaDocument},
 			{"release-authority-transition-envelope-v1.schema.json", releaseAuthorityTransitionEnvelopeV1SchemaDocument},
 			{"release-authority-transition-chain-v1.schema.json", releaseAuthorityTransitionChainV1SchemaDocument},
+			{"source-archive-manifest-v1.schema.json", sourceArchiveManifestV1SchemaDocument},
+			{"source-qualification-receipt-v1.schema.json", sourceQualificationReceiptV1SchemaDocument},
+			{"source-qualification-tool-manifest-v1.schema.json", sourceQualificationToolManifestV1SchemaDocument},
 		}
 		for _, item := range documents {
 			document, err := jsonschema.UnmarshalJSON(bytes.NewReader(item.raw))
@@ -377,6 +411,9 @@ func loadDerivedSchemas() error {
 			"release-key-policy-v1.schema.json", "release-key-policy-envelope-v1.schema.json",
 			"release-authority-transition-v1.schema.json", "release-authority-transition-envelope-v1.schema.json",
 			"release-authority-transition-chain-v1.schema.json",
+			"source-archive-manifest-v1.schema.json",
+			"source-qualification-receipt-v1.schema.json",
+			"source-qualification-tool-manifest-v1.schema.json",
 		} {
 			compiled, err := compiler.Compile(schemaBaseURL + name)
 			if err != nil {
