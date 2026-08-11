@@ -40,6 +40,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -418,6 +419,16 @@ func offlineVerificationFailReceipt(t *testing.T, raw []byte) []byte {
 	firstGate := gates[0].(map[string]any)
 	firstGate["exitCode"] = json.Number("1")
 	firstGate["status"] = "FAIL"
+	for _, value := range gates[1:] {
+		gate := value.(map[string]any)
+		gate["exitCode"] = nil
+		gate["finishedAt"] = nil
+		gate["startedAt"] = nil
+		gate["status"] = "NOT_RUN"
+	}
+	document["execution"].(map[string]any)["skippedGateCount"] = json.Number(
+		strconv.Itoa(len(gates) - 1),
+	)
 	document["qualificationStatus"] = "FAIL"
 	result, err := canonicaljson.Marshal(document)
 	if err != nil {
