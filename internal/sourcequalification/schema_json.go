@@ -2,7 +2,7 @@ package sourcequalification
 
 import (
 	"errors"
-	"io/fs"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,10 +12,27 @@ import (
 )
 
 const (
-	maxSchemaJSONFileBytes = 16 << 20
-	maxSchemaJSONFiles     = 32_768
-	maxSchemaJSONTotal     = int64(512 << 20)
+	maxSchemaJSONFileBytes  = 16 << 20
+	maxSchemaJSONFiles      = 32_768
+	maxSchemaJSONTotal      = int64(512 << 20)
+	maxSchemaJSONEntries    = 32_768
+	maxSchemaJSONDepth      = 64
+	schemaJSONReadBatchSize = 128
 )
+
+type schemaJSONDirectory interface {
+	ReadDir(n int) ([]os.DirEntry, error)
+	Close() error
+}
+
+type schemaJSONWalkState struct {
+	entries int
+}
+
+type schemaJSONWalkOperations struct {
+	openDirectory func(string) (schemaJSONDirectory, error)
+	inspectEntry  func(string, os.DirEntry, func(string, []byte) error) (bool, error)
+}
 
 // ValidateSchemaJSON enforces the RFC-0002 syntax gate over every repository
 // schema and JSON fixture. Diagnostics deliberately do not expose paths or
@@ -36,6 +53,7 @@ func ValidateSchemaJSON(root string) error {
 	schemaCount := 0
 	fileCount := 0
 	total := int64(0)
+	walkState := &schemaJSONWalkState{}
 	for _, scope := range []struct {
 		path     string
 		required bool
@@ -44,7 +62,7 @@ func ValidateSchemaJSON(root string) error {
 		{path: filepath.Join(root, "schemas"), required: true, schema: true},
 		{path: filepath.Join(root, "testdata", "fixtures")},
 	} {
-		if err := walkSchemaJSON(scope.path, scope.required, func(path string, raw []byte) error {
+		if err := walkSchemaJSON(scope.path, scope.required, walkState, func(path string, raw []byte) error {
 			fileCount++
 			if fileCount > maxSchemaJSONFiles || int64(len(raw)) > maxSchemaJSONTotal-total {
 				return errors.New("schema JSON inventory exceeds its bound")
@@ -72,7 +90,12 @@ func ValidateSchemaJSON(root string) error {
 	return nil
 }
 
-func walkSchemaJSON(root string, required bool, visit func(string, []byte) error) error {
+func walkSchemaJSON(
+	root string,
+	required bool,
+	state *schemaJSONWalkState,
+	visit func(string, []byte) error,
+) error {
 	info, err := os.Lstat(root)
 	if errors.Is(err, os.ErrNotExist) && !required {
 		return nil
@@ -80,32 +103,144 @@ func walkSchemaJSON(root string, required bool, visit func(string, []byte) error
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("schema JSON scope is unavailable")
 	}
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
+	operations := schemaJSONWalkOperations{
+		openDirectory: openSchemaJSONDirectory,
+		inspectEntry:  inspectSchemaJSONEntry,
+	}
+	return walkSchemaJSONDirectory(root, 0, state, operations, visit)
+}
+
+func walkSchemaJSONDirectory(
+	path string,
+	depth int,
+	state *schemaJSONWalkState,
+	operations schemaJSONWalkOperations,
+	visit func(string, []byte) error,
+) (returnErr error) {
+	if depth < 0 || depth > maxSchemaJSONDepth || state == nil ||
+		operations.openDirectory == nil || operations.inspectEntry == nil || visit == nil {
+		return errors.New("schema JSON inventory exceeds its bound")
+	}
+	directory, err := operations.openDirectory(path)
+	if err != nil || directory == nil {
+		return errors.New("schema JSON inventory contains a redirected entry")
+	}
+	defer func() {
+		if err := directory.Close(); returnErr == nil && err != nil {
+			returnErr = errors.New("schema JSON inventory is unreadable")
+		}
+	}()
+
+	for {
+		entries, readErr := directory.ReadDir(schemaJSONReadBatchSize)
+		if len(entries) > schemaJSONReadBatchSize ||
+			readErr != nil && !errors.Is(readErr, io.EOF) {
 			return errors.New("schema JSON inventory is unreadable")
 		}
-		info, err := os.Lstat(path)
-		if err != nil || info.Mode()&os.ModeSymlink != 0 {
-			return errors.New("schema JSON inventory contains a redirected entry")
+		if len(entries) == 0 && readErr == nil {
+			return errors.New("schema JSON inventory is unreadable")
 		}
-		if info.IsDir() {
+		for _, entry := range entries {
+			state.entries++
+			if state.entries > maxSchemaJSONEntries {
+				return errors.New("schema JSON inventory exceeds its bound")
+			}
+			if entry == nil || !validSchemaJSONEntryName(entry.Name()) {
+				return errors.New("schema JSON inventory contains an invalid entry")
+			}
+			childPath := filepath.Join(path, entry.Name())
+			if filepath.Dir(childPath) != filepath.Clean(path) {
+				return errors.New("schema JSON inventory contains an invalid entry")
+			}
+			isDirectory, err := operations.inspectEntry(childPath, entry, visit)
+			if err != nil {
+				return err
+			}
+			if isDirectory {
+				if err := walkSchemaJSONDirectory(
+					childPath,
+					depth+1,
+					state,
+					operations,
+					visit,
+				); err != nil {
+					return err
+				}
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
 			return nil
 		}
-		if !info.Mode().IsRegular() {
-			return errors.New("schema JSON inventory contains a special entry")
+	}
+}
+
+func openSchemaJSONDirectory(path string) (schemaJSONDirectory, error) {
+	directory, _, err := openValidatedPackageDirectory(path)
+	if err != nil {
+		return nil, err
+	}
+	return directory, nil
+}
+
+func inspectSchemaJSONEntry(
+	path string,
+	entry os.DirEntry,
+	visit func(string, []byte) error,
+) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || entry.Type()&os.ModeSymlink != 0 {
+		return false, errors.New("schema JSON inventory contains a redirected entry")
+	}
+	if info.IsDir() {
+		directory, _, err := openValidatedPackageDirectory(path)
+		if err != nil {
+			return false, errors.New("schema JSON inventory contains a redirected entry")
 		}
-		if !strings.HasSuffix(entry.Name(), ".json") {
-			return nil
+		closeErr := directory.Close()
+		if closeErr != nil {
+			return false, errors.New("schema JSON inventory is unreadable")
 		}
-		if info.Size() < 1 || info.Size() > maxSchemaJSONFileBytes {
-			return errors.New("schema JSON document size is invalid")
+		return true, nil
+	}
+	if !info.Mode().IsRegular() {
+		return false, errors.New("schema JSON inventory contains a special entry")
+	}
+	file, err := openPackageRegularFile(path)
+	if err != nil {
+		return false, errors.New("schema JSON inventory contains a redirected entry")
+	}
+	before, snapshotErr := snapshotPackageHandle(file, false)
+	if snapshotErr != nil {
+		_ = file.Close()
+		return false, errors.New("schema JSON inventory contains a redirected entry")
+	}
+	if !strings.HasSuffix(entry.Name(), ".json") {
+		if err := file.Close(); err != nil {
+			return false, errors.New("schema JSON inventory is unreadable")
 		}
-		raw, err := os.ReadFile(path)
-		if err != nil || int64(len(raw)) != info.Size() {
-			return errors.New("schema JSON document changed while reading")
-		}
-		return visit(path, raw)
-	})
+		return false, nil
+	}
+	if before.size < 1 || before.size > maxSchemaJSONFileBytes {
+		_ = file.Close()
+		return false, errors.New("schema JSON document size is invalid")
+	}
+	raw, readErr := io.ReadAll(io.LimitReader(file, int64(maxSchemaJSONFileBytes)+1))
+	after, afterErr := snapshotPackageHandle(file, false)
+	closeErr := file.Close()
+	if readErr != nil || afterErr != nil || closeErr != nil || before != after ||
+		int64(len(raw)) != before.size || len(raw) > maxSchemaJSONFileBytes {
+		return false, errors.New("schema JSON document changed while reading")
+	}
+	if err := visit(path, raw); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func validSchemaJSONEntryName(name string) bool {
+	return name != "" && name != "." && name != ".." &&
+		filepath.Base(name) == name && filepath.VolumeName(name) == "" &&
+		filepath.Clean(name) == name
 }
 
 func sameSchemaJSONPath(left, right string) bool {
