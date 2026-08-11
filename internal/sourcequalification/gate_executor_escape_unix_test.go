@@ -34,8 +34,9 @@ func TestOSGateExecutorRejectsDescendantThatEscapesTheProcessGroup(t *testing.T)
 		StderrLimit: 1024,
 	}
 
+	isolationUnavailable := gateExecutorIsolationUnavailableForTest(request.Network)
 	result, err := newOSGateExecutor().Execute(context.Background(), request)
-	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err, isolationUnavailable) {
 		return
 	}
 	if err != nil {
