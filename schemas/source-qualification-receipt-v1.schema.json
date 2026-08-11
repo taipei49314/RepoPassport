@@ -1,0 +1,717 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/source-qualification-receipt-v1.schema.json",
+  "title": "RepoPassport source qualification platform receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactType",
+    "attempt",
+    "controller",
+    "execution",
+    "gates",
+    "limitations",
+    "notApplicable",
+    "platform",
+    "predicateType",
+    "productDimensions",
+    "qualificationStatus",
+    "run",
+    "schemaVersion",
+    "source",
+    "subject"
+  ],
+  "properties": {
+    "artifactType": {"const": "repopass-source-qualification-receipt"},
+    "attempt": {"$ref": "#/$defs/attempt"},
+    "controller": {"$ref": "#/$defs/controller"},
+    "execution": {"$ref": "#/$defs/execution"},
+    "gates": {
+      "type": "array",
+      "minItems": 11,
+      "maxItems": 12,
+      "items": {"$ref": "#/$defs/gate"}
+    },
+    "limitations": {"$ref": "#/$defs/limitations"},
+    "notApplicable": {"$ref": "#/$defs/notApplicable"},
+    "platform": {"$ref": "#/$defs/platform"},
+    "predicateType": {"const": "https://repopass.dev/source-qualification/v1"},
+    "productDimensions": {"$ref": "#/$defs/productDimensions"},
+    "qualificationStatus": {"enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN"]},
+    "run": {"$ref": "#/$defs/run"},
+    "schemaVersion": {"const": "1"},
+    "source": {"$ref": "#/$defs/source"},
+    "subject": {"$ref": "#/$defs/subject"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "run": {
+            "properties": {"lane": {"const": "linux-amd64"}},
+            "required": ["lane"]
+          }
+        },
+        "required": ["run"]
+      },
+      "then": {
+        "properties": {
+          "platform": {
+            "properties": {
+              "goos": {"const": "linux"},
+              "runnerOS": {"const": "Linux"}
+            },
+            "required": ["goos", "runnerOS"]
+          },
+          "gates": {
+            "type": "array",
+            "prefixItems": [
+              {"$ref": "#/$defs/gateGoVersion"},
+              {"$ref": "#/$defs/gateSchemaJSON"},
+              {"$ref": "#/$defs/gateModuleDownload"},
+              {"$ref": "#/$defs/gateModuleVerify"},
+              {"$ref": "#/$defs/gateTidyDiff"},
+              {"$ref": "#/$defs/gateFormat"},
+              {"$ref": "#/$defs/gateVet"},
+              {"$ref": "#/$defs/gateTest"},
+              {"$ref": "#/$defs/gateIntegrationCompile"},
+              {"$ref": "#/$defs/gateVulnModule"},
+              {"$ref": "#/$defs/gateVulnTest"},
+              {"$ref": "#/$defs/gateReleaseBuild"}
+            ],
+            "items": false,
+            "minItems": 12,
+            "maxItems": 12
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "run": {
+            "properties": {"lane": {"const": "windows-amd64"}},
+            "required": ["lane"]
+          }
+        },
+        "required": ["run"]
+      },
+      "then": {
+        "properties": {
+          "platform": {
+            "properties": {
+              "goos": {"const": "windows"},
+              "runnerOS": {"const": "Windows"}
+            },
+            "required": ["goos", "runnerOS"]
+          },
+          "gates": {
+            "type": "array",
+            "prefixItems": [
+              {"$ref": "#/$defs/gateGoVersion"},
+              {"$ref": "#/$defs/gateSchemaJSON"},
+              {"$ref": "#/$defs/gateModuleDownload"},
+              {"$ref": "#/$defs/gateModuleVerify"},
+              {"$ref": "#/$defs/gateTidyDiff"},
+              {"$ref": "#/$defs/gateFormat"},
+              {"$ref": "#/$defs/gateVet"},
+              {"$ref": "#/$defs/gateTest"},
+              {"$ref": "#/$defs/gateIntegrationCompile"},
+              {"$ref": "#/$defs/gateReleaseBuild"},
+              {"$ref": "#/$defs/gateWindowsLockStress"}
+            ],
+            "items": false,
+            "minItems": 11,
+            "maxItems": 11
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "printable128": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[ -~]+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 20,
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$",
+      "format": "date-time"
+    },
+    "attemptId": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}:(linux-amd64|windows-amd64):[1-9][0-9]{0,9}$",
+      "maxLength": 102
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseRevision",
+        "dirty",
+        "gitObjectFormat",
+        "modulePath",
+        "moduleVersion",
+        "repository",
+        "testedRevision",
+        "treeSHA"
+      ],
+      "properties": {
+        "baseRevision": {"$ref": "#/$defs/sha1"},
+        "dirty": {"const": false},
+        "gitObjectFormat": {"const": "sha1"},
+        "modulePath": {"const": "github.com/taipei49314/RepoPassport"},
+        "moduleVersion": {"const": "0.1.0-alpha.33"},
+        "repository": {"const": "https://github.com/taipei49314/RepoPassport"},
+        "testedRevision": {"$ref": "#/$defs/sha1"},
+        "treeSHA": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event",
+        "headSHA",
+        "issuer",
+        "lane",
+        "qualificationRunId",
+        "ref",
+        "workflowPath",
+        "workflowRepository",
+        "workflowRunAttempt",
+        "workflowRunId",
+        "workflowURL"
+      ],
+      "properties": {
+        "event": {"enum": ["push", "pull_request", "workflow_dispatch"]},
+        "headSHA": {"$ref": "#/$defs/sha1"},
+        "issuer": {"const": "NOT_ESTABLISHED"},
+        "lane": {"enum": ["linux-amd64", "windows-amd64"]},
+        "qualificationRunId": {"$ref": "#/$defs/sha256"},
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[ -~]+$"
+        },
+        "workflowPath": {"const": ".github/workflows/source-qualification.yml"},
+        "workflowRepository": {"const": "taipei49314/RepoPassport"},
+        "workflowRunAttempt": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "workflowRunId": {"type": "string", "pattern": "^[1-9][0-9]{0,19}$"},
+        "workflowURL": {
+          "type": "string",
+          "pattern": "^https://github[.]com/taipei49314/RepoPassport/actions/runs/[1-9][0-9]{0,19}$",
+          "maxLength": 82
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"event": {"const": "push"}}, "required": ["event"]},
+          "then": {"properties": {"ref": {"const": "refs/heads/main"}}}
+        },
+        {
+          "if": {"properties": {"event": {"const": "pull_request"}}, "required": ["event"]},
+          "then": {"properties": {"ref": {"pattern": "^refs/pull/[1-9][0-9]*/merge$"}}}
+        },
+        {
+          "if": {"properties": {"event": {"const": "workflow_dispatch"}}, "required": ["event"]},
+          "then": {"properties": {"ref": {"pattern": "^refs/heads/[ -~]+$", "maxLength": 255}}}
+        }
+      ]
+    },
+    "priorAttempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attemptId", "qualificationStatus", "receiptSHA256"],
+      "properties": {
+        "attemptId": {"$ref": "#/$defs/attemptId"},
+        "qualificationStatus": {"enum": ["FAIL", "BLOCKED", "NOT_RUN"]},
+        "receiptSHA256": {
+          "anyOf": [
+            {"$ref": "#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attemptId", "finishedAt", "ordinal", "priorAttempts", "retryOf", "startedAt"],
+      "properties": {
+        "attemptId": {"$ref": "#/$defs/attemptId"},
+        "finishedAt": {"$ref": "#/$defs/timestamp"},
+        "ordinal": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "priorAttempts": {
+          "type": "array",
+          "maxItems": 32768,
+          "items": {"$ref": "#/$defs/priorAttempt"}
+        },
+        "retryOf": {
+          "anyOf": [
+            {"$ref": "#/$defs/attemptId"},
+            {"type": "null"}
+          ]
+        },
+        "startedAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"ordinal": {"const": 1}}, "required": ["ordinal"]},
+          "then": {
+            "properties": {
+              "priorAttempts": {"maxItems": 0},
+              "retryOf": {"type": "null"}
+            }
+          },
+          "else": {
+            "properties": {
+              "priorAttempts": {"minItems": 1},
+              "retryOf": {"$ref": "#/$defs/attemptId"}
+            }
+          }
+        }
+      ]
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manualActionCount", "rawLogsPublished", "retryCount", "skippedGateCount"],
+      "properties": {
+        "manualActionCount": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "rawLogsPublished": {"type": "boolean"},
+        "retryCount": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+        "skippedGateCount": {"type": "integer", "minimum": 0, "maximum": 2147483647}
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gitVersion",
+        "goVersion",
+        "goarch",
+        "goos",
+        "kernelVersion",
+        "powerShellVersion",
+        "runnerArch",
+        "runnerImage",
+        "runnerImageVersion",
+        "runnerOS"
+      ],
+      "properties": {
+        "gitVersion": {"$ref": "#/$defs/printable128"},
+        "goVersion": {"const": "go1.26.5"},
+        "goarch": {"const": "amd64"},
+        "goos": {"enum": ["linux", "windows"]},
+        "kernelVersion": {"$ref": "#/$defs/printable128"},
+        "powerShellVersion": {"$ref": "#/$defs/printable128"},
+        "runnerArch": {"const": "X64"},
+        "runnerImage": {"$ref": "#/$defs/printable128"},
+        "runnerImageVersion": {"$ref": "#/$defs/printable128"},
+        "runnerOS": {"enum": ["Linux", "Windows"]}
+      }
+    },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goVersion", "mainPackage", "modulePath", "sha256", "vcsModified", "vcsRevision"],
+      "properties": {
+        "goVersion": {"const": "go1.26.5"},
+        "mainPackage": {"const": "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify"},
+        "modulePath": {"const": "github.com/taipei49314/RepoPassport"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "vcsModified": {"const": false},
+        "vcsRevision": {"$ref": "#/$defs/sha1"}
+      }
+    },
+    "artifactBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "role", "sha256", "size"],
+      "properties": {
+        "name": {"enum": ["repopass-source.tar", "source-archive-manifest-v1.json"]},
+        "role": {"enum": ["source-payload", "source-archive-manifest"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 0, "maximum": 536870912}
+      }
+    },
+    "archiveBinding": {
+      "allOf": [
+        {"$ref": "#/$defs/artifactBinding"},
+        {
+          "properties": {
+            "name": {"const": "repopass-source.tar"},
+            "role": {"const": "source-payload"},
+            "size": {"type": "integer", "minimum": 2048, "maximum": 536870912, "multipleOf": 512}
+          }
+        }
+      ]
+    },
+    "manifestBinding": {
+      "allOf": [
+        {"$ref": "#/$defs/artifactBinding"},
+        {
+          "properties": {
+            "name": {"const": "source-archive-manifest-v1.json"},
+            "role": {"const": "source-archive-manifest"},
+            "size": {"type": "integer", "minimum": 1, "maximum": 16777216}
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archive", "manifest"],
+      "properties": {
+        "archive": {"$ref": "#/$defs/archiveBinding"},
+        "manifest": {"$ref": "#/$defs/manifestBinding"}
+      }
+    },
+    "notApplicable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cgroupVersion",
+        "containerEngineVersion",
+        "engineProviderVersion",
+        "imageDigests",
+        "observerSetDigest",
+        "planDigest",
+        "policyDigest",
+        "runtimeVersion",
+        "sbomDigest",
+        "signatureDigest",
+        "trustPolicyDigest"
+      ],
+      "properties": {
+        "cgroupVersion": {"const": "NOT_APPLICABLE"},
+        "containerEngineVersion": {"const": "NOT_APPLICABLE"},
+        "engineProviderVersion": {"const": "NOT_APPLICABLE"},
+        "imageDigests": {"const": "NOT_APPLICABLE"},
+        "observerSetDigest": {"const": "NOT_APPLICABLE"},
+        "planDigest": {"const": "NOT_APPLICABLE"},
+        "policyDigest": {"const": "NOT_APPLICABLE"},
+        "runtimeVersion": {"const": "NOT_APPLICABLE"},
+        "sbomDigest": {"const": "NOT_APPLICABLE"},
+        "signatureDigest": {"const": "NOT_APPLICABLE"},
+        "trustPolicyDigest": {"const": "NOT_APPLICABLE"}
+      }
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluationStatus", "reason", "value"],
+      "properties": {
+        "evaluationStatus": {"const": "NOT_RUN"},
+        "reason": {"const": "not-evaluated-by-source-qualification"},
+        "value": {"type": "null"}
+      }
+    },
+    "productDimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "cleanup", "coverage", "evidence", "freshness", "functional", "overall", "reproducibility"],
+      "properties": {
+        "capability": {"$ref": "#/$defs/dimension"},
+        "cleanup": {"$ref": "#/$defs/dimension"},
+        "coverage": {"$ref": "#/$defs/dimension"},
+        "evidence": {"$ref": "#/$defs/dimension"},
+        "freshness": {"$ref": "#/$defs/dimension"},
+        "functional": {"$ref": "#/$defs/dimension"},
+        "overall": {"$ref": "#/$defs/dimension"},
+        "reproducibility": {"$ref": "#/$defs/dimension"}
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "currentness-requires-live-caller-input"},
+        {"const": "gate-execution-is-self-ci"},
+        {"const": "github-artifact-is-untrusted-transport"},
+        {"const": "lfs-pointers-not-resolved"},
+        {"const": "network-service-state-is-not-bound"},
+        {"const": "no-external-review"},
+        {"const": "no-publisher-or-workflow-identity"},
+        {"const": "no-signature-transparency-trusted-time-or-revocation"},
+        {"const": "product-verdicts-not-evaluated"},
+        {"const": "rp-m0-qual-only"},
+        {"const": "stable-release-not-authorized"}
+      ],
+      "items": false,
+      "minItems": 11,
+      "maxItems": 11
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["argv", "attempt", "exitCode", "finishedAt", "id", "network", "startedAt", "status", "timeoutSeconds"],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[ -~]+$"}
+        },
+        "attempt": {"const": 1},
+        "exitCode": {
+          "anyOf": [
+            {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+            {"type": "null"}
+          ]
+        },
+        "finishedAt": {
+          "anyOf": [
+            {"$ref": "#/$defs/timestamp"},
+            {"type": "null"}
+          ]
+        },
+        "id": {
+          "enum": [
+            "RP-M0-QUAL-GO-VERSION",
+            "RP-M0-QUAL-SCHEMA-JSON",
+            "RP-M0-QUAL-MODULE-DOWNLOAD",
+            "RP-M0-QUAL-MODULE-VERIFY",
+            "RP-M0-QUAL-TIDY-DIFF",
+            "RP-M0-QUAL-FORMAT",
+            "RP-M0-QUAL-VET",
+            "RP-M0-QUAL-TEST",
+            "RP-M0-QUAL-INTEGRATION-COMPILE",
+            "RP-M0-QUAL-VULN-MODULE",
+            "RP-M0-QUAL-VULN-TEST",
+            "RP-M0-QUAL-RELEASE-BUILD",
+            "RP-M0-QUAL-WINDOWS-LOCK-STRESS"
+          ]
+        },
+        "network": {"enum": ["none", "go-modules", "vulnerability-database", "go-modules-and-vulnerability-database"]},
+        "startedAt": {
+          "anyOf": [
+            {"$ref": "#/$defs/timestamp"},
+            {"type": "null"}
+          ]
+        },
+        "status": {"enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN"]},
+        "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 2100}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["PASS", "FAIL", "BLOCKED"]}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "finishedAt": {"$ref": "#/$defs/timestamp"},
+              "startedAt": {"$ref": "#/$defs/timestamp"}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "PASS"}}, "required": ["status"]},
+          "then": {"properties": {"exitCode": {"const": 0}}}
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["BLOCKED", "NOT_RUN"]}}, "required": ["status"]},
+          "then": {
+            "properties": {"exitCode": {"type": "null"}}
+          }
+        },
+        {
+          "if": {"properties": {"status": {"const": "NOT_RUN"}}, "required": ["status"]},
+          "then": {
+            "properties": {
+              "finishedAt": {"type": "null"},
+              "startedAt": {"type": "null"}
+            }
+          }
+        }
+      ]
+    },
+    "gateGoVersion": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-GO-VERSION"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "version"}], "items": false, "minItems": 2, "maxItems": 2},
+          "timeoutSeconds": {"const": 30},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateSchemaJSON": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-SCHEMA-JSON"},
+          "argv": {"prefixItems": [{"const": "repopass-source-qualify"}, {"const": "validate-schema-json"}, {"const": "--root"}, {"const": "."}], "items": false, "minItems": 4, "maxItems": 4},
+          "timeoutSeconds": {"const": 120},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateModuleDownload": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-MODULE-DOWNLOAD"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "mod"}, {"const": "download"}, {"const": "-modcacherw"}, {"const": "all"}], "items": false, "minItems": 5, "maxItems": 5},
+          "timeoutSeconds": {"const": 600},
+          "network": {"const": "go-modules"}
+        }}
+      ]
+    },
+    "gateModuleVerify": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-MODULE-VERIFY"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "mod"}, {"const": "verify"}], "items": false, "minItems": 3, "maxItems": 3},
+          "timeoutSeconds": {"const": 120},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateTidyDiff": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-TIDY-DIFF"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "mod"}, {"const": "tidy"}, {"const": "-diff"}], "items": false, "minItems": 4, "maxItems": 4},
+          "timeoutSeconds": {"const": 300},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateFormat": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-FORMAT"},
+          "argv": {"prefixItems": [{"const": "gofmt"}, {"const": "-l"}, {"const": "."}], "items": false, "minItems": 3, "maxItems": 3},
+          "timeoutSeconds": {"const": 120},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateVet": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-VET"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "vet"}, {"const": "./..."}], "items": false, "minItems": 3, "maxItems": 3},
+          "timeoutSeconds": {"const": 600},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateTest": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-TEST"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "test"}, {"const": "-count=1"}, {"const": "-timeout=30m"}, {"const": "./..."}], "items": false, "minItems": 5, "maxItems": 5},
+          "timeoutSeconds": {"const": 2100},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateIntegrationCompile": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-INTEGRATION-COMPILE"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "test"}, {"const": "-count=1"}, {"const": "-tags=integration"}, {"const": "./internal/cli"}, {"const": "-run"}, {"const": "^$"}], "items": false, "minItems": 7, "maxItems": 7},
+          "timeoutSeconds": {"const": 600},
+          "network": {"const": "none"}
+        }}
+      ]
+    },
+    "gateVulnModule": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-VULN-MODULE"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "run"}, {"const": "golang.org/x/vuln/cmd/govulncheck@v1.6.0"}, {"const": "-C"}, {"const": "cmd/repopass"}, {"const": "-scan"}, {"const": "module"}], "items": false, "minItems": 7, "maxItems": 7},
+          "timeoutSeconds": {"const": 900},
+          "network": {"const": "go-modules-and-vulnerability-database"}
+        }}
+      ]
+    },
+    "gateVulnTest": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-VULN-TEST"},
+          "argv": {"prefixItems": [{"const": "go"}, {"const": "run"}, {"const": "golang.org/x/vuln/cmd/govulncheck@v1.6.0"}, {"const": "-test"}, {"const": "./..."}], "items": false, "minItems": 5, "maxItems": 5},
+          "timeoutSeconds": {"const": 1200},
+          "network": {"const": "go-modules-and-vulnerability-database"}
+        }}
+      ]
+    },
+    "gateReleaseBuild": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-RELEASE-BUILD"},
+          "argv": {
+            "prefixItems": [
+              {"const": "pwsh"},
+              {"const": "-NoLogo"},
+              {"const": "-NoProfile"},
+              {"const": "-NonInteractive"},
+              {"const": "-File"},
+              {"const": "scripts/build-release.ps1"},
+              {"const": "-Version"},
+              {"const": "0.1.0-alpha.33"},
+              {"const": "-TestedRevision"},
+              {"$ref": "#/$defs/sha1"}
+            ],
+            "items": false,
+            "minItems": 10,
+            "maxItems": 10
+          },
+          "timeoutSeconds": {"const": 1500},
+          "network": {"const": "go-modules"}
+        }}
+      ]
+    },
+    "gateWindowsLockStress": {
+      "allOf": [
+        {"$ref": "#/$defs/gate"},
+        {"properties": {
+          "id": {"const": "RP-M0-QUAL-WINDOWS-LOCK-STRESS"},
+          "argv": {
+            "prefixItems": [
+              {"const": "go"},
+              {"const": "test"},
+              {"const": "-count=20"},
+              {"const": "-timeout=10m"},
+              {"const": "./internal/releasestate"},
+              {"const": "./internal/trustchainstate"},
+              {"const": "./internal/trustrotationstate"},
+              {"const": "./internal/truststate"},
+              {"const": "-run"},
+              {"const": "^(TestObserveContextAndTimeoutBoundLockContention|TestObserveChainStateConcurrencyCancellationAndProcessContention|TestObserveContentionAndCancellationLeaveStateUnchanged|TestObserveCrossProcessLockTimeoutAndExitRelease)$"}
+            ],
+            "items": false,
+            "minItems": 10,
+            "maxItems": 10
+          },
+          "timeoutSeconds": {"const": 720},
+          "network": {"const": "none"}
+        }}
+      ]
+    }
+  }
+}
