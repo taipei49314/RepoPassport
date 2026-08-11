@@ -272,9 +272,6 @@ func validateQualificationReceipt(receipt qualificationReceipt, expectedLane Lan
 	if err := validateReceiptPlatform(receipt.Platform, expectedLane); err != nil {
 		return err
 	}
-	if err := validateReceiptPrivacy(receipt.Platform); err != nil {
-		return err
-	}
 	if err := validateReceiptSource(receipt.Source); err != nil {
 		return err
 	}
@@ -290,6 +287,9 @@ func validateQualificationReceipt(receipt qualificationReceipt, expectedLane Lan
 		receipt.QualificationStatus,
 		receipt.Execution,
 	); err != nil {
+		return err
+	}
+	if err := validateSourceQualificationReceiptPrivacy(receipt); err != nil {
 		return err
 	}
 	return nil
@@ -309,24 +309,44 @@ func sourceSubjectFromReceipt(subject receiptSubject) Subject {
 }
 
 func validateReceiptPrivacy(platform receiptPlatform) error {
-	values := []string{
-		platform.GitVersion,
-		platform.GoVersion,
-		platform.GOARCH,
-		platform.GOOS,
-		platform.KernelVersion,
-		platform.PowerShellVersion,
-		platform.RunnerArch,
-		platform.RunnerImage,
-		platform.RunnerImageVersion,
-		platform.RunnerOS,
+	return validateReceiptPrivacyProjection(platform, "")
+}
+
+func validateSourceQualificationReceiptPrivacy(receipt qualificationReceipt) error {
+	manualRef := ""
+	if receipt.Run.Event == "workflow_dispatch" {
+		const prefix = "refs/heads/"
+		if !strings.HasPrefix(receipt.Run.Ref, prefix) || len(receipt.Run.Ref) == len(prefix) {
+			return errors.New("source qualification receipt privacy input is invalid")
+		}
+		manualRef = receipt.Run.Ref[len(prefix):]
 	}
-	raw, err := canonicaljson.Marshal(map[string]any{"values": values})
+	return validateReceiptPrivacyProjection(receipt.Platform, manualRef)
+}
+
+func validateReceiptPrivacyProjection(platform receiptPlatform, manualRef string) error {
+	// Only semantically variable public strings enter this projection. Every
+	// omitted receipt string has already been validated as an exact constant,
+	// registry value, canonical timestamp, decimal identifier, or strict
+	// SHA-1/SHA-256 shape before this function is called.
+	projection := map[string]any{
+		"platform": map[string]any{
+			"gitVersion":         platform.GitVersion,
+			"kernelVersion":      platform.KernelVersion,
+			"powerShellVersion":  platform.PowerShellVersion,
+			"runnerImage":        platform.RunnerImage,
+			"runnerImageVersion": platform.RunnerImageVersion,
+		},
+	}
+	if manualRef != "" {
+		projection["manualRef"] = manualRef
+	}
+	raw, err := canonicaljson.Marshal(projection)
 	if err != nil {
 		return errors.New("source qualification receipt privacy input is invalid")
 	}
 	if _, err := privacy.Evaluate(raw); err != nil {
-		return errors.New("source qualification receipt privacy policy rejected platform metadata")
+		return errors.New("source qualification receipt privacy policy rejected public metadata")
 	}
 	return nil
 }
@@ -453,16 +473,21 @@ func validateReceiptPlatform(platform receiptPlatform, lane Lane) error {
 		}
 	}
 	if platform.GoVersion != receiptGoVersion || platform.GOARCH != "amd64" ||
-		platform.RunnerArch != "X64" {
+		platform.RunnerArch != "X64" || !validReceiptGitVersion(platform.GitVersion) ||
+		!validReceiptPlatformVersion(platform.KernelVersion) ||
+		!validReceiptPlatformVersion(platform.PowerShellVersion) ||
+		!validReceiptNumericVersion(platform.RunnerImageVersion) {
 		return errors.New("source qualification receipt platform identity is invalid")
 	}
 	switch lane {
 	case LaneLinuxAMD64:
-		if platform.GOOS != "linux" || platform.RunnerOS != "Linux" {
+		if platform.GOOS != "linux" || platform.RunnerOS != "Linux" ||
+			!validReceiptRunnerImage(platform.RunnerImage, lane) {
 			return errors.New("source qualification receipt Linux platform is invalid")
 		}
 	case LaneWindowsAMD64:
-		if platform.GOOS != "windows" || platform.RunnerOS != "Windows" {
+		if platform.GOOS != "windows" || platform.RunnerOS != "Windows" ||
+			!validReceiptRunnerImage(platform.RunnerImage, lane) {
 			return errors.New("source qualification receipt Windows platform is invalid")
 		}
 	default:
@@ -728,10 +753,108 @@ func validReceiptEventRef(event, ref string) bool {
 	case "workflow_dispatch":
 		const prefix = "refs/heads/"
 		return len(ref) <= 255 && strings.HasPrefix(ref, prefix) && len(ref) > len(prefix) &&
-			validReceiptPrintableASCII(ref, 255)
+			validReceiptManualRef(ref[len(prefix):])
 	default:
 		return false
 	}
+}
+
+func validReceiptManualRef(value string) bool {
+	if len(value) == 0 || len(value) > 255-len("refs/heads/") ||
+		value[0] == '/' || value[len(value)-1] == '/' ||
+		strings.Contains(value, "//") || strings.Contains(value, "..") ||
+		strings.Contains(value, "@{") {
+		return false
+	}
+	for _, current := range []byte(value) {
+		if (current >= 'a' && current <= 'z') ||
+			(current >= 'A' && current <= 'Z') ||
+			(current >= '0' && current <= '9') {
+			continue
+		}
+		switch current {
+		case '.', '-', '_', '/', '@', '+':
+			continue
+		default:
+			return false
+		}
+	}
+	for _, component := range strings.Split(value, "/") {
+		if component == "" || component[0] == '.' ||
+			strings.HasSuffix(component, ".") || strings.HasSuffix(component, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+func validReceiptGitVersion(value string) bool {
+	const prefix = "git version "
+	return strings.HasPrefix(value, prefix) &&
+		validReceiptPlatformVersion(value[len(prefix):])
+}
+
+func validReceiptPlatformVersion(value string) bool {
+	if len(value) == 0 || len(value) > receiptMaxPlatformBytes || value[0] < '0' || value[0] > '9' {
+		return false
+	}
+	for _, current := range []byte(value) {
+		if (current >= 'a' && current <= 'z') ||
+			(current >= 'A' && current <= 'Z') ||
+			(current >= '0' && current <= '9') {
+			continue
+		}
+		switch current {
+		case '.', '-', '_', '+':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validReceiptNumericVersion(value string) bool {
+	if len(value) == 0 || len(value) > receiptMaxPlatformBytes ||
+		value[0] < '0' || value[0] > '9' ||
+		value[len(value)-1] < '0' || value[len(value)-1] > '9' {
+		return false
+	}
+	previousDot := false
+	for _, current := range []byte(value) {
+		if current >= '0' && current <= '9' {
+			previousDot = false
+			continue
+		}
+		if current != '.' || previousDot {
+			return false
+		}
+		previousDot = true
+	}
+	return true
+}
+
+func validReceiptRunnerImage(value string, lane Lane) bool {
+	prefixes := []string(nil)
+	switch lane {
+	case LaneLinuxAMD64:
+		prefixes = []string{"ubuntu"}
+	case LaneWindowsAMD64:
+		prefixes = []string{"windows", "win"}
+	default:
+		return false
+	}
+	for _, prefix := range prefixes {
+		if !strings.HasPrefix(value, prefix) {
+			continue
+		}
+		suffix := value[len(prefix):]
+		if strings.HasPrefix(suffix, "-") {
+			suffix = suffix[1:]
+		}
+		return validReceiptNumericVersion(suffix)
+	}
+	return false
 }
 
 func validReceiptPositiveDecimal(value string, maxDigits int) bool {
