@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -50,6 +51,21 @@ func TestProduceLaneFacadeExactTypedSurface(t *testing.T) {
 		"PrivateLogRoot",
 		"OutputDir",
 	})
+}
+
+func TestProductionProduceLaneStageBlocksWithoutAuthenticatedHistory(t *testing.T) {
+	request := controllerRuntimeRequest(t)
+	outcome, receipt, err := produceControllerLaneStage(context.Background(), request)
+	if !errors.Is(err, errGateBlocked) || outcome != (produceLaneStageOutcome{
+		QualificationStatus: StatusBlocked,
+		Code:                controllerCodeGateBlocked,
+	}) || receipt != nil {
+		t.Fatalf("unavailable production history = (%#v, %#v, %v), want fixed BLOCKED with no receipt",
+			outcome, receipt, err)
+	}
+	if _, statErr := os.Lstat(request.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unavailable production history published output: %v", statErr)
+	}
 }
 
 func TestProduceLaneRuntimeCleansWorkspaceBeforePassingPromotion(t *testing.T) {

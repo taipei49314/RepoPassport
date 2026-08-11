@@ -17,6 +17,7 @@ package sourcequalification
 //		Clock laneClock
 //		SelfController laneSelfController
 //		PrivateLogs gatePrivateLogSink
+//		AttemptHistory laneAttemptHistoryProvider
 //	}
 //	type laneRepositoryInspector interface {
 //		InspectRepository(RepositoryRequest) (RepositorySnapshot, error)
@@ -85,6 +86,69 @@ func TestProduceQualificationLanePublishesCanonicalPassingAttempt(t *testing.T) 
 		}
 	}
 	assertLaneProducerPrivateBytesAbsent(t, files, laneProducerRawMarker)
+}
+
+func TestProduceQualificationLaneRequiresAuthenticatedEmptyHistoryBeforeSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		prior      bool
+		historyErr error
+		wantStatus QualificationStatus
+		wantErr    error
+	}{
+		{
+			name:       "authenticated history unavailable",
+			historyErr: errors.New(laneProducerRawMarker + " private GitHub history failure"),
+			wantStatus: StatusBlocked,
+			wantErr:    errGateBlocked,
+		},
+		{
+			name:       "prior execution exists",
+			prior:      true,
+			wantStatus: StatusFail,
+			wantErr:    errGateFailed,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newLaneProducerFixture(t, LaneLinuxAMD64)
+			fixture.history.prior = test.prior
+			fixture.history.err = test.historyErr
+
+			status, err := produceQualificationLane(
+				context.Background(),
+				fixture.request,
+				fixture.dependencies,
+			)
+			if status != test.wantStatus || !errors.Is(err, test.wantErr) || err.Error() != test.wantErr.Error() {
+				t.Fatalf("history result = (%q, %v), want (%q, %v)",
+					status, err, test.wantStatus, test.wantErr)
+			}
+			wantScope := laneAttemptHistoryScope{
+				WorkflowRepository:     fixture.request.Run.WorkflowRepository,
+				WorkflowPath:           fixture.request.Run.WorkflowPath,
+				TestedRevision:         fixture.request.Run.TestedRevision,
+				Lane:                   fixture.request.Gate.Lane,
+				CurrentWorkflowRunID:   fixture.request.Run.WorkflowRunID,
+				CurrentWorkflowAttempt: int64(fixture.request.Run.WorkflowRunAttempt),
+			}
+			if !reflect.DeepEqual(fixture.history.scopes, []laneAttemptHistoryScope{wantScope}) {
+				t.Fatalf("history scopes = %#v, want exact %#v", fixture.history.scopes, wantScope)
+			}
+			if len(fixture.inspector.requests) != 0 || fixture.controller.calls != 0 ||
+				fixture.clock.calls != 0 || len(fixture.executor.requests) != 0 || len(fixture.logs.entries) != 0 {
+				t.Fatalf("history failure reached source/controller/clock/gates/logs: %d/%d/%d/%d/%d",
+					len(fixture.inspector.requests), fixture.controller.calls, fixture.clock.calls,
+					len(fixture.executor.requests), len(fixture.logs.entries))
+			}
+			if _, statErr := os.Lstat(fixture.request.OutputDir); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("history failure published an ordinal-1 lane: %v", statErr)
+			}
+			if strings.Contains(err.Error(), laneProducerRawMarker) {
+				t.Fatalf("history failure disclosed private provider error: %v", err)
+			}
+		})
+	}
 }
 
 func TestProduceQualificationLanePublishesFirstFailOrBlockedAttempt(t *testing.T) {
@@ -322,6 +386,7 @@ type laneProducerFixture struct {
 	clock        *laneProducerClockFake
 	controller   *laneProducerSelfControllerFake
 	logs         *gateTestLogSink
+	history      *laneAttemptHistoryFake
 }
 
 func newLaneProducerFixture(t *testing.T, lane Lane) laneProducerFixture {
@@ -367,6 +432,7 @@ func newLaneProducerFixture(t *testing.T, lane Lane) laneProducerFixture {
 		VCSRevision: gate.request.TestedRevision,
 	}}
 	logs := &gateTestLogSink{}
+	history := &laneAttemptHistoryFake{}
 	run := RunIdentity{
 		WorkflowRepository: canonicalWorkflowRepository,
 		WorkflowPath:       canonicalWorkflowPath,
@@ -393,11 +459,27 @@ func newLaneProducerFixture(t *testing.T, lane Lane) laneProducerFixture {
 		Clock:          clock,
 		SelfController: controller,
 		PrivateLogs:    logs,
+		AttemptHistory: history,
 	}
 	return laneProducerFixture{
 		request: request, dependencies: dependencies, snapshot: snapshot,
 		inspector: inspector, executor: executor, clock: clock, controller: controller, logs: logs,
+		history: history,
 	}
+}
+
+type laneAttemptHistoryFake struct {
+	prior  bool
+	err    error
+	scopes []laneAttemptHistoryScope
+}
+
+func (fake *laneAttemptHistoryFake) HasPriorExecution(
+	_ context.Context,
+	scope laneAttemptHistoryScope,
+) (bool, error) {
+	fake.scopes = append(fake.scopes, scope)
+	return fake.prior, fake.err
 }
 
 type laneProducerRepositoryFake struct {
