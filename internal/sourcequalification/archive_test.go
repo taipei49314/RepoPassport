@@ -122,7 +122,7 @@ func TestCanonicalArchiveVerifierRejectsNonCanonicalRawBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildCanonicalArchive: %v", err)
 	}
-	tree := "b3e5126c246f62f4cce8f11a45493306bd6059ef"
+	tree := "f115c6d5cfb15ca1a72429900dcaca0fd1057951"
 	if err := verifyCanonicalArchive(canonical, files, tree); err != nil {
 		t.Fatalf("verifyCanonicalArchive rejected canonical bytes: %v", err)
 	}
