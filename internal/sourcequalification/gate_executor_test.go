@@ -72,6 +72,22 @@ func TestOSGateExecutorFailsClosedOnIndependentOutputOverflow(t *testing.T) {
 	}
 }
 
+func TestOSGateExecutorAllowsAChildThatFinishedBeforeTheRoot(t *testing.T) {
+	executor := newOSGateExecutor()
+	request := gateExecutorRequest(t, "wait-completed-descendant", 5*time.Second, 1024, 1024)
+	result, err := executor.Execute(context.Background(), request)
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 || result.Blocked || result.TimedOut ||
+		result.Cancelled || result.StdoutOverflow || result.StderrOverflow || result.CleanupFailed {
+		t.Fatalf("completed-child result = %#v", result)
+	}
+}
+
 func TestOSGateExecutorTimeoutKillsCompleteProcessTree(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "descendant-survived")
 	executor := newOSGateExecutor()
@@ -185,6 +201,17 @@ func TestOSGateExecutorHelperProcess(t *testing.T) {
 		os.Exit(0)
 	case "stderr-overflow":
 		_, _ = os.Stderr.Write(bytes.Repeat([]byte{'y'}, 2048))
+		os.Exit(0)
+	case "wait-completed-descendant":
+		command := exec.Command(os.Args[0], "-test.run=^TestOSGateExecutorHelperProcess$")
+		command.Env = gateExecutorReplaceEnvironment(os.Environ(), map[string]string{
+			gateExecutorHelperEnvironment: "completed-descendant",
+		})
+		if err := command.Run(); err != nil {
+			os.Exit(34)
+		}
+		os.Exit(0)
+	case "completed-descendant":
 		os.Exit(0)
 	case "sleep":
 		time.Sleep(30 * time.Second)
