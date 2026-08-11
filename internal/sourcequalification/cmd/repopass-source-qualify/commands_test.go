@@ -27,6 +27,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/taipei49314/RepoPassport/internal/sourcequalification"
 )
 
 const (
@@ -55,6 +57,26 @@ func TestProduceLaneCommandRequestExactTypedSurface(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("produceLaneCommandRequest fields = %#v, want exact %#v", got, want)
+	}
+}
+
+func TestSanitizeControllerRecordUsesDistinctExitOnlyForPublishedAttempt(t *testing.T) {
+	record := newControllerRecord("SOURCE_QUAL_GATE_BLOCKED", controllerID, "BLOCKED")
+	generic := errors.New("SOURCE_QUAL_GATE_BLOCKED")
+	if _, exitCode := sanitizeControllerRecord(commandProduceLane, record, generic); exitCode != 1 {
+		t.Fatalf("generic operation failure exit = %d, want 1", exitCode)
+	}
+	published := errors.Join(generic, sourcequalification.ErrAttemptArtifactPublished)
+	if got, exitCode := sanitizeControllerRecord(commandProduceLane, record, published); exitCode != 3 || got != record {
+		t.Fatalf("published attempt = (%#v, %d), want original record and exit 3", got, exitCode)
+	}
+	if _, exitCode := sanitizeControllerRecord(commandAssemble, record, published); exitCode != 1 {
+		t.Fatalf("non-producer marked failure exit = %d, want 1", exitCode)
+	}
+	invalid := record
+	invalid.SHA256 = "sha256:" + strings.Repeat("a", 64)
+	if _, exitCode := sanitizeControllerRecord(commandProduceLane, invalid, published); exitCode != 1 {
+		t.Fatalf("invalid marked record exit = %d, want fail-closed 1", exitCode)
 	}
 }
 

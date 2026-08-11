@@ -107,6 +107,9 @@ func TestProduceLanePublishesExactPreconstructionTombstoneWhenAuthenticatedHisto
 		controllerCodeGateBlocked,
 		StatusBlocked,
 	)
+	if !errors.Is(err, ErrAttemptArtifactPublished) {
+		t.Fatalf("production tombstone error = %v, want publication marker", err)
+	}
 
 	raw, readErr := os.ReadFile(filepath.Join(request.OutputDir, attemptTombstoneFilename))
 	if readErr != nil {
@@ -228,6 +231,9 @@ func TestProduceLaneRuntimePromotesSafeNonPassingAttemptAfterCleanup(t *testing.
 
 			result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
 			controllerRuntimeRequireFixedFailure(t, result, err, test.code, test.status)
+			if !errors.Is(err, ErrAttemptArtifactPublished) {
+				t.Fatalf("published non-PASS attempt error = %v, want publication marker", err)
+			}
 			controllerRuntimeRequireEvents(t, fake.events, []string{
 				"workspace:create",
 				"stage:allocate",
@@ -270,6 +276,9 @@ func TestProduceLaneRuntimePublishesAllowlistedPreconstructionTombstoneAfterClea
 
 			result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
 			controllerRuntimeRequireFixedFailure(t, result, err, test.code, test.status)
+			if !errors.Is(err, ErrAttemptArtifactPublished) {
+				t.Fatalf("published preconstruction error = %v, want publication marker", err)
+			}
 			controllerRuntimeRequireEvents(t, fake.events, []string{
 				"workspace:create",
 				"stage:allocate",
@@ -309,6 +318,9 @@ func TestProduceLaneRuntimeCleanupFailureWithdrawsStageBeforeTombstone(t *testin
 		controllerCodeCleanupFailed,
 		StatusFail,
 	)
+	if !errors.Is(err, ErrAttemptArtifactPublished) {
+		t.Fatalf("cleanup tombstone error = %v, want publication marker", err)
+	}
 	controllerRuntimeRequireEvents(t, fake.events, []string{
 		"workspace:create",
 		"stage:allocate",
@@ -443,6 +455,65 @@ func TestProduceLaneRuntimeDoesNotPublishMalformedPreconstructionOutcome(t *test
 					fake.tombstoneCalls, fake.outputKind, fake.stageState)
 			}
 		})
+	}
+}
+
+func TestProduceLaneRuntimeDoesNotMarkFailedTombstonePublicationAsSafe(t *testing.T) {
+	request := controllerRuntimeRequest(t)
+	fake := newControllerRuntimeFake(request)
+	fake.outcome = produceLaneStageOutcome{
+		QualificationStatus: StatusBlocked,
+		Code:                controllerCodeGateBlocked,
+	}
+	fake.produceErr = errors.New(controllerRuntimePrivateMarker)
+	fake.tombstoneErr = errors.New(controllerRuntimePrivateMarker + " output collision")
+
+	result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
+	controllerRuntimeRequireFixedFailure(
+		t,
+		result,
+		err,
+		controllerCodeGateBlocked,
+		StatusBlocked,
+	)
+	if errors.Is(err, ErrAttemptArtifactPublished) {
+		t.Fatal("failed tombstone publication was marked safe for upload")
+	}
+	if fake.tombstoneCalls != 1 || fake.outputKind != "absent" || fake.stageState != "withdrawn" {
+		t.Fatalf("failed tombstone publication state = calls=%d output=%q stage=%q",
+			fake.tombstoneCalls, fake.outputKind, fake.stageState)
+	}
+}
+
+func TestProduceLaneRuntimeRejectsConstructedTreeDifferentFromContext(t *testing.T) {
+	request := controllerRuntimeRequest(t)
+	fake := newControllerRuntimeFake(request)
+	fake.outcome = produceLaneStageOutcome{
+		StageReady:          true,
+		QualificationStatus: StatusPass,
+		TestedRevision:      request.ExpectedTestedRevision,
+		TreeSHA:             strings.Repeat("4", 40),
+	}
+
+	result, err := produceLaneWithRuntime(context.Background(), request, fake.dependencies())
+	controllerRuntimeRequireFixedFailure(
+		t,
+		result,
+		err,
+		controllerCodeInvalidInput,
+		StatusFail,
+	)
+	controllerRuntimeRequireEvents(t, fake.events, []string{
+		"workspace:create",
+		"stage:allocate",
+		"producer:run",
+		"workspace:cleanup",
+		"stage:withdraw",
+	})
+	if fake.promoteCalls != 0 || fake.tombstoneCalls != 0 ||
+		fake.stageState != "withdrawn" || fake.outputKind != "absent" {
+		t.Fatalf("tree mismatch created public evidence: promote=%d tombstone=%d stage=%q output=%q",
+			fake.promoteCalls, fake.tombstoneCalls, fake.stageState, fake.outputKind)
 	}
 }
 
