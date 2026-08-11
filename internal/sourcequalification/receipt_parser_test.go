@@ -132,6 +132,21 @@ func TestParseCanonicalReceiptRejectsCanonicalContractTampering(t *testing.T) {
 			},
 		},
 		{
+			name: "release argv retains template token",
+			mutate: func(document map[string]any) {
+				for _, rawGate := range receiptParserArray(document, "gates") {
+					gate := rawGate.(map[string]any)
+					if gate["id"] != "RP-M0-QUAL-RELEASE-BUILD" {
+						continue
+					}
+					argv := gate["argv"].([]string)
+					argv[len(argv)-1] = "{testedRevision}"
+					return
+				}
+				t.Fatal("release gate missing from fixture")
+			},
+		},
+		{
 			name: "gate order changed",
 			mutate: func(document map[string]any) {
 				gates := receiptParserArray(document, "gates")
@@ -303,8 +318,14 @@ func receiptParserDocument(lane Lane, archive, manifest []byte) map[string]any {
 
 	gates := make([]any, 0, len(RequiredGates(lane)))
 	for _, spec := range RequiredGates(lane) {
+		argv := append([]string(nil), spec.Argv...)
+		for index, token := range argv {
+			if token == "{testedRevision}" {
+				argv[index] = testedRevision
+			}
+		}
 		gates = append(gates, map[string]any{
-			"argv":           append([]string(nil), spec.Argv...),
+			"argv":           argv,
 			"attempt":        1,
 			"exitCode":       0,
 			"finishedAt":     "2026-08-11T00:00:01Z",
