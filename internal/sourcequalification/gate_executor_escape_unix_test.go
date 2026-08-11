@@ -24,6 +24,7 @@ func TestOSGateExecutorRejectsDescendantThatEscapesTheProcessGroup(t *testing.T)
 		Application: executable,
 		Args:        []string{"-test.run=^TestOSGateExecutorSetsidHelperProcess$"},
 		Dir:         t.TempDir(),
+		Network:     NetworkNone,
 		Env: []string{
 			gateExecutorSetsidHelperEnvironment + "=root",
 			"REPOPASS_GATE_DESCENDANT_MARKER=" + marker,
@@ -37,8 +38,9 @@ func TestOSGateExecutorRejectsDescendantThatEscapesTheProcessGroup(t *testing.T)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !result.CleanupFailed || result.ExitCode != nil {
-		t.Fatalf("escaped descendant result = %#v, want cleanup failure without an accepted exit", result)
+	if result.ExitCode == nil || *result.ExitCode != 0 || result.Blocked || result.TimedOut ||
+		result.Cancelled || result.CleanupFailed {
+		t.Fatalf("contained descendant result = %#v, want a clean root exit with no residue", result)
 	}
 	time.Sleep(900 * time.Millisecond)
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

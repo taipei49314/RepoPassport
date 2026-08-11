@@ -127,6 +127,7 @@ func gateExecutorRequest(t *testing.T, mode string, timeout time.Duration, stdou
 		Args:        []string{"-test.run=^TestOSGateExecutorHelperProcess$"},
 		Dir:         t.TempDir(),
 		Env:         environment,
+		Network:     NetworkNone,
 		Timeout:     timeout,
 		StdoutLimit: stdoutLimit,
 		StderrLimit: stderrLimit,
