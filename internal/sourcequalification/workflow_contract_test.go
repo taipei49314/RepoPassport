@@ -512,6 +512,11 @@ func requireWorkflowContextJob(t *testing.T, job *yaml.Node) {
 	step := workflowRequiredStep(t, job, "resolve-context")
 	script := requireWorkflowScriptFragments(t, step,
 		"gh api",
+		"--paginate",
+		"--slurp",
+		"/actions/workflows/source-qualification.yml/runs",
+		"workflow_runs",
+		"run_attempt",
 		"git ls-remote",
 		"github-actions",
 		".github/workflows/source-qualification.yml",
@@ -895,6 +900,8 @@ func requireWorkflowAcceptJob(t *testing.T, job *yaml.Node) {
 	step := workflowRequiredStep(t, job, "accept")
 	script := requireWorkflowScriptFragments(t, step,
 		"gh api",
+		"--paginate",
+		"--slurp",
 		"/repos/",
 		"/commits/main",
 		"/actions/workflows/source-qualification.yml/runs",
@@ -990,6 +997,10 @@ func requireWorkflowSafety(t *testing.T, workflow *yaml.Node) {
 				case "cache":
 					if value.Kind != yaml.ScalarNode || strings.TrimSpace(value.Value) != "false" {
 						t.Errorf("%s.cache must be explicitly false", path)
+					}
+				case "run":
+					if value.Kind != yaml.ScalarNode || strings.Contains(value.Value, "${{") {
+						t.Errorf("%s.run must receive workflow expressions through typed environment entries, never direct shell interpolation", path)
 					}
 				}
 				walk(value, path+"."+key)
