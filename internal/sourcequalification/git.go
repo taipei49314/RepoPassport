@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
@@ -20,13 +21,24 @@ import (
 )
 
 const (
-	maximumRepositoryFiles    = maxArchiveFiles
-	maximumRepositoryFileSize = maxArchiveFileBytes
-	maximumRepositoryDataSize = maxArchiveBytes
-	maximumGitOutputSize      = int64(16 << 20)
-	maximumGitErrorSize       = int64(64 << 10)
-	maximumGitMetadataEntries = 1_000_000
-	gitCommandTimeout         = 30 * time.Second
+	maximumRepositoryFiles                   = maxArchiveFiles
+	maximumRepositoryFileSize                = maxArchiveFileBytes
+	maximumRepositoryDataSize                = maxArchiveBytes
+	maximumGitOutputSize                     = int64(16 << 20)
+	maximumGitErrorSize                      = int64(64 << 10)
+	maximumGitMetadataEntries                = 1_000_000
+	gitCommandTimeout                        = 30 * time.Second
+	repositoryScratchPrefix                  = "repopass-sourcequalification-"
+	repositoryScratchEntropyBytes            = 16
+	maximumRepositoryScratchCreationAttempts = 8
+)
+
+var errRepositoryScratchCleanup = errors.New("isolated Git environment cleanup failed")
+
+type repositoryScratchCreator func(parent, name string) (
+	path string,
+	cleanup func() error,
+	err error,
 )
 
 // RepositoryRequest identifies the checkout and the independently supplied
@@ -93,6 +105,18 @@ type repositoryGitState struct {
 // It deliberately resolves the Git application before replacing its process
 // environment so ambient GIT_* inputs cannot redirect subsequent commands.
 func InspectRepository(request RepositoryRequest) (RepositorySnapshot, error) {
+	return inspectRepositoryWithScratch(
+		request,
+		createPrivateQualificationWorkspace,
+		rand.Reader,
+	)
+}
+
+func inspectRepositoryWithScratch(
+	request RepositoryRequest,
+	createScratch repositoryScratchCreator,
+	entropy io.Reader,
+) (RepositorySnapshot, error) {
 	if !validRepositoryOID(request.ExpectedBaseRevision) {
 		return RepositorySnapshot{}, errors.New("expected base revision is not a lowercase SHA-1 object ID")
 	}
@@ -100,72 +124,131 @@ func InspectRepository(request RepositoryRequest) (RepositorySnapshot, error) {
 		return RepositorySnapshot{}, errors.New("expected tested revision is not a lowercase SHA-1 object ID")
 	}
 
-	inspector, scratch, err := newRepositoryInspector(request.Root)
+	inspector, cleanup, err := newRepositoryInspectorWithScratch(
+		request.Root,
+		createScratch,
+		entropy,
+	)
 	if err != nil {
 		return RepositorySnapshot{}, err
 	}
 
 	snapshot, inspectErr := inspector.inspect(request)
-	cleanupErr := os.RemoveAll(scratch)
+	return completeRepositoryInspection(snapshot, inspectErr, cleanup)
+}
+
+func completeRepositoryInspection(
+	snapshot RepositorySnapshot,
+	inspectErr error,
+	cleanup func() error,
+) (RepositorySnapshot, error) {
+	if cleanup == nil {
+		return RepositorySnapshot{}, errRepositoryScratchCleanup
+	}
+	cleanupErr := cleanup()
+	if cleanupErr != nil {
+		if inspectErr != nil {
+			return RepositorySnapshot{}, errors.Join(errRepositoryScratchCleanup, inspectErr)
+		}
+		return RepositorySnapshot{}, errRepositoryScratchCleanup
+	}
 	if inspectErr != nil {
 		return RepositorySnapshot{}, inspectErr
-	}
-	if cleanupErr != nil {
-		return RepositorySnapshot{}, errors.New("isolated Git environment cleanup failed")
 	}
 	return snapshot, nil
 }
 
-func newRepositoryInspector(requestedRoot string) (*repositoryInspector, string, error) {
+func newRepositoryInspector(requestedRoot string) (*repositoryInspector, func() error, error) {
+	return newRepositoryInspectorWithScratch(
+		requestedRoot,
+		createPrivateQualificationWorkspace,
+		rand.Reader,
+	)
+}
+
+func newRepositoryInspectorWithScratch(
+	requestedRoot string,
+	createScratch repositoryScratchCreator,
+	entropy io.Reader,
+) (*repositoryInspector, func() error, error) {
 	if requestedRoot == "" || !filepath.IsAbs(requestedRoot) || filepath.Clean(requestedRoot) != requestedRoot {
-		return nil, "", errors.New("repository root must be a clean absolute path")
+		return nil, nil, errors.New("repository root must be a clean absolute path")
 	}
 	rootInfo, err := os.Lstat(requestedRoot)
 	if err != nil {
-		return nil, "", errors.New("repository root could not be inspected")
+		return nil, nil, errors.New("repository root could not be inspected")
 	}
 	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, "", errors.New("repository root is not a real directory")
+		return nil, nil, errors.New("repository root is not a real directory")
 	}
 	if err := validateNoLinkMetadata(requestedRoot, rootInfo); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(requestedRoot)
 	if err != nil {
-		return nil, "", errors.New("repository root could not be resolved")
+		return nil, nil, errors.New("repository root could not be resolved")
 	}
 	if !sameCanonicalPath(requestedRoot, resolvedRoot) {
-		return nil, "", errors.New("repository root traverses a symlink or reparse point")
+		return nil, nil, errors.New("repository root traverses a symlink or reparse point")
 	}
 
 	gitDir := filepath.Join(requestedRoot, ".git")
 	gitInfo, err := os.Lstat(gitDir)
 	if err != nil {
-		return nil, "", errors.New("Git metadata directory could not be inspected")
+		return nil, nil, errors.New("Git metadata directory could not be inspected")
 	}
 	if !gitInfo.IsDir() || gitInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, "", errors.New("linked worktrees and redirected Git directories are unsupported")
+		return nil, nil, errors.New("linked worktrees and redirected Git directories are unsupported")
 	}
 	if err := validateNoLinkMetadata(gitDir, gitInfo); err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
 	gitPath, err := resolveTrustedGitExecutable(requestedRoot)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 
-	scratch, err := os.MkdirTemp("", "repopass-sourcequalification-")
-	if err != nil {
-		return nil, "", errors.New("isolated Git environment could not be created")
+	if createScratch == nil || entropy == nil {
+		return nil, nil, errors.New("isolated Git environment could not be created")
 	}
-	inspector := &repositoryInspector{
-		root:    requestedRoot,
-		gitDir:  gitDir,
-		gitPath: gitPath,
-		env:     isolatedGitEnvironment(gitPath, scratch),
+	scratchParent := filepath.Clean(os.TempDir())
+	if !filepath.IsAbs(scratchParent) || !validGateExternalDirectory(requestedRoot, scratchParent) {
+		return nil, nil, errors.New("isolated Git environment parent is invalid")
 	}
-	return inspector, scratch, nil
+	for attempt := 0; attempt < maximumRepositoryScratchCreationAttempts; attempt++ {
+		name, err := newRepositoryScratchName(entropy)
+		if err != nil {
+			return nil, nil, errors.New("isolated Git environment could not be created")
+		}
+		scratch, cleanup, err := createScratch(scratchParent, name)
+		if err != nil {
+			continue
+		}
+		if cleanup == nil || scratch != filepath.Join(scratchParent, name) ||
+			!validGateExternalDirectory(requestedRoot, scratch) {
+			if cleanup != nil && cleanup() != nil {
+				return nil, nil, errRepositoryScratchCleanup
+			}
+			return nil, nil, errors.New("isolated Git environment could not be created safely")
+		}
+		inspector := &repositoryInspector{
+			root:    requestedRoot,
+			gitDir:  gitDir,
+			gitPath: gitPath,
+			env:     isolatedGitEnvironment(gitPath, scratch),
+		}
+		return inspector, cleanup, nil
+	}
+	return nil, nil, errors.New("isolated Git environment could not be created")
+}
+
+func newRepositoryScratchName(entropy io.Reader) (string, error) {
+	random := make([]byte, repositoryScratchEntropyBytes)
+	if _, err := io.ReadFull(entropy, random); err != nil {
+		return "", err
+	}
+	return repositoryScratchPrefix + hex.EncodeToString(random), nil
 }
 
 func resolveTrustedGitExecutable(repositoryRoot string) (string, error) {
