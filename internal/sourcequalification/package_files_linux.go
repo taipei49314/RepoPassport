@@ -15,7 +15,7 @@ func openPackageDirectory(path string) (*os.File, error) {
 }
 
 func openPackageRegularFile(path string) (*os.File, error) {
-	return openLinuxPackagePath(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW)
+	return openLinuxPackagePath(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK)
 }
 
 func openLinuxPackagePath(path string, flags int) (*os.File, error) {
