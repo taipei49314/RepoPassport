@@ -39,9 +39,37 @@ type packageDirectoryRead struct {
 	snapshot packageFileSnapshot
 }
 
+type qualificationPackageExpectation struct {
+	baseRevision       string
+	testedRevision     string
+	treeSHA            string
+	qualificationRunID string
+	workflowRunID      string
+	workflowRunAttempt int64
+}
+
+var errQualificationPackageExpectationMismatch = errors.New(
+	"source qualification package does not match expected identities",
+)
+
 var syncPublishedPackageParent = syncPackageDirectory
 
 func assembleQualificationPackage(linuxDir, windowsDir, outputDir string) (
+	packageDigest string,
+	returnErr error,
+) {
+	return assembleQualificationPackageWithExpectation(
+		linuxDir,
+		windowsDir,
+		outputDir,
+		nil,
+	)
+}
+
+func assembleQualificationPackageWithExpectation(
+	linuxDir, windowsDir, outputDir string,
+	expected *qualificationPackageExpectation,
+) (
 	packageDigest string,
 	returnErr error,
 ) {
@@ -97,6 +125,13 @@ func assembleQualificationPackage(linuxDir, windowsDir, outputDir string) (
 	parsedWindows, err := parseCanonicalReceipt(windowsReceipt, LaneWindowsAMD64)
 	if err != nil || parsedWindows.QualificationStatus != StatusPass {
 		return "", errors.New("source qualification Windows lane is not passing")
+	}
+	if expected != nil && !qualificationPackageMatchesExpectation(
+		parsedLinux,
+		parsedWindows,
+		*expected,
+	) {
+		return "", errQualificationPackageExpectationMismatch
 	}
 
 	parent, parentSnapshot, err := openValidatedPackageDirectory(outputParent)
@@ -191,6 +226,23 @@ func assembleQualificationPackage(linuxDir, windowsDir, outputDir string) (
 	}
 
 	return qualificationPackageDigest(archive, manifest, linuxReceipt, windowsReceipt), nil
+}
+
+func qualificationPackageMatchesExpectation(
+	linux, windows qualificationReceipt,
+	expected qualificationPackageExpectation,
+) bool {
+	for _, receipt := range []qualificationReceipt{linux, windows} {
+		if receipt.Subject.BaseRevision != expected.baseRevision ||
+			receipt.Subject.TestedRevision != expected.testedRevision ||
+			receipt.Subject.TreeSHA != expected.treeSHA ||
+			receipt.Run.QualificationRunID != expected.qualificationRunID ||
+			receipt.Run.WorkflowRunID != expected.workflowRunID ||
+			receipt.Run.WorkflowRunAttempt != expected.workflowRunAttempt {
+			return false
+		}
+	}
+	return true
 }
 
 func cleanupPublishedPackage(

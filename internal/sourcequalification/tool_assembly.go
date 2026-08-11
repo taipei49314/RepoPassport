@@ -14,6 +14,19 @@ const (
 func assembleQualificationTools(
 	packageDir, linuxController, windowsController, outputDir string,
 ) (toolManifestDigest string, returnErr error) {
+	return assembleQualificationToolsWithSubject(
+		packageDir,
+		linuxController,
+		windowsController,
+		outputDir,
+		nil,
+	)
+}
+
+func assembleQualificationToolsWithSubject(
+	packageDir, linuxController, windowsController, outputDir string,
+	resultSubject *Subject,
+) (toolManifestDigest string, returnErr error) {
 	packagePath, err := canonicalPackageFilesystemPath(packageDir)
 	if err != nil {
 		return "", err
@@ -193,5 +206,8 @@ func assembleQualificationTools(
 		return "", errors.New("source qualification tool output parent could not be synchronized")
 	}
 
+	if resultSubject != nil {
+		*resultSubject = subject
+	}
 	return toolManifestDigest, nil
 }
