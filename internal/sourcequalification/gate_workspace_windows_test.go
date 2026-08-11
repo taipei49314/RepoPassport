@@ -37,6 +37,46 @@ func TestCreatePrivateQualificationWorkspaceWindowsCollisionDoesNotRepairDACL(t 
 	workspaceAssertPermissiveWindowsDACL(t, path)
 }
 
+func TestPrivateQualificationWorkspaceCleanupRemovesReadOnlyWindowsTree(t *testing.T) {
+	parent := t.TempDir()
+	path, cleanup, err := createPrivateQualificationWorkspace(parent, "private-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(path, "module-cache")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	moduleFile := filepath.Join(nested, "module.go")
+	if err := os.WriteFile(moduleFile, []byte("package module\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspaceAddWindowsAttribute(t, moduleFile, windows.FILE_ATTRIBUTE_READONLY)
+	workspaceAddWindowsAttribute(t, nested, windows.FILE_ATTRIBUTE_READONLY)
+
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup read-only workspace tree: %v", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("read-only workspace remains after cleanup: %v", err)
+	}
+}
+
+func workspaceAddWindowsAttribute(t *testing.T, path string, attribute uint32) {
+	t.Helper()
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attributes, err := windows.GetFileAttributes(pointer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetFileAttributes(pointer, attributes|attribute); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func workspaceSetPermissiveWindowsDACL(t *testing.T, path string) {
 	t.Helper()
 	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;WD)")
