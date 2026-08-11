@@ -1,8 +1,13 @@
 package main
 
-import "github.com/taipei49314/RepoPassport/internal/sourcequalification"
+import (
+	"context"
+
+	"github.com/taipei49314/RepoPassport/internal/sourcequalification"
+)
 
 type productionControllerCommandOperations struct {
+	produceLane     func(context.Context, sourcequalification.ProduceLaneRequest) (sourcequalification.ControllerResult, error)
 	assemble        func(sourcequalification.AssembleRequest) (sourcequalification.ControllerResult, error)
 	assembleTools   func(sourcequalification.AssembleToolsRequest) (sourcequalification.ControllerResult, error)
 	verifyIntegrity func(sourcequalification.VerifyIntegrityRequest) (sourcequalification.ControllerResult, error)
@@ -11,6 +16,7 @@ type productionControllerCommandOperations struct {
 
 func newProductionControllerCommandOperations() productionControllerCommandOperations {
 	return productionControllerCommandOperations{
+		produceLane:     sourcequalification.ProduceLane,
 		assemble:        sourcequalification.Assemble,
 		assembleTools:   sourcequalification.AssembleTools,
 		verifyIntegrity: sourcequalification.VerifyIntegrity,
@@ -18,8 +24,25 @@ func newProductionControllerCommandOperations() productionControllerCommandOpera
 	}
 }
 
-func (productionControllerCommandOperations) ProduceLane(produceLaneCommandRequest) (controllerRecord, error) {
-	return newControllerRecord(codeInvalidInput, controllerID, statusFail), errControllerOperationUnavailable
+func (operations productionControllerCommandOperations) ProduceLane(
+	request produceLaneCommandRequest,
+) (controllerRecord, error) {
+	if operations.produceLane == nil {
+		return newControllerRecord(codeInvalidInput, controllerID, statusFail), errControllerOperationUnavailable
+	}
+	result, err := operations.produceLane(context.Background(), sourcequalification.ProduceLaneRequest{
+		RepoRoot:               request.RepoRoot,
+		Lane:                   sourcequalification.Lane(request.Lane),
+		Event:                  request.Event,
+		ExpectedRef:            request.ExpectedRef,
+		ExpectedBaseRevision:   request.ExpectedBaseRevision,
+		ExpectedTestedRevision: request.ExpectedTestedRevision,
+		WorkflowRunID:          request.WorkflowRunID,
+		WorkflowRunAttempt:     int64(request.WorkflowRunAttempt),
+		PrivateLogRoot:         request.PrivateLogRoot,
+		OutputDir:              request.OutputDir,
+	})
+	return controllerRecordFromFacade(result), err
 }
 
 func (operations productionControllerCommandOperations) Assemble(request assembleCommandRequest) (controllerRecord, error) {
