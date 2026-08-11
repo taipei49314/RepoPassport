@@ -36,23 +36,22 @@ func TestWaitWindowsGateProcessesFailsClosedOnQueryError(t *testing.T) {
 	}
 }
 
-func TestClassifyWindowsGateProcessSnapshotDistinguishesRootLagFromResidue(t *testing.T) {
-	const rootProcessID = uint32(41)
+func TestClassifyWindowsGateAccountingDistinguishesRootLagFromResidue(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		assigned uint32
-		listed   []uintptr
-		want     windowsGateProcessDisposition
+		name   string
+		total  uint32
+		active uint32
+		want   windowsGateAccountingDisposition
 	}{
-		{name: "quiescent", assigned: 0, want: windowsGateProcessesQuiescent},
-		{name: "signaled root still listed", assigned: 1, listed: []uintptr{uintptr(rootProcessID)}, want: windowsGateProcessesRootAccounting},
-		{name: "descendant only", assigned: 1, listed: []uintptr{99}, want: windowsGateProcessesResidue},
-		{name: "root and descendant", assigned: 2, listed: []uintptr{uintptr(rootProcessID), 99}, want: windowsGateProcessesResidue},
-		{name: "truncated list", assigned: 2, listed: []uintptr{uintptr(rootProcessID)}, want: windowsGateProcessesInvalid},
-		{name: "impossible extra id", assigned: 1, listed: []uintptr{uintptr(rootProcessID), 99}, want: windowsGateProcessesInvalid},
+		{name: "quiescent root", total: 1, active: 0, want: windowsGateAccountingQuiescent},
+		{name: "signaled root still active", total: 1, active: 1, want: windowsGateAccountingRootPending},
+		{name: "terminated descendant", total: 2, active: 0, want: windowsGateAccountingResidue},
+		{name: "active descendant", total: 2, active: 1, want: windowsGateAccountingResidue},
+		{name: "missing root", total: 0, active: 0, want: windowsGateAccountingInvalid},
+		{name: "active exceeds total", total: 1, active: 2, want: windowsGateAccountingInvalid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := classifyWindowsGateProcessSnapshot(rootProcessID, test.assigned, test.listed); got != test.want {
+			if got := classifyWindowsGateAccountingSnapshot(test.total, test.active); got != test.want {
 				t.Fatalf("disposition = %v, want %v", got, test.want)
 			}
 		})
@@ -61,9 +60,9 @@ func TestClassifyWindowsGateProcessSnapshotDistinguishesRootLagFromResidue(t *te
 
 func TestWaitWindowsGateRootAccountingRejectsDescendantsWithoutGrace(t *testing.T) {
 	calls := 0
-	ok := waitWindowsGateRootAccounting(time.Now().Add(time.Second), 41, func() (uint32, []uintptr, error) {
+	ok := waitWindowsGateRootAccounting(time.Now().Add(time.Second), func() (uint32, uint32, error) {
 		calls++
-		return 2, []uintptr{41, 99}, nil
+		return 2, 0, nil
 	})
 	if ok {
 		t.Fatal("a descendant was accepted as transient root accounting lag")
@@ -75,26 +74,40 @@ func TestWaitWindowsGateRootAccountingRejectsDescendantsWithoutGrace(t *testing.
 
 func TestWaitWindowsGateRootAccountingAllowsOnlyRootToSettle(t *testing.T) {
 	snapshots := []struct {
-		assigned uint32
-		listed   []uintptr
+		total  uint32
+		active uint32
 	}{
-		{assigned: 1, listed: []uintptr{41}},
-		{assigned: 1, listed: []uintptr{41}},
-		{assigned: 0},
+		{total: 1, active: 1},
+		{total: 1, active: 1},
+		{total: 1, active: 0},
 	}
 	calls := 0
-	ok := waitWindowsGateRootAccounting(time.Now().Add(time.Second), 41, func() (uint32, []uintptr, error) {
+	ok := waitWindowsGateRootAccounting(time.Now().Add(time.Second), func() (uint32, uint32, error) {
 		if calls >= len(snapshots) {
 			t.Fatal("snapshot query exceeded the fixed observation sequence")
 		}
 		value := snapshots[calls]
 		calls++
-		return value.assigned, value.listed, nil
+		return value.total, value.active, nil
 	})
 	if !ok {
 		t.Fatal("signaled root accounting did not settle")
 	}
 	if calls != len(snapshots) {
 		t.Fatalf("snapshot calls = %d, want %d", calls, len(snapshots))
+	}
+}
+
+func TestWaitWindowsGateRootAccountingFailsClosedWhenRootNeverSettles(t *testing.T) {
+	calls := 0
+	ok := waitWindowsGateRootAccounting(time.Now().Add(25*time.Millisecond), func() (uint32, uint32, error) {
+		calls++
+		return 1, 1, nil
+	})
+	if ok {
+		t.Fatal("root accounting that exceeded its deadline was accepted")
+	}
+	if calls == 0 {
+		t.Fatal("root accounting was not queried")
 	}
 }
