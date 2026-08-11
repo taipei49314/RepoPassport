@@ -13,6 +13,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 	"github.com/taipei49314/RepoPassport/internal/structuredjson"
+	"golang.org/x/mod/modfile"
 )
 
 const (
@@ -240,7 +241,7 @@ func parseCanonicalArchiveFiles(archive []byte) ([]archiveFile, error) {
 			return nil, errors.New("source archive member is truncated")
 		}
 		dataEnd := offset + int(size)
-		data := bytes.Clone(archive[offset:dataEnd])
+		data := archive[offset:dataEnd]
 		padding := (int(archiveBlockSize) - int(size)%int(archiveBlockSize)) % int(archiveBlockSize)
 		if dataEnd > trailerOffset-padding || !zeroBytes(archive[dataEnd:dataEnd+padding]) {
 			return nil, errors.New("source archive member padding is invalid")
@@ -305,41 +306,28 @@ func validateSourceModule(files []archiveFile) error {
 	if moduleData == nil || !utf8.Valid(moduleData) {
 		return errors.New("source module file is missing or invalid")
 	}
-	moduleDirective := ""
-	inReplaceBlock := false
-	for _, line := range strings.Split(string(moduleData), "\n") {
-		line = strings.TrimSpace(strings.SplitN(line, "//", 2)[0])
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "module" {
-			if moduleDirective != "" || len(fields) != 2 {
-				return errors.New("source module directive is ambiguous")
-			}
-			moduleDirective = fields[1]
-		}
-		if fields[0] == "replace" {
-			inReplaceBlock = strings.HasSuffix(line, "(")
-			if strings.Contains(line, canonicalModulePath) || strings.Contains(line, legacyModulePath) {
-				return errors.New("source module namespace replacement is forbidden")
-			}
-			continue
-		}
-		if inReplaceBlock {
-			if line == ")" {
-				inReplaceBlock = false
-				continue
-			}
-			if strings.Contains(line, canonicalModulePath) || strings.Contains(line, legacyModulePath) {
-				return errors.New("source module namespace replacement is forbidden")
-			}
-		}
-	}
-	if inReplaceBlock || moduleDirective != canonicalModulePath {
+	parsed, err := modfile.Parse("go.mod", moduleData, nil)
+	if err != nil || parsed.Module == nil || parsed.Module.Mod.Path != canonicalModulePath {
 		return errors.New("source module path is not canonical")
 	}
+	for _, replacement := range parsed.Replace {
+		if moduleNamespaceInvolved(replacement.Old.Path) ||
+			moduleNamespaceInvolved(replacement.New.Path) {
+			return errors.New("source module namespace replacement is forbidden")
+		}
+	}
 	return nil
+}
+
+func moduleNamespaceInvolved(path string) bool {
+	for _, namespace := range []string{canonicalModulePath, legacyModulePath} {
+		if strings.EqualFold(path, namespace) ||
+			len(path) > len(namespace) && path[len(namespace)] == '/' &&
+				strings.EqualFold(path[:len(namespace)], namespace) {
+			return true
+		}
+	}
+	return false
 }
 
 func sha256Digest(data []byte) string {
