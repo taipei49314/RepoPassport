@@ -93,3 +93,44 @@ func TestSourcePackageRejectsModuleAndTreeSubstitution(t *testing.T) {
 		t.Fatal("copied tree SHA survived changed source bytes")
 	}
 }
+
+func TestSourceArchiveParserReadsMemberBytesInPlace(t *testing.T) {
+	files := []archiveFile{
+		{Path: "go.mod", GitMode: "100644", Data: []byte("module github.com/taipei49314/RepoPassport\n")},
+	}
+	archive, err := buildCanonicalArchive(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseCanonicalArchiveFiles(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed) != 1 || len(parsed[0].Data) == 0 {
+		t.Fatalf("parsed archive inventory = %#v", parsed)
+	}
+	if &parsed[0].Data[0] != &archive[archiveBlockSize] {
+		t.Fatal("archive parser copied member bytes instead of hashing the bounded input in place")
+	}
+}
+
+func TestSourcePackageRejectsEscapedCanonicalNamespaceReplace(t *testing.T) {
+	module := []byte("module github.com/taipei49314/RepoPassport\n\nreplace \"github.com/taipei49314/RepoPass\\x70ort\" => ./fork\n")
+	files := []archiveFile{{Path: "go.mod", GitMode: "100644", Data: module}}
+	tree, err := reconstructGitTreeSHA1(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := Subject{
+		Repository:      canonicalRepositoryURL,
+		ModulePath:      canonicalModulePath,
+		ModuleVersion:   canonicalModuleVersion,
+		GitObjectFormat: "sha1",
+		BaseRevision:    "0123456789abcdef0123456789abcdef01234567",
+		TestedRevision:  "89abcdef0123456789abcdef0123456789abcdef",
+		TreeSHA:         tree,
+	}
+	if _, _, err := buildSourcePackage(subject, files); err == nil {
+		t.Fatal("escaped canonical module namespace replacement was accepted")
+	}
+}
