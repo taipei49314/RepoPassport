@@ -45,6 +45,13 @@ func TestSourceQualificationWorkflowContract(t *testing.T) {
 	if got := workflowScalarMap(t, workflowRequiredMapping(t, workflow, "permissions")); !reflect.DeepEqual(got, wantPermissions) {
 		t.Fatalf("workflow permissions = %#v, want exact read-only permissions %#v", got, wantPermissions)
 	}
+	wantConcurrency := map[string]string{
+		"cancel-in-progress": "false",
+		"group":              "source-qualification-${{ github.sha }}",
+	}
+	if got := workflowScalarMap(t, workflowRequiredMapping(t, workflow, "concurrency")); !reflect.DeepEqual(got, wantConcurrency) {
+		t.Fatalf("workflow concurrency = %#v, want exact same-subject serialization %#v", got, wantConcurrency)
+	}
 
 	wantJobsContract := map[string]struct {
 		needs  []string
