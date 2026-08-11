@@ -4,13 +4,15 @@ package sourcequalification
 //
 //	func newOSGateExecutor() gateExecutor
 //
-// The executor MUST invoke the exact application directly, independently
-// bound stdout/stderr, terminate the complete process tree on timeout or
-// cancellation, and return only structured facts to the gate orchestrator.
+// When its required isolation is available, the executor MUST invoke the
+// exact application with independently bound stdout/stderr, terminate the
+// complete process tree on timeout or cancellation, and return only structured
+// facts. When isolation is unavailable, it MUST block before invocation.
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +29,9 @@ func TestOSGateExecutorCapturesExitAndIndependentStreams(t *testing.T) {
 	executor := newOSGateExecutor()
 	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
 	result, err := executor.Execute(context.Background(), request)
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -45,6 +50,9 @@ func TestOSGateExecutorFailsClosedOnIndependentOutputOverflow(t *testing.T) {
 			executor := newOSGateExecutor()
 			request := gateExecutorRequest(t, stream, 5*time.Second, 1024, 1024)
 			result, err := executor.Execute(context.Background(), request)
+			if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
+				return
+			}
 			if err != nil {
 				t.Fatalf("Execute: %v", err)
 			}
@@ -70,6 +78,9 @@ func TestOSGateExecutorTimeoutKillsCompleteProcessTree(t *testing.T) {
 	request := gateExecutorRequest(t, "spawn-descendant", 150*time.Millisecond, 1024, 1024)
 	request.Env = append(request.Env, "REPOPASS_GATE_DESCENDANT_MARKER="+marker)
 	result, err := executor.Execute(context.Background(), request)
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -88,6 +99,9 @@ func TestOSGateExecutorCancellationKillsProcessTree(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
 	result, err := executor.Execute(ctx, request)
+	if gateExecutorBlockedByUnavailableIsolation(t, request, result, err) {
+		return
+	}
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -132,6 +146,28 @@ func gateExecutorRequest(t *testing.T, mode string, timeout time.Duration, stdou
 		StdoutLimit: stdoutLimit,
 		StderrLimit: stderrLimit,
 	}
+}
+
+func gateExecutorBlockedByUnavailableIsolation(
+	t *testing.T,
+	request gateProcessRequest,
+	result gateProcessResult,
+	err error,
+) bool {
+	t.Helper()
+	if runtime.GOOS != "linux" || !errors.Is(err, errGateProcessBlocked) {
+		return false
+	}
+	if !availableGateApplication(request.Application) || !validGateProcessDirectory(request.Dir) {
+		t.Fatal("gate executor fixture is invalid before the isolation capability probe")
+	}
+	if !result.Blocked || result.ExitCode != nil || len(result.Stdout) != 0 || len(result.Stderr) != 0 ||
+		result.TimedOut || result.Cancelled || result.StdoutOverflow || result.StderrOverflow ||
+		result.CleanupFailed {
+		t.Fatalf("unavailable isolation result = %#v, err=%v", result, err)
+	}
+	t.Log("verified fail-closed BLOCKED result because rootless gate isolation is unavailable")
+	return true
 }
 
 func TestOSGateExecutorHelperProcess(t *testing.T) {
