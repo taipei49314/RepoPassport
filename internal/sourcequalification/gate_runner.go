@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -83,6 +84,9 @@ func runRequiredGates(
 	executor gateExecutor,
 	logs gatePrivateLogSink,
 ) ([]receiptGate, error) {
+	if ctx == nil || nilGateDependency(ctx) {
+		return nil, errGateInvalidInput
+	}
 	registry, applications, valid := validateGateRunRequest(request, executor, logs)
 	if !valid {
 		return nil, errGateInvalidInput
@@ -242,7 +246,7 @@ func validGateRunEnvironment(repositoryRoot string, environment gateRunEnvironme
 			return false
 		}
 	}
-	return environment.SystemRoot == "" || validGateDirectory(environment.SystemRoot)
+	return environment.SystemRoot == "" || validGateExternalDirectory(repositoryRoot, environment.SystemRoot)
 }
 
 func validGateDirectory(path string) bool {
@@ -258,6 +262,10 @@ func validGateDirectory(path string) bool {
 }
 
 func validGatePrivateDirectory(repositoryRoot, path string) bool {
+	return validGateExternalDirectory(repositoryRoot, path)
+}
+
+func validGateExternalDirectory(repositoryRoot, path string) bool {
 	return validGateDirectory(path) && !pathWithinRepository(repositoryRoot, path)
 }
 
@@ -267,6 +275,9 @@ func validGateApplication(repositoryRoot, application string, toolDirectories []
 	}
 	info, err := os.Lstat(application)
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	if runtime.GOOS != "windows" && (info.Mode().Perm()&0o111 == 0 || info.Mode().Perm()&0o022 != 0) {
 		return false
 	}
 	resolved, err := filepath.EvalSymlinks(application)
@@ -408,19 +419,23 @@ func evaluateGateResult(
 	if executionErr != nil || *exitCode != 0 {
 		return StatusFail, exitCode, errGateFailed
 	}
-	if result.SourceChanged || !gateSemanticPredicate(specification.ID, request, stdout) {
+	if !gateSemanticPredicate(specification.ID, request, stdout, result.SourceChanged) {
 		return StatusFail, exitCode, errGateFailed
 	}
 	return StatusPass, exitCode, nil
 }
 
-func gateSemanticPredicate(id string, request gateRunRequest, stdout []byte) bool {
+func gateSemanticPredicate(id string, request gateRunRequest, stdout []byte, sourceChanged bool) bool {
 	switch id {
 	case "RP-M0-QUAL-GO-VERSION":
 		want := "go version go1.26.5 " + request.GOOS + "/" + request.GOARCH + "\n"
 		return string(stdout) == want
-	case "RP-M0-QUAL-TIDY-DIFF", "RP-M0-QUAL-FORMAT":
+	case "RP-M0-QUAL-TIDY-DIFF":
+		return len(stdout) == 0 && !sourceChanged
+	case "RP-M0-QUAL-FORMAT":
 		return len(stdout) == 0
+	case "RP-M0-QUAL-RELEASE-BUILD":
+		return !sourceChanged
 	default:
 		return true
 	}
