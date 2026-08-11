@@ -45,7 +45,12 @@ package sourcequalification
 //		SourceChanged bool
 //	}
 //	type gateExecutor interface {
+//		BindApplications(context.Context, map[string]string) (gateApplicationBinding, error)
 //		Execute(context.Context, gateProcessRequest) (gateProcessResult, error)
+//	}
+//	type gateApplicationBinding interface {
+//		Verify(context.Context) error
+//		Release() error
 //	}
 //	type gatePrivateLogSink interface {
 //		WriteGateLog(id string, stdout, stderr []byte) error
@@ -123,6 +128,84 @@ func TestRunRequiredGatesUsesExactArgvEnvironmentAndPrivateApplications(t *testi
 		if bytes.Contains(encoded, []byte(private)) {
 			t.Fatalf("public gate record disclosed private value %q", private)
 		}
+	}
+}
+
+func TestRunRequiredGatesRequiresLaneLifetimeApplicationBinding(t *testing.T) {
+	const privateFailure = "private immutable-tool failure C:\\runner\\tool.exe"
+	tests := []struct {
+		name       string
+		binding    *gateTestApplicationBinding
+		bindErr    error
+		wantStatus QualificationStatus
+		wantCode   string
+		wantCalls  int
+	}{
+		{
+			name:       "binding unavailable blocks before execution",
+			bindErr:    errors.New(privateFailure),
+			wantStatus: StatusBlocked,
+			wantCode:   "SOURCE_QUAL_GATE_BLOCKED",
+		},
+		{
+			name: "application mutation fails before replacement can execute",
+			binding: &gateTestApplicationBinding{verifyErrors: []error{
+				nil,
+				errors.New(privateFailure),
+			}},
+			wantStatus: StatusFail,
+			wantCode:   "SOURCE_QUAL_GATE_FAILED",
+			wantCalls:  1,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newGateRunnerFixture(t, LaneWindowsAMD64)
+			executor := &gateTestExecutor{
+				steps:   passingGateSteps(fixture.request),
+				binding: test.binding,
+				bindErr: test.bindErr,
+			}
+			records, err := runRequiredGates(
+				context.Background(),
+				fixture.request,
+				executor,
+				&gateTestLogSink{},
+			)
+			requireGateRunError(t, err, test.wantCode)
+			if len(records) == 0 || records[0].Status != test.wantStatus || records[0].ExitCode != nil {
+				t.Fatalf("binding failure first record = %#v, want %s with null exit", records, test.wantStatus)
+			}
+			requireLaterNotRun(t, records, 0)
+			if len(executor.requests) != test.wantCalls {
+				t.Fatalf("binding failure invoked %d applications, want %d", len(executor.requests), test.wantCalls)
+			}
+			if len(executor.boundApplications) != 1 || !reflect.DeepEqual(executor.boundApplications[0], fixture.request.Applications) {
+				t.Fatalf("bound applications = %#v, want exact private map", executor.boundApplications)
+			}
+			if strings.Contains(err.Error(), privateFailure) {
+				t.Fatalf("binding failure disclosed private diagnostic: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunRequiredGatesTreatsApplicationBindingReleaseFailureAsCleanupFailure(t *testing.T) {
+	fixture := newGateRunnerFixture(t, LaneWindowsAMD64)
+	executor := &gateTestExecutor{
+		steps: passingGateSteps(fixture.request),
+		binding: &gateTestApplicationBinding{
+			releaseErr: errors.New("private release failure C:\\runner\\tool.exe"),
+		},
+	}
+	records, err := runRequiredGates(context.Background(), fixture.request, executor, &gateTestLogSink{})
+	requireGateRunError(t, err, "SOURCE_QUAL_CLEANUP_FAILED")
+	last := len(records) - 1
+	if last < 0 || records[last].Status != StatusFail || records[last].ExitCode != nil {
+		t.Fatalf("release failure final record = %#v, want FAIL with null exit", records)
+	}
+	if executor.binding.releaseCalls != 1 || strings.Contains(err.Error(), "private release failure") {
+		t.Fatalf("release failure calls/error = %d/%v", executor.binding.releaseCalls, err)
 	}
 }
 
@@ -333,8 +416,29 @@ type gateTestStep struct {
 }
 
 type gateTestExecutor struct {
-	steps    []gateTestStep
-	requests []gateProcessRequest
+	steps             []gateTestStep
+	requests          []gateProcessRequest
+	binding           *gateTestApplicationBinding
+	bindErr           error
+	boundApplications []map[string]string
+}
+
+func (executor *gateTestExecutor) BindApplications(
+	_ context.Context,
+	applications map[string]string,
+) (gateApplicationBinding, error) {
+	cloned := make(map[string]string, len(applications))
+	for name, path := range applications {
+		cloned[name] = path
+	}
+	executor.boundApplications = append(executor.boundApplications, cloned)
+	if executor.bindErr != nil {
+		return nil, executor.bindErr
+	}
+	if executor.binding == nil {
+		executor.binding = &gateTestApplicationBinding{}
+	}
+	return executor.binding, nil
 }
 
 func (executor *gateTestExecutor) Execute(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {
@@ -349,6 +453,27 @@ func (executor *gateTestExecutor) Execute(ctx context.Context, request gateProce
 	step.result.Stdout = append([]byte(nil), step.result.Stdout...)
 	step.result.Stderr = append([]byte(nil), step.result.Stderr...)
 	return step.result, step.err
+}
+
+type gateTestApplicationBinding struct {
+	verifyErrors []error
+	verifyCalls  int
+	releaseErr   error
+	releaseCalls int
+}
+
+func (binding *gateTestApplicationBinding) Verify(context.Context) error {
+	index := binding.verifyCalls
+	binding.verifyCalls++
+	if index < len(binding.verifyErrors) {
+		return binding.verifyErrors[index]
+	}
+	return nil
+}
+
+func (binding *gateTestApplicationBinding) Release() error {
+	binding.releaseCalls++
+	return binding.releaseErr
 }
 
 type gateTestLogEntry struct {
