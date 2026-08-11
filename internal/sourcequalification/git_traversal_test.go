@@ -133,6 +133,51 @@ func TestGitTraversalConsumesBatchBeforeSortPathAllocationAndCallback(t *testing
 	}
 }
 
+func TestVerifyWorktreeUsesConstantTimeFixedHandleIdentitySet(t *testing.T) {
+	t.Parallel()
+	_, testPath, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate Git traversal identity contract test")
+	}
+	productionPath := filepath.Join(filepath.Dir(testPath), "git.go")
+	file, err := parser.ParseFile(token.NewFileSet(), productionPath, nil, 0)
+	if err != nil {
+		t.Fatalf("parse git.go: %v", err)
+	}
+
+	var target *ast.FuncDecl
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == "verifyWorktreeWithTraversalLimits" {
+			target = function
+			break
+		}
+	}
+	if target == nil {
+		t.Fatal("verifyWorktreeWithTraversalLimits is missing")
+	}
+
+	hasIdentityMap := false
+	hasLinearHistory := false
+	ast.Inspect(target.Body, func(node ast.Node) bool {
+		switch current := node.(type) {
+		case *ast.MapType:
+			identifier, ok := current.Key.(*ast.Ident)
+			if ok && identifier.Name == "packageFileIdentity" {
+				hasIdentityMap = true
+			}
+		case *ast.Ident:
+			if current.Name == "priorFileInfo" {
+				hasLinearHistory = true
+			}
+		}
+		return true
+	})
+	if !hasIdentityMap || hasLinearHistory {
+		t.Fatalf("worktree hard-link detection must use a packageFileIdentity map, identityMap=%t linearHistory=%t", hasIdentityMap, hasLinearHistory)
+	}
+}
+
 func boundedGitReadDirArgument(expression ast.Expr) bool {
 	switch argument := expression.(type) {
 	case *ast.Ident:
