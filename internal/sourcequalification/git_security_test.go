@@ -80,9 +80,9 @@ func TestValidateGitExecutablePathRejectsCheckoutBinary(t *testing.T) {
 	copyExecutableForTest(t, trustedGit, candidate)
 	t.Setenv("PATH", fixture.root+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	inspector, scratch, err := newRepositoryInspector(fixture.root)
-	if scratch != "" {
-		if cleanupErr := os.RemoveAll(scratch); cleanupErr != nil {
+	inspector, cleanup, err := newRepositoryInspector(fixture.root)
+	if cleanup != nil {
+		if cleanupErr := cleanup(); cleanupErr != nil {
 			t.Fatalf("remove isolated Git test environment: %v", cleanupErr)
 		}
 	}
