@@ -14,8 +14,10 @@ import (
 
 const (
 	containerCINodeImage        = "docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3"
+	containerCINodeTransport    = "docker.io/library/node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3"
 	containerCINodeAMD64Image   = "sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27"
 	containerCIPythonImage      = "docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+	containerCIPythonTransport  = "docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
 	containerCIPythonAMD64Image = "sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464"
 )
 
@@ -89,8 +91,10 @@ func TestContainerCIHealthyJourneyRequiredGateContract(t *testing.T) {
 		script := containerCIRequiredScalar(t, step, "run")
 		for _, fragment := range []string{
 			containerCINodeImage,
+			containerCINodeTransport,
 			containerCINodeAMD64Image,
 			containerCIPythonImage,
+			containerCIPythonTransport,
 			containerCIPythonAMD64Image,
 			"skopeo inspect --raw",
 			"sha256sum",
