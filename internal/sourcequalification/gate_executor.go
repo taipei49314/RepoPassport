@@ -74,6 +74,7 @@ func normalizeGateProcessEnvironment(environment []string) ([]string, bool) {
 
 func validGateProcessRequest(request gateProcessRequest) bool {
 	if !cleanAbsoluteGatePath(request.Application) || !cleanAbsoluteGatePath(request.Dir) ||
+		!validGateProcessNetwork(request.Network) ||
 		request.Timeout <= 0 || request.Timeout > maximumGateProcessTimeout ||
 		request.StdoutLimit <= 0 || request.StdoutLimit > maximumGateOutputBytes ||
 		request.StderrLimit <= 0 || request.StderrLimit > maximumGateOutputBytes ||
@@ -97,6 +98,16 @@ func validGateProcessRequest(request gateProcessRequest) bool {
 		total += len(item)
 	}
 	return total <= maximumGateProcessTextBytes
+}
+
+func validGateProcessNetwork(network NetworkMode) bool {
+	switch network {
+	case NetworkNone, NetworkGoModules, NetworkVulnerabilityDatabase,
+		NetworkGoModulesAndVulnerabilityDatabase:
+		return true
+	default:
+		return false
+	}
 }
 
 func availableGateApplication(path string) bool {

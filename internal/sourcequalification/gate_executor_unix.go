@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux
 
 package sourcequalification
 
@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -30,7 +31,14 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	}
 	defer stderrReader.Close()
 
-	command := exec.Command(request.Application, request.Args...)
+	isolationApplication, ok := trustedLinuxSystemApplication("/usr/bin/unshare")
+	if !ok || !linuxGateIsolationAvailable(ctx, isolationApplication, request.Network) {
+		_ = stdoutWriter.Close()
+		_ = stderrWriter.Close()
+		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
+	isolationArguments := linuxGateIsolationArguments(request.Network, request.Application, request.Args)
+	command := exec.Command(isolationApplication, isolationArguments...)
 	command.Dir = request.Dir
 	command.Env = append([]string(nil), request.Env...)
 	command.Stdout = stdoutWriter
@@ -142,6 +150,60 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		result.ExitCode = waitResult.exitCode
 	}
 	return result, nil
+}
+
+func linuxGateIsolationArguments(network NetworkMode, application string, arguments []string) []string {
+	result := []string{
+		"--user",
+		"--map-root-user",
+		"--pid",
+		"--fork",
+		"--kill-child=KILL",
+		"--mount-proc",
+	}
+	if network == NetworkNone {
+		result = append(result, "--net")
+	}
+	result = append(result, "--", application)
+	return append(result, arguments...)
+}
+
+func trustedLinuxSystemApplication(application string) (string, bool) {
+	for current := application; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o022 != 0 {
+			return "", false
+		}
+		metadata, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || metadata.Uid != 0 {
+			return "", false
+		}
+		if current == application && !info.Mode().IsRegular() {
+			return "", false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	return application, true
+}
+
+func linuxGateIsolationAvailable(ctx context.Context, isolationApplication string, network NetworkMode) bool {
+	probeApplication, ok := trustedLinuxSystemApplication("/usr/bin/true")
+	if !ok {
+		return false
+	}
+	probeContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(
+		probeContext,
+		isolationApplication,
+		linuxGateIsolationArguments(network, probeApplication, nil)...,
+	)
+	command.Dir = "/"
+	command.Env = []string{"HOME=/", "LANG=C", "LC_ALL=C", "PATH=/usr/bin:/bin", "TZ=UTC"}
+	return command.Run() == nil && probeContext.Err() == nil
 }
 
 func drainUnixGatePipe(reader *os.File, destination io.Writer) <-chan error {

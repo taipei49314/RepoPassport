@@ -45,13 +45,15 @@ type gateRunEnvironment struct {
 }
 
 // gateProcessRequest is the complete private process boundary. An OS-specific
-// executor must invoke Application directly with Args; the logical public argv
-// remains in the receipt record.
+// executor must invoke Application with Args without a shell. A trusted
+// platform containment launcher may wrap that exact vector; the logical
+// public argv remains in the receipt record.
 type gateProcessRequest struct {
 	Application string
 	Args        []string
 	Dir         string
 	Env         []string
+	Network     NetworkMode
 	Timeout     time.Duration
 	StdoutLimit int64
 	StderrLimit int64
@@ -115,6 +117,7 @@ func runRequiredGates(
 			Args:        append([]string(nil), records[index].Argv[1:]...),
 			Dir:         request.RepositoryRoot,
 			Env:         gateEnvironment(request.Environment, specification.Network),
+			Network:     specification.Network,
 			Timeout:     time.Duration(specification.TimeoutSeconds) * time.Second,
 			StdoutLimit: maximumGateOutputBytes,
 			StderrLimit: maximumGateOutputBytes,

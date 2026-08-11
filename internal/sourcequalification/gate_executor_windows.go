@@ -34,6 +34,12 @@ type windowsJobBasicAccounting struct {
 }
 
 func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {
+	// A Job Object contains descendants but does not constrain networking.
+	// Until a restricted-token/AppContainer or equivalent verified provider is
+	// available, a Windows network-none gate must fail closed before invocation.
+	if request.Network == NetworkNone {
+		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
 	stdin, err := os.Open(os.DevNull)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
