@@ -124,21 +124,38 @@ jobs:
           SQ_REF: ${{ needs.context.outputs.ref }}
           SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
           SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
           SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
           SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/source-qualification-controller-linux/repopass-source-qualify-linux-amd64" produce-lane \
-            --repo-root "$GITHUB_WORKSPACE/qualification-source" \
-            --lane linux-amd64 \
-            --event "$SQ_EVENT" \
-            --expected-ref "$SQ_REF" \
-            --expected-base-revision "$SQ_BASE_REVISION" \
-            --expected-tested-revision "$SQ_TESTED_REVISION" \
-            --workflow-run-id "$SQ_WORKFLOW_RUN_ID" \
-            --workflow-run-attempt "$SQ_WORKFLOW_RUN_ATTEMPT" \
-            --private-log-root "$RUNNER_TEMP/source-qualification-private-linux" \
-            --out-dir "$RUNNER_TEMP/source-qualification-lane-linux"
+          github_output=$GITHUB_OUTPUT
+          set +e
+          (
+            unset GITHUB_OUTPUT
+            "$RUNNER_TEMP/source-qualification-controller-linux/repopass-source-qualify-linux-amd64" produce-lane \
+              --repo-root "$GITHUB_WORKSPACE/qualification-source" \
+              --lane linux-amd64 \
+              --event "$SQ_EVENT" \
+              --expected-ref "$SQ_REF" \
+              --expected-base-revision "$SQ_BASE_REVISION" \
+              --expected-tested-revision "$SQ_TESTED_REVISION" \
+              --expected-tree "$SQ_TREE_SHA" \
+              --workflow-run-id "$SQ_WORKFLOW_RUN_ID" \
+              --workflow-run-attempt "$SQ_WORKFLOW_RUN_ATTEMPT" \
+              --private-log-root "$RUNNER_TEMP/source-qualification-private-linux" \
+              --out-dir "$RUNNER_TEMP/source-qualification-lane-linux"
+          )
+          controller_exit=$?
+          set -e
+          if [ "$controller_exit" -eq 3 ]; then
+            echo "attempt-published=true" >> "$github_output"
+            exit 1
+          fi
+          echo "attempt-published=false" >> "$github_output"
+          if [ "$controller_exit" -ne 0 ]; then
+            exit "$controller_exit"
+          fi
       - id: upload-lane
         if: ${{ always() && steps.produce-lane.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -162,7 +179,7 @@ jobs:
           path: ${{ runner.temp }}/source-qualification-controller-linux/repopass-source-qualify-linux-amd64
           retention-days: 90
       - id: upload-attempt
-        if: ${{ always() && steps.produce-lane.outcome != 'success' }}
+        if: ${{ always() && steps.produce-lane.outputs.attempt-published == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           compression-level: 0
@@ -212,23 +229,38 @@ jobs:
           SQ_REF: ${{ needs.context.outputs.ref }}
           SQ_BASE_REVISION: ${{ needs.context.outputs.base-revision }}
           SQ_TESTED_REVISION: ${{ needs.context.outputs.tested-revision }}
+          SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
           SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
           SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
         run: |
           $ErrorActionPreference = 'Stop'
           $controller = Join-Path $env:RUNNER_TEMP 'source-qualification-controller-windows\repopass-source-qualify-windows-amd64.exe'
-          & $controller produce-lane `
-            --repo-root "$env:GITHUB_WORKSPACE\qualification-source" `
-            --lane windows-amd64 `
-            --event $env:SQ_EVENT `
-            --expected-ref $env:SQ_REF `
-            --expected-base-revision $env:SQ_BASE_REVISION `
-            --expected-tested-revision $env:SQ_TESTED_REVISION `
-            --workflow-run-id $env:SQ_WORKFLOW_RUN_ID `
-            --workflow-run-attempt $env:SQ_WORKFLOW_RUN_ATTEMPT `
-            --private-log-root (Join-Path $env:RUNNER_TEMP 'source-qualification-private-windows') `
-            --out-dir (Join-Path $env:RUNNER_TEMP 'source-qualification-lane-windows')
-          if ($LASTEXITCODE -ne 0) { throw 'lane production failed closed' }
+          $githubOutput = $env:GITHUB_OUTPUT
+          Remove-Item Env:GITHUB_OUTPUT
+          try {
+            & $controller produce-lane `
+              --repo-root "$env:GITHUB_WORKSPACE\qualification-source" `
+              --lane windows-amd64 `
+              --event $env:SQ_EVENT `
+              --expected-ref $env:SQ_REF `
+              --expected-base-revision $env:SQ_BASE_REVISION `
+              --expected-tested-revision $env:SQ_TESTED_REVISION `
+              --expected-tree $env:SQ_TREE_SHA `
+              --workflow-run-id $env:SQ_WORKFLOW_RUN_ID `
+              --workflow-run-attempt $env:SQ_WORKFLOW_RUN_ATTEMPT `
+              --private-log-root (Join-Path $env:RUNNER_TEMP 'source-qualification-private-windows') `
+              --out-dir (Join-Path $env:RUNNER_TEMP 'source-qualification-lane-windows')
+            $controllerExit = $LASTEXITCODE
+          }
+          finally {
+            $env:GITHUB_OUTPUT = $githubOutput
+          }
+          if ($controllerExit -eq 3) {
+            "attempt-published=true" | Out-File -FilePath $githubOutput -Encoding utf8 -Append
+            throw 'lane production retained a non-PASS attempt'
+          }
+          "attempt-published=false" | Out-File -FilePath $githubOutput -Encoding utf8 -Append
+          if ($controllerExit -ne 0) { throw 'lane production failed closed' }
       - id: upload-lane
         if: ${{ always() && steps.produce-lane.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -252,7 +284,7 @@ jobs:
           path: ${{ runner.temp }}/source-qualification-controller-windows/repopass-source-qualify-windows-amd64.exe
           retention-days: 90
       - id: upload-attempt
-        if: ${{ always() && steps.produce-lane.outcome != 'success' }}
+        if: ${{ always() && steps.produce-lane.outputs.attempt-published == 'true' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           compression-level: 0

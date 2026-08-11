@@ -12,7 +12,9 @@ contract.
   who operated the runner or approved a release.
 - Production has no authenticated, complete GitHub attempt-history provider.
   It therefore reports BLOCKED before inspecting or executing source instead
-  of claiming ordinal 1 or hiding a prior failure.
+  of claiming a complete ordinal-1 lane receipt or hiding a prior failure. The
+  workflow preserves this preconstruction result as a canonical context-bound
+  tombstone; that file is failure evidence, not a receipt or acceptance signal.
 - Production has no lane-lifetime immutable authority for every executable,
   loader, runtime, and toolchain dependency used by source gates. The OS gate
   executor reports BLOCKED before execution; a pathname check or digest-only

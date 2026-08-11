@@ -605,6 +605,19 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 	if got := workflowRequiredScalar(t, produce, "working-directory"); got != "${{ github.workspace }}/qualification-source" {
 		t.Errorf("%s produce-lane working-directory = %q, want the exact clean checkout", lane, got)
 	}
+	wantProduceEnvironment := map[string]string{
+		"SQ_BASE_REVISION":        "${{ needs.context.outputs.base-revision }}",
+		"SQ_EVENT":                "${{ needs.context.outputs.event }}",
+		"SQ_REF":                  "${{ needs.context.outputs.ref }}",
+		"SQ_TESTED_REVISION":      "${{ needs.context.outputs.tested-revision }}",
+		"SQ_TREE_SHA":             "${{ needs.context.outputs.tree-sha }}",
+		"SQ_WORKFLOW_RUN_ATTEMPT": "${{ needs.context.outputs.workflow-run-attempt }}",
+		"SQ_WORKFLOW_RUN_ID":      "${{ needs.context.outputs.workflow-run-id }}",
+	}
+	if got := workflowScalarMap(t, workflowRequiredMapping(t, produce, "env")); !reflect.DeepEqual(got, wantProduceEnvironment) {
+		t.Errorf("%s produce-lane environment = %#v, want exact trusted context bindings %#v",
+			lane, got, wantProduceEnvironment)
+	}
 	script := requireWorkflowControllerCommand(t, produce, "produce-lane",
 		"--repo-root",
 		"--lane",
@@ -612,6 +625,7 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		"--expected-ref",
 		"--expected-base-revision",
 		"--expected-tested-revision",
+		"--expected-tree",
 		"--workflow-run-id",
 		"--workflow-run-attempt",
 		"--private-log-root",
@@ -624,12 +638,31 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		"needs.context.outputs.ref",
 		"needs.context.outputs.base-revision",
 		"needs.context.outputs.tested-revision",
+		"needs.context.outputs.tree-sha",
 		"needs.context.outputs.workflow-run-id",
 		"needs.context.outputs.workflow-run-attempt",
+		"SQ_TREE_SHA",
+		"GITHUB_OUTPUT",
+		"attempt-published=true",
+		"attempt-published=false",
 		"RUNNER_TEMP",
 	} {
 		if !strings.Contains(script, fragment) && !strings.Contains(workflowOperationalScalarText(produce), fragment) {
 			t.Errorf("%s produce-lane invocation is missing exact binding %q", lane, fragment)
+		}
+	}
+	if !regexp.MustCompile(`(?m)(?:controller_exit|controllerExit)[^\n]*(?:-eq|==)[^\n]*3`).MatchString(script) {
+		t.Errorf("%s produce-lane does not reserve exit 3 exclusively for a safely published non-PASS attempt", lane)
+	}
+	if lane == "linux" {
+		if !strings.Contains(script, "unset GITHUB_OUTPUT") {
+			t.Error("linux produce-lane must hide the step-output channel from the candidate controller")
+		}
+	} else {
+		for _, fragment := range []string{"$githubOutput", "Remove-Item Env:GITHUB_OUTPUT"} {
+			if !strings.Contains(script, fragment) {
+				t.Errorf("windows produce-lane must hide and privately restore the step-output channel: missing %q", fragment)
+			}
 		}
 	}
 
@@ -644,7 +677,11 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 	}
 	attempt := requireWorkflowUploadStep(t, job, "upload-attempt",
 		"source-qualification-attempt-"+wantLane+"-"+testedRevision+"-1",
-		"steps.produce-lane.outcome != 'success'")
+		"steps.produce-lane.outputs.attempt-published == 'true'")
+	attemptCondition := workflowRequiredScalar(t, attempt, "if")
+	if strings.Contains(attemptCondition, "steps.produce-lane.outcome != 'success'") {
+		t.Errorf("%s attempt upload trusts generic step failure instead of the safe publication signal", lane)
+	}
 	attemptPath := strings.ReplaceAll(workflowRequiredScalar(t, workflowRequiredMapping(t, attempt, "with"), "path"), "\\", "/")
 	if !strings.HasSuffix(attemptPath, "/source-qualification-lane-"+lane) || strings.ContainsAny(attemptPath, "*?[]\n") {
 		t.Errorf("%s non-PASS artifact path = %q, want the exact producer output directory", lane, attemptPath)

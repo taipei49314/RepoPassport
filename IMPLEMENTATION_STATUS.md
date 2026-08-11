@@ -47,8 +47,10 @@ executor has no lane-lifetime authority that can hold the executable, loader,
 runtime, and toolchain identities immutable. Linux has a rootless network
 namespace enforcement path; Windows reports the network-denied gate BLOCKED
 until an equally enforceable platform boundary exists. Missing authority is
-never converted to a skip or PASS, and no receipt from this implementation
-closes `RP-M0-QUAL`.
+never converted to a skip or PASS. A preconstruction non-PASS is retained as
+one canonical attempt tombstone using only the successful workflow context's
+explicit expected subject; it is not a lane receipt and does not close
+`RP-M0-QUAL`.
 
 The GitHub workflow is transport and replay automation only. Actions artifacts
 are not external trust, signer identity, trusted time, provenance, or release

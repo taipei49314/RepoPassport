@@ -19,6 +19,20 @@ const (
 	controllerStagePrefix     = ".repopass-source-qualification-stage-"
 )
 
+// ErrAttemptArtifactPublished marks a non-PASS controller error only after
+// its exact lane output or preconstruction tombstone was published safely.
+// The private CLI uses this marker to keep generic failures away from the
+// artifact uploader while preserving the original fixed error string.
+var ErrAttemptArtifactPublished = errors.New("source qualification attempt artifact published")
+
+type attemptArtifactPublishedError struct{ code string }
+
+func (failure attemptArtifactPublishedError) Error() string { return failure.code }
+
+func (failure attemptArtifactPublishedError) Is(target error) bool {
+	return target == ErrAttemptArtifactPublished
+}
+
 // ProduceLaneRequest is the complete, caller-supplied subject and run input
 // for the private RFC-0002 lane controller. Platform, tool, repository, tree,
 // controller, and gate facts are deliberately not caller selected.
@@ -29,6 +43,7 @@ type ProduceLaneRequest struct {
 	ExpectedRef            string
 	ExpectedBaseRevision   string
 	ExpectedTestedRevision string
+	ExpectedTreeSHA        string
 	WorkflowRunID          string
 	WorkflowRunAttempt     int64
 	PrivateLogRoot         string
@@ -99,12 +114,14 @@ func produceLaneWithRuntime(
 	cleanupErr := cleanup()
 	if cleanupErr != nil {
 		withdrawErr := dependencies.withdrawStage(stagePath)
-		if withdrawErr == nil && outcome.StageReady && validProduceLaneVerifiedIdentity(request, outcome) {
-			_ = dependencies.publishTombstone(
+		if withdrawErr == nil {
+			if publishErr := dependencies.publishTombstone(
 				request.OutputDir,
 				controllerCodeCleanupFailed,
 				StatusFail,
-			)
+			); publishErr == nil {
+				return controllerPublishedFailureWithStatus(controllerCodeCleanupFailed, StatusFail)
+			}
 		}
 		return controllerFailure(controllerCodeCleanupFailed)
 	}
@@ -115,6 +132,9 @@ func produceLaneWithRuntime(
 		}
 		if !validOutcome {
 			return controllerFailure(controllerCodeInvalidInput)
+		}
+		if publishErr := dependencies.publishTombstone(request.OutputDir, code, status); publishErr == nil {
+			return controllerPublishedFailureWithStatus(code, status)
 		}
 		return controllerFailureWithStatus(code, status)
 	}
@@ -134,7 +154,7 @@ func produceLaneWithRuntime(
 	}
 
 	if status != StatusPass {
-		return controllerFailureWithStatus(code, status)
+		return controllerPublishedFailureWithStatus(code, status)
 	}
 	return controllerSuccess(
 		controllerStatusPass,
@@ -170,6 +190,7 @@ func validProduceLaneVerifiedIdentity(
 	outcome produceLaneStageOutcome,
 ) bool {
 	return outcome.TestedRevision == request.ExpectedTestedRevision &&
+		outcome.TreeSHA == request.ExpectedTreeSHA &&
 		validReceiptGitSHA1(outcome.TestedRevision) && validReceiptGitSHA1(outcome.TreeSHA)
 }
 
@@ -190,12 +211,24 @@ func controllerFailureWithStatus(
 	}, errors.New(code)
 }
 
+func controllerPublishedFailureWithStatus(
+	code string,
+	status QualificationStatus,
+) (ControllerResult, error) {
+	result, err := controllerFailureWithStatus(code, status)
+	if err == nil || err.Error() != code {
+		return controllerFailure(controllerCodeInvalidInput)
+	}
+	return result, attemptArtifactPublishedError{code: code}
+}
+
 func validProduceLaneRequest(ctx context.Context, request ProduceLaneRequest) bool {
 	if ctx == nil || ctx.Err() != nil ||
 		(request.Lane != LaneLinuxAMD64 && request.Lane != LaneWindowsAMD64) ||
 		!validReceiptEventRef(request.Event, request.ExpectedRef) ||
 		!validReceiptGitSHA1(request.ExpectedBaseRevision) ||
 		!validReceiptGitSHA1(request.ExpectedTestedRevision) ||
+		!validReceiptGitSHA1(request.ExpectedTreeSHA) ||
 		!validReceiptPositiveDecimal(request.WorkflowRunID, 20) ||
 		request.WorkflowRunAttempt != 1 {
 		return false
@@ -316,33 +349,66 @@ func (state *productionProduceLaneState) publishTombstone(
 	outputPath, code string,
 	status QualificationStatus,
 ) error {
-	if state == nil || state.receipt == nil {
+	if state == nil {
 		return errAttemptTombstoneInput
 	}
-	receipt := *state.receipt
-	if receipt.Subject.BaseRevision != state.request.ExpectedBaseRevision ||
-		receipt.Subject.TestedRevision != state.request.ExpectedTestedRevision ||
-		receipt.Run.WorkflowRunID != state.request.WorkflowRunID ||
-		receipt.Run.WorkflowRunAttempt != state.request.WorkflowRunAttempt ||
-		receipt.Run.Lane != state.request.Lane || receipt.Attempt.Ordinal != 1 {
+	request := state.request
+	run := RunIdentity{
+		WorkflowRepository: canonicalWorkflowRepository,
+		WorkflowPath:       canonicalWorkflowPath,
+		Event:              request.Event,
+		Ref:                request.ExpectedRef,
+		WorkflowRunID:      request.WorkflowRunID,
+		WorkflowRunAttempt: int(request.WorkflowRunAttempt),
+		TestedRevision:     request.ExpectedTestedRevision,
+	}
+	qualificationRunID := QualificationRunID(run)
+	attemptID := AttemptID(qualificationRunID, request.Lane, 1)
+	if state.receipt != nil && !receiptMatchesTombstoneRequest(
+		*state.receipt,
+		request,
+		qualificationRunID,
+		attemptID,
+	) {
 		return errAttemptTombstoneInput
 	}
 	document := qualificationAttemptTombstone{
 		ArtifactType:           attemptTombstoneArtifactType,
-		AttemptID:              receipt.Attempt.AttemptID,
+		AttemptID:              attemptID,
 		Code:                   code,
-		ExpectedBaseRevision:   receipt.Subject.BaseRevision,
-		ExpectedTestedRevision: receipt.Subject.TestedRevision,
-		ExpectedTreeSHA:        receipt.Subject.TreeSHA,
-		Lane:                   receipt.Run.Lane,
-		Ordinal:                receipt.Attempt.Ordinal,
-		QualificationRunID:     receipt.Run.QualificationRunID,
+		ExpectedBaseRevision:   request.ExpectedBaseRevision,
+		ExpectedTestedRevision: request.ExpectedTestedRevision,
+		ExpectedTreeSHA:        request.ExpectedTreeSHA,
+		Lane:                   request.Lane,
+		Ordinal:                1,
+		QualificationRunID:     qualificationRunID,
 		QualificationStatus:    status,
 		SchemaVersion:          attemptTombstoneSchemaVersion,
-		WorkflowRunAttempt:     receipt.Run.WorkflowRunAttempt,
-		WorkflowRunID:          receipt.Run.WorkflowRunID,
+		WorkflowRunAttempt:     request.WorkflowRunAttempt,
+		WorkflowRunID:          request.WorkflowRunID,
 	}
 	return publishAttemptTombstone(outputPath, document)
+}
+
+func receiptMatchesTombstoneRequest(
+	receipt qualificationReceipt,
+	request ProduceLaneRequest,
+	qualificationRunID, attemptID string,
+) bool {
+	return receipt.Subject.Repository == receiptRepositoryURL &&
+		receipt.Subject.BaseRevision == request.ExpectedBaseRevision &&
+		receipt.Subject.TestedRevision == request.ExpectedTestedRevision &&
+		receipt.Subject.TreeSHA == request.ExpectedTreeSHA &&
+		receipt.Run.WorkflowRepository == canonicalWorkflowRepository &&
+		receipt.Run.WorkflowPath == canonicalWorkflowPath &&
+		receipt.Run.Event == request.Event &&
+		receipt.Run.Ref == request.ExpectedRef &&
+		receipt.Run.HeadSHA == request.ExpectedTestedRevision &&
+		receipt.Run.WorkflowRunID == request.WorkflowRunID &&
+		receipt.Run.WorkflowRunAttempt == request.WorkflowRunAttempt &&
+		receipt.Run.Lane == request.Lane &&
+		receipt.Run.QualificationRunID == qualificationRunID &&
+		receipt.Attempt.Ordinal == 1 && receipt.Attempt.AttemptID == attemptID
 }
 
 func qualificationLaneErrorCode(err error, status QualificationStatus) string {
