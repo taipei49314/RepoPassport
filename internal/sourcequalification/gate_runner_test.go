@@ -116,6 +116,9 @@ func TestRunRequiredGatesUsesExactArgvEnvironmentAndPrivateApplications(t *testi
 		}
 		requireGateEnvironment(t, request.Env, fixture.request.Environment, specification.Network)
 	}
+	if executor.binding == nil || executor.binding.verifyCalls != 2*len(registry) || executor.binding.releaseCalls != 1 {
+		t.Fatalf("application binding verify/release calls = %#v, want %d/1", executor.binding, 2*len(registry))
+	}
 
 	if got := RequiredGates(LaneWindowsAMD64)[9].Argv[len(RequiredGates(LaneWindowsAMD64)[9].Argv)-1]; got != "{testedRevision}" {
 		t.Fatalf("registry token was mutated to %q", got)
@@ -148,7 +151,15 @@ func TestRunRequiredGatesRequiresLaneLifetimeApplicationBinding(t *testing.T) {
 			wantCode:   "SOURCE_QUAL_GATE_BLOCKED",
 		},
 		{
-			name: "application mutation fails before replacement can execute",
+			name: "application mutation before first execution fails closed",
+			binding: &gateTestApplicationBinding{verifyErrors: []error{
+				errors.New(privateFailure),
+			}},
+			wantStatus: StatusFail,
+			wantCode:   "SOURCE_QUAL_GATE_FAILED",
+		},
+		{
+			name: "application mutation after first execution fails closed",
 			binding: &gateTestApplicationBinding{verifyErrors: []error{
 				nil,
 				errors.New(privateFailure),
@@ -185,6 +196,46 @@ func TestRunRequiredGatesRequiresLaneLifetimeApplicationBinding(t *testing.T) {
 			}
 			if strings.Contains(err.Error(), privateFailure) {
 				t.Fatalf("binding failure disclosed private diagnostic: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunRequiredGatesReleasesPartiallyAcquiredApplicationBinding(t *testing.T) {
+	tests := []struct {
+		name       string
+		releaseErr error
+		wantStatus QualificationStatus
+		wantCode   string
+	}{
+		{
+			name:       "partial binding is released",
+			wantStatus: StatusBlocked,
+			wantCode:   "SOURCE_QUAL_GATE_BLOCKED",
+		},
+		{
+			name:       "partial binding cleanup failure wins",
+			releaseErr: errors.New("private partial lease cleanup failure"),
+			wantStatus: StatusFail,
+			wantCode:   "SOURCE_QUAL_CLEANUP_FAILED",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newGateRunnerFixture(t, LaneWindowsAMD64)
+			binding := &gateTestApplicationBinding{releaseErr: test.releaseErr}
+			executor := &gateTestExecutor{
+				steps:   passingGateSteps(fixture.request),
+				binding: binding,
+				bindErr: errors.New("private partial acquisition failure"),
+			}
+			records, err := runRequiredGates(context.Background(), fixture.request, executor, &gateTestLogSink{})
+			requireGateRunError(t, err, test.wantCode)
+			if len(records) == 0 || records[0].Status != test.wantStatus || records[0].ExitCode != nil {
+				t.Fatalf("partial binding record = %#v, want %s/null", records, test.wantStatus)
+			}
+			if binding.releaseCalls != 1 || len(executor.requests) != 0 {
+				t.Fatalf("partial binding release/execute calls = %d/%d, want 1/0", binding.releaseCalls, len(executor.requests))
 			}
 		})
 	}
