@@ -160,13 +160,18 @@ jobs:
           -run '^(TestObserveContextAndTimeoutBoundLockContention|TestObserveChainStateConcurrencyCancellationAndProcessContention|TestObserveContentionAndCancellationLeaveStateUnchanged|TestObserveCrossProcessLockTimeoutAndExitRelease)$'
 
   container-integration:
-    name: Container integration (opt-in)
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.REPOPASS_RUN_CONTAINER_INTEGRATION == 'true' }}
+    name: Container healthy journeys (${{ matrix.backend }})
     needs:
       - go
       - schema-json
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        backend:
+          - docker
+          - podman
 
     steps:
       - name: Check out source
@@ -180,22 +185,188 @@ jobs:
           go-version: '1.26.5'
           cache: false
 
-      - name: Record Docker feature information
-        run: |
-          docker version
-          docker info
-
-      - name: Pre-pull and inspect exact approved fixture images
-        run: |
-          node_image='docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3'
-          python_image='docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
-          docker pull --platform linux/amd64 "$node_image"
-          docker pull --platform linux/amd64 "$python_image"
-          docker image inspect \
-            --format '{{json .RepoDigests}} {{.Os}}/{{.Architecture}}' \
-            "$node_image" "$python_image"
-
-      - name: Run container integration tests
+      - name: Bind the check to the exact clean source tree
+        id: source-binding
         env:
-          REPOPASS_INTEGRATION_BACKEND: docker
-        run: go test -timeout=25m -tags=integration -count=1 -v ./internal/cli -run '^TestContainer'
+          EXPECTED_SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          actual_sha="$(git rev-parse --verify HEAD)"
+          source_tree="$(git rev-parse --verify HEAD^{tree})"
+          dirty="$(git status --porcelain --untracked-files=all)"
+          if [[ ! "$EXPECTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "invalid expected source SHA: $EXPECTED_SOURCE_SHA" >&2
+            exit 1
+          fi
+          if [[ ! "$actual_sha" =~ ^[0-9a-f]{40}$ || ! "$source_tree" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'checkout did not resolve to canonical SHA-1 commit and tree identities' >&2
+            exit 1
+          fi
+          if [[ "$actual_sha" != "$EXPECTED_SOURCE_SHA" ]]; then
+            echo "checkout SHA $actual_sha does not match event SHA $EXPECTED_SOURCE_SHA" >&2
+            exit 1
+          fi
+          if [[ -n "$dirty" ]]; then
+            echo "checkout is dirty:" >&2
+            printf '%s\n' "$dirty" >&2
+            exit 1
+          fi
+
+          kernel="$(uname -srvmo)"
+          runner_os="$(uname -s)"
+          runner_arch="$(uname -m)"
+          cgroup="$(stat -fc %T /sys/fs/cgroup)"
+          if [[ "$runner_os" != 'Linux' || "$runner_arch" != 'x86_64' ]]; then
+            echo "runner machine is $runner_os/$runner_arch, want Linux/x86_64" >&2
+            exit 1
+          fi
+          if [[ "$cgroup" != 'cgroup2fs' ]]; then
+            echo "runner cgroup filesystem is $cgroup, want cgroup2fs" >&2
+            exit 1
+          fi
+          annotation="$(jq -cn \
+            --arg cgroup "$cgroup" \
+            --arg imageOS "${ImageOS:-unknown}" \
+            --arg imageVersion "${ImageVersion:-unknown}" \
+            --arg kernel "$kernel" \
+            --arg machineArch "$runner_arch" \
+            --arg machineOS "$runner_os" \
+            --arg sourceSHA "$actual_sha" \
+            --arg sourceTree "$source_tree" \
+            '{"dirty":false,"kind":"container-healthy-journey-source-annotation","sourceSHA":$sourceSHA,"sourceTree":$sourceTree,"runner":{"ImageOS":$imageOS,"ImageVersion":$imageVersion,"machineOS":$machineOS,"machineArch":$machineArch,"kernel":$kernel,"cgroup":$cgroup},"trustBoundary":"non-versioned-ci-check-not-trusted-evidence"}')"
+          printf 'REPOPASS_M1_JOURNEY_SOURCE %s\n' "$annotation"
+
+      - name: Prepare exact approved fixture images on the selected backend
+        id: prepare-images
+        env:
+          CONTAINER_BACKEND: ${{ matrix.backend }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$CONTAINER_BACKEND" in
+            docker)
+              command -v docker
+              engine_version="$(docker version --format '{{.Client.Version}}/{{.Server.Version}}')"
+              security_options="$(docker info --format '{{json .SecurityOptions}}')"
+              if [[ "$security_options" == *rootless* ]]; then
+                echo 'Docker healthy journeys require the hosted rootful Docker engine' >&2
+                exit 1
+              fi
+              engine_platform="$(docker info --format '{{.OSType}}/{{.Architecture}} cgroup={{.CgroupVersion}}')"
+              if [[ "$engine_platform" != 'linux/x86_64 cgroup=2' ]]; then
+                echo "Docker engine tuple is $engine_platform, want linux/x86_64 cgroup=2" >&2
+                exit 1
+              fi
+              ;;
+            podman)
+              command -v podman
+              if [[ "$(id -u)" -eq 0 ]]; then
+                echo 'Podman healthy journeys must run as the non-root runner user' >&2
+                exit 1
+              fi
+              engine_version="$(podman version --format '{{.Client.Version}}')"
+              podman_info="$(podman info --format json)"
+              if ! jq -e '
+                .host.os == "linux" and
+                .host.arch == "amd64" and
+                .host.security.rootless == true and
+                .host.serviceIsRemote == false and
+                .host.cgroupVersion == "v2"
+              ' <<< "$podman_info" >/dev/null; then
+                echo 'Podman healthy journeys require the runner-user rootless engine' >&2
+                exit 1
+              fi
+              engine_platform="$(jq -r '.host.os + "/" + .host.arch + " cgroup=" + .host.cgroupVersion' <<< "$podman_info")"
+              ;;
+            *)
+              echo "unsupported container backend: $CONTAINER_BACKEND" >&2
+              exit 1
+              ;;
+          esac
+          printf 'REPOPASS_M1_JOURNEY_ENGINE backend=%s version=%s platform=%s\n' \
+            "$CONTAINER_BACKEND" "$engine_version" "$engine_platform"
+
+          node_image='docker.io/library/node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3'
+          node_transport='docker.io/library/node@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3'
+          node_index='sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3'
+          node_amd64='sha256:8607a9064d4a571140998ae9e52a3b3fcf9cff361d04642d5971e6cd76d39e27'
+          python_image='docker.io/library/python:3.12.13-slim@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
+          python_transport='docker.io/library/python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
+          python_index='sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de'
+          python_amd64='sha256:cab2dbf575e971934a81e4622f5aba17aa7929719bd7e31033a3a83b97fd0464'
+          receipt_dir="$RUNNER_TEMP/repopass-m1-images-$CONTAINER_BACKEND"
+          mkdir -p "$receipt_dir"
+          command -v skopeo
+
+          verify_image() {
+            local name="$1"
+            local image="$2"
+            local transport="$3"
+            local expected_index="$4"
+            local expected_amd64="$5"
+            local raw="$receipt_dir/$name-index.json"
+            local inspect="$receipt_dir/$name-inspect.json"
+
+            skopeo inspect --raw "docker://$transport" > "$raw"
+            actual_index="sha256:$(sha256sum "$raw" | awk '{print $1}')"
+            if [[ "$actual_index" != "$expected_index" ]]; then
+              echo "$name raw OCI index digest is $actual_index, want $expected_index" >&2
+              exit 1
+            fi
+            selected_amd64="$(jq -er '
+              [.manifests[]
+               | select(.platform.os == "linux" and
+                        .platform.architecture == "amd64")
+               | .digest]
+              | if length == 1 then .[0]
+                else error("linux/amd64 manifest cardinality is not one")
+                end
+            ' "$raw")"
+            if [[ "$selected_amd64" != "$expected_amd64" ]]; then
+              echo "$name linux/amd64 manifest is $selected_amd64, want $expected_amd64" >&2
+              exit 1
+            fi
+
+            "$CONTAINER_BACKEND" pull --platform linux/amd64 "$image"
+            "$CONTAINER_BACKEND" image inspect "$image" > "$inspect"
+            platform="$("$CONTAINER_BACKEND" image inspect --format '{{.Os}}/{{.Architecture}}' "$image")"
+            if [[ "$platform" != 'linux/amd64' ]]; then
+              echo "image $image resolved to $platform, want linux/amd64" >&2
+              exit 1
+            fi
+            printf 'REPOPASS_M1_JOURNEY_IMAGE name=%s index=%s linux-amd64=%s backend=%s\n' \
+              "$name" "$actual_index" "$selected_amd64" "$CONTAINER_BACKEND"
+          }
+
+          verify_image node "$node_image" "$node_transport" "$node_index" "$node_amd64"
+          verify_image python "$python_image" "$python_transport" "$python_index" "$python_amd64"
+
+      - name: Run only the named healthy container journeys
+        id: healthy-journeys
+        env:
+          REPOPASS_INTEGRATION_BACKEND: ${{ matrix.backend }}
+        run: go test -timeout=25m -tags=integration -count=1 -v ./internal/cli -run '^TestContainerHealthyJourneys$'
+
+      - name: Fail on RepoPassport-labeled container residue
+        id: residue-check
+        if: ${{ always() }}
+        env:
+          CONTAINER_BACKEND: ${{ matrix.backend }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v "$CONTAINER_BACKEND"
+          residue="$("$CONTAINER_BACKEND" ps -aq --filter label=dev.repopass.run)"
+          if [[ -n "$residue" ]]; then
+            echo 'RepoPassport-labeled container residue remains:' >&2
+            "$CONTAINER_BACKEND" ps -a --no-trunc --filter label=dev.repopass.run >&2
+            while IFS= read -r container_id; do
+              [[ -z "$container_id" ]] || "$CONTAINER_BACKEND" container inspect \
+                --format '{{json .Id}} {{json .Name}} {{json .State.Status}} {{json .Config.Labels}}' \
+                "$container_id" >&2
+            done <<< "$residue"
+            exit 1
+          fi

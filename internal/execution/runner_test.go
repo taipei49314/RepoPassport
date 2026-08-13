@@ -457,6 +457,57 @@ func TestLongLivedCreateArgsMaterializeArm64Platform(t *testing.T) {
 	}
 }
 
+func TestLongLivedCreateArgsUseBackendSpecificNoSwapControls(t *testing.T) {
+	t.Parallel()
+	runner := testRunner(&fakeExecutor{})
+	plan := domain.ResolvedPlan{
+		RuntimeAdapter:     "node",
+		BaseImageReference: "example.invalid/runtime@sha256:" + strings.Repeat("a", 64),
+		Resources: domain.ResourceLimits{
+			CPUMillis:   1000,
+			MemoryBytes: 256 << 20,
+			DiskBytes:   1 << 20,
+			PIDs:        64,
+		},
+	}
+
+	createArgs := func(backend string) []string {
+		prepared := sealPreparedRunForTest(&PreparedRun{
+			Plan:              plan,
+			Backend:           backend,
+			Platform:          "linux/amd64",
+			RunID:             "test1234",
+			SourceSnapshotDir: t.TempDir(),
+			WorkspaceDir:      t.TempDir(),
+			OutputsDir:        t.TempDir(),
+		})
+		return runner.buildCreateArgs(prepared, "repopass-test1234")
+	}
+
+	dockerArgs := createArgs("docker")
+	if !containsAdjacent(dockerArgs, "--memory", "268435456") ||
+		!containsAdjacent(dockerArgs, "--memory-swap", "268435456") {
+		t.Fatalf("Docker create lost exact no-swap controls: %v", dockerArgs)
+	}
+	if containsArgument(dockerArgs, "--cgroup-conf") ||
+		containsArgument(dockerArgs, "memory.swap.max=0") ||
+		containsArgument(dockerArgs, "--read-only-tmpfs=false") {
+		t.Fatalf("Docker create contains Podman-only cgroup control: %v", dockerArgs)
+	}
+
+	podmanArgs := createArgs("podman")
+	if !containsAdjacent(podmanArgs, "--memory", "268435456") ||
+		!containsAdjacent(podmanArgs, "--cgroup-conf", "memory.swap.max=0") {
+		t.Fatalf("Podman create lacks exact cgroup-v2 no-swap controls: %v", podmanArgs)
+	}
+	if containsArgument(podmanArgs, "--memory-swap") {
+		t.Fatalf("Podman create contains incompatible Docker memory-swap flag: %v", podmanArgs)
+	}
+	if !containsArgument(podmanArgs, "--read-only-tmpfs=false") {
+		t.Fatalf("Podman create permits implicit writable system tmpfs mounts: %v", podmanArgs)
+	}
+}
+
 func TestExecuteQuiescesBackgroundMutatorRepairsAndStreamsOutputs(t *testing.T) {
 	sourceRoot := t.TempDir()
 	runRoot := t.TempDir()

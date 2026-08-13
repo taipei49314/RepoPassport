@@ -2540,6 +2540,7 @@ func (r *Runner) buildCreateArgs(
 	containerName string,
 ) []string {
 	resources := prepared.executionPlan.Resources
+	memoryBytes := strconv.FormatInt(resources.MemoryBytes, 10)
 	executable, _ := runtimeExecutable(prepared.executionPlan.RuntimeAdapter)
 	idleArgs := idleRuntimeArgs(prepared.executionPlan.RuntimeAdapter)
 	args := []string{
@@ -2558,8 +2559,18 @@ func (r *Runner) buildCreateArgs(
 		"--cap-add", "KILL",
 		"--security-opt", "no-new-privileges=true",
 		"--pids-limit", strconv.Itoa(resources.PIDs),
-		"--memory", strconv.FormatInt(resources.MemoryBytes, 10),
-		"--memory-swap", strconv.FormatInt(resources.MemoryBytes, 10),
+		"--memory", memoryBytes,
+	}
+	if prepared.Backend == "podman" {
+		args = append(
+			args,
+			"--cgroup-conf", "memory.swap.max=0",
+			"--read-only-tmpfs=false",
+		)
+	} else {
+		args = append(args, "--memory-swap", memoryBytes)
+	}
+	args = append(args,
 		"--cpus", cpuFlag(resources.CPUMillis),
 		"--read-only",
 		"--workdir", trustedHelperWorkdir,
@@ -2577,7 +2588,7 @@ func (r *Runner) buildCreateArgs(
 		),
 		"--mount", bindMount(prepared.Backend, prepared.SourceSnapshotDir, containerSource, true),
 		"--mount", bindMount(prepared.Backend, prepared.WorkspaceDir, containerWorkspace, true),
-	}
+	)
 	for _, input := range prepared.Inputs {
 		args = append(
 			args,

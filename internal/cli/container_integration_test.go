@@ -137,6 +137,291 @@ func TestContainerAlpha25UndeclaredPortFixtureContract(t *testing.T) {
 	}
 }
 
+func TestContainerHealthyJourneys(t *testing.T) {
+	backend := requiredContainerIntegrationBackend(t)
+	runner, err := execution.Doctor(context.Background(), backend)
+	if err != nil {
+		t.Fatalf("%s doctor failed: %v", backend, err)
+	}
+	if !runner.Available || runner.ControllerOS != "linux" ||
+		runner.WorkloadOS != "linux" || strings.TrimSpace(runner.EngineVersion) == "" {
+		t.Fatalf("integration runner is not an available Linux engine: %#v", runner)
+	}
+
+	tests := []struct {
+		name           string
+		fixture        string
+		adapter        string
+		imageReference string
+		imageDigest    string
+		wantAssertions int
+		wantRepeats    int
+		httpProfile    bool
+	}{
+		{
+			name:           "node cli",
+			fixture:        filepath.Join("healthy", "healthy-node-cli"),
+			adapter:        "node",
+			imageReference: runtimepolicy.NodeReference,
+			imageDigest:    runtimepolicy.NodeDigest,
+			wantAssertions: 12,
+			wantRepeats:    3,
+		},
+		{
+			name:           "python cli",
+			fixture:        filepath.Join("healthy", "healthy-python-cli"),
+			adapter:        "python",
+			imageReference: runtimepolicy.PythonReference,
+			imageDigest:    runtimepolicy.PythonDigest,
+			wantAssertions: 6,
+			wantRepeats:    2,
+		},
+		{
+			name:           "node http",
+			fixture:        filepath.Join("healthy", "healthy-node-http"),
+			adapter:        "node",
+			imageReference: runtimepolicy.NodeReference,
+			imageDigest:    runtimepolicy.NodeDigest,
+			wantAssertions: 21,
+			wantRepeats:    3,
+			httpProfile:    true,
+		},
+		{
+			name:           "python http",
+			fixture:        filepath.Join("healthy", "healthy-python-http"),
+			adapter:        "python",
+			imageReference: runtimepolicy.PythonReference,
+			imageDigest:    runtimepolicy.PythonDigest,
+			wantAssertions: 15,
+			wantRepeats:    3,
+			httpProfile:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dataRoot := t.TempDir()
+			manifestPath, err := filepath.Abs(filepath.Join(
+				"..", "..", "testdata", "fixtures", test.fixture, "repo-passport.yml",
+			))
+			if err != nil {
+				t.Fatalf("resolve fixture manifest: %v", err)
+			}
+			resolvedPlan, err := resolveContainerHealthyJourneyPlan(
+				context.Background(),
+				manifestPath,
+			)
+			if err != nil {
+				t.Fatalf("resolve fixture plan: %v", err)
+			}
+			if resolvedPlan.RuntimeAdapter != test.adapter ||
+				resolvedPlan.BaseImageReference != test.imageReference ||
+				resolvedPlan.BaseImageDigest != test.imageDigest {
+				t.Fatalf("resolved runtime tuple = %#v", resolvedPlan)
+			}
+			if !containsExactString(
+				resolvedPlan.RequiredRunnerFeatures,
+				"platform:linux/amd64",
+			) {
+				t.Fatalf(
+					"resolved runner features omit exact linux/amd64 platform: %#v",
+					resolvedPlan.RequiredRunnerFeatures,
+				)
+			}
+
+			var stdout, stderr bytes.Buffer
+			app := App{
+				Deps: Dependencies{
+					ProbeAll: func(context.Context) ([]domain.RunnerFeatures, error) {
+						return []domain.RunnerFeatures{runner}, nil
+					},
+					Execute: containerIntegrationExecute,
+				},
+				Stdin:  strings.NewReader(""),
+				Stdout: &stdout,
+				Stderr: &stderr,
+			}
+			exitCode := app.Run(context.Background(), []string{
+				"--json",
+				"--data-dir", dataRoot,
+				"verify",
+				"--runner", backend,
+				"--manifest", manifestPath,
+				"--scenario", "quickstart",
+			})
+			if exitCode != 0 {
+				t.Fatalf(
+					"verify exit code = %d; stdout: %s; stderr: %s",
+					exitCode,
+					stdout.String(),
+					stderr.String(),
+				)
+			}
+
+			response := decodeEnvelope(t, stdout.Bytes())
+			var data verifyEnvelopeData
+			decodeJSON(t, response.Data, &data)
+			result := data.Verification
+			if result.Plan.PlanDigest != resolvedPlan.PlanDigest ||
+				result.Plan.Scenario != resolvedPlan.Scenario ||
+				result.Plan.Environment != resolvedPlan.Environment ||
+				result.Plan.ResolvedPlanSchemaVersion != resolvedPlan.SchemaVersion ||
+				result.Plan.PolicyBundleDigest != resolvedPlan.PolicyBundleDigest ||
+				result.Plan.RepeatCount != resolvedPlan.RepeatCount ||
+				result.Plan.SuccessThreshold != resolvedPlan.SuccessThreshold ||
+				result.Subject != resolvedPlan.Source {
+				t.Fatalf(
+					"executed plan drifted from the independently resolved tuple: got %#v want %#v",
+					result.Plan,
+					resolvedPlan,
+				)
+			}
+			if result.Runner.Backend != backend ||
+				result.Runner.WorkloadOS != "linux" {
+				t.Fatalf("executed runner tuple = %#v", result.Runner)
+			}
+			if result.Results.Functional != domain.FunctionalPass ||
+				result.Results.Reproducibility != domain.ReproducibilityStable ||
+				result.Results.Cleanup != domain.CleanupAllowedResidue ||
+				result.Results.Capability != domain.CapabilityIncomplete ||
+				result.Results.Overall != domain.OverallInconclusive {
+				ciProjection, projectionErr := json.Marshal(
+					healthyJourneyCIResultForLog(result),
+				)
+				if projectionErr != nil {
+					t.Fatal("marshal healthy journey CI projection")
+				}
+				t.Fatalf(
+					"healthy %s/%s verdicts = %#v; ci=%s; want pass/stable/allowed-residue/incomplete/inconclusive",
+					backend,
+					test.name,
+					result.Results,
+					ciProjection,
+				)
+			}
+			if result.Repeats.Requested != test.wantRepeats ||
+				result.Repeats.Completed != test.wantRepeats ||
+				result.Repeats.Matching != test.wantRepeats {
+				t.Fatalf(
+					"healthy repeat receipt = %#v, want exact %d/%d/%d",
+					result.Repeats,
+					test.wantRepeats,
+					test.wantRepeats,
+					test.wantRepeats,
+				)
+			}
+			if len(result.Assertions) != test.wantAssertions {
+				t.Fatalf("assertions = %d, want %d", len(result.Assertions), test.wantAssertions)
+			}
+			for _, assertion := range result.Assertions {
+				if assertion.Status != "passed" {
+					t.Fatalf("assertion %q status = %q, want passed", assertion.ID, assertion.Status)
+				}
+			}
+			assertFilesystemRetainedStateObservations(t, result, "")
+			if test.httpProfile {
+				wantPortCoverage := "best-effort"
+				if backend == "podman" {
+					wantPortCoverage = "unavailable"
+				}
+				if result.Runner.PortObservation != wantPortCoverage {
+					t.Fatalf(
+						"%s HTTP port coverage = %q, want honest backend-specific %q",
+						backend,
+						result.Runner.PortObservation,
+						wantPortCoverage,
+					)
+				}
+			}
+
+			annotation, err := json.Marshal(map[string]any{
+				"backend":         backend,
+				"capability":      result.Results.Capability,
+				"cleanup":         result.Results.Cleanup,
+				"fixture":         filepath.Base(test.fixture),
+				"functional":      result.Results.Functional,
+				"imageDigest":     resolvedPlan.BaseImageDigest,
+				"imageReference":  resolvedPlan.BaseImageReference,
+				"kind":            "container-healthy-journey-result-annotation",
+				"overall":         result.Results.Overall,
+				"planDigest":      result.Plan.PlanDigest,
+				"platform":        "linux/amd64",
+				"reproducibility": result.Results.Reproducibility,
+				"trustBoundary":   "non-versioned-ci-check-not-trusted-evidence",
+			})
+			if err != nil {
+				t.Fatalf("marshal healthy journey annotation: %v", err)
+			}
+			t.Logf("REPOPASS_M1_JOURNEY_RESULT %s", annotation)
+
+			stored, err := (storage.RunStore{Root: filepath.Join(dataRoot, "runs")}).Read(result.RunID)
+			if err != nil {
+				t.Fatalf("read authoritative result: %v", err)
+			}
+			if stored.VerificationID != result.VerificationID ||
+				stored.Digests.Verification != result.Digests.Verification {
+				t.Fatal("stored artifact differs from the controller result")
+			}
+			assertContainersRemoved(t, backend, result.Observations)
+		})
+	}
+}
+
+type healthyJourneyCIError struct {
+	Code  domain.ErrorCode `json:"code"`
+	Phase domain.Phase     `json:"phase,omitempty"`
+}
+
+type healthyJourneyCIRunnerCoverage struct {
+	Backend                    string `json:"backend"`
+	Available                  bool   `json:"available"`
+	NetworkDeny                bool   `json:"networkDeny"`
+	NetworkAttemptObservation  string `json:"networkAttemptObservation"`
+	ProcessExecObservation     string `json:"processExecObservation"`
+	FilesystemWriteObservation string `json:"filesystemWriteObservation"`
+	FilesystemReadObservation  string `json:"filesystemReadObservation"`
+	PortObservation            string `json:"portObservation"`
+	ResourceUsage              string `json:"resourceUsage"`
+	ResourceLimitEnforcement   bool   `json:"resourceLimitEnforcement"`
+}
+
+type healthyJourneyCIResult struct {
+	Errors         []healthyJourneyCIError        `json:"errors"`
+	Repeats        domain.RepeatSummary           `json:"repeats"`
+	RunnerCoverage healthyJourneyCIRunnerCoverage `json:"runnerCoverage"`
+}
+
+func healthyJourneyCIResultForLog(
+	result domain.VerificationResult,
+) healthyJourneyCIResult {
+	errorsForLog := make([]healthyJourneyCIError, 0, len(result.Errors))
+	for _, finding := range result.Errors {
+		if finding == nil {
+			continue
+		}
+		errorsForLog = append(errorsForLog, healthyJourneyCIError{
+			Code:  finding.Code,
+			Phase: finding.Phase,
+		})
+	}
+	return healthyJourneyCIResult{
+		Errors:  errorsForLog,
+		Repeats: result.Repeats,
+		RunnerCoverage: healthyJourneyCIRunnerCoverage{
+			Backend:                    result.Runner.Backend,
+			Available:                  result.Runner.Available,
+			NetworkDeny:                result.Runner.NetworkDeny,
+			NetworkAttemptObservation:  result.Runner.NetworkAttemptObservation,
+			ProcessExecObservation:     result.Runner.ProcessExecObservation,
+			FilesystemWriteObservation: result.Runner.FilesystemWriteObservation,
+			FilesystemReadObservation:  result.Runner.FilesystemReadObservation,
+			PortObservation:            result.Runner.PortObservation,
+			ResourceUsage:              result.Runner.ResourceUsage,
+			ResourceLimitEnforcement:   result.Runner.ResourceLimitEnforcement,
+		},
+	}
+}
+
 func TestContainerCLIJourneys(t *testing.T) {
 	backend := strings.ToLower(strings.TrimSpace(os.Getenv("REPOPASS_INTEGRATION_BACKEND")))
 	if backend == "" {
@@ -3043,6 +3328,23 @@ func integrationBackend(t *testing.T) string {
 	))
 	if backend == "" {
 		t.Skip("set REPOPASS_INTEGRATION_BACKEND=docker or podman to run live container tests")
+	}
+	if backend != "docker" && backend != "podman" {
+		t.Fatalf(
+			"REPOPASS_INTEGRATION_BACKEND = %q, want docker or podman",
+			backend,
+		)
+	}
+	return backend
+}
+
+func requiredContainerIntegrationBackend(t *testing.T) string {
+	t.Helper()
+	backend := strings.ToLower(strings.TrimSpace(
+		os.Getenv("REPOPASS_INTEGRATION_BACKEND"),
+	))
+	if backend == "" {
+		t.Fatal("required healthy journey gate must set REPOPASS_INTEGRATION_BACKEND=docker or podman")
 	}
 	if backend != "docker" && backend != "podman" {
 		t.Fatalf(

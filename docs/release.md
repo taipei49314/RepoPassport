@@ -35,6 +35,22 @@ the complete check set is rerun on the exact merged default-branch SHA with no
 required skip. These non-versioned CI checks are not a release receipt, signer
 identity, trusted time, provenance, SBOM, or stable-release authorization.
 
+## Required healthy container-journey check
+
+The ordinary CI workflow requires independent Docker and Podman jobs on an
+explicit `ubuntu-24.04` Linux `amd64` runner label. Each job binds its checkout
+SHA and tree, requires a clean worktree, records the actual rolling runner and
+engine tuple, pulls and inspects the exact approved Node and Python image
+digests, and runs only `TestContainerHealthyJourneys`. Missing backends,
+backend fallback, required skips, and soft-fail results are failures.
+
+A green matrix establishes only the current-source healthy CLI/HTTP functional,
+reproducibility, and cleanup assertions for the recorded tuple. It is a
+non-versioned CI annotation, not an artifact qualification, attestation,
+fixed-VM receipt, or promotion authorization. Capability remains
+`INCOMPLETE`, overall remains `INCONCLUSIVE`, and M1/M2 and stable release
+qualification remain incomplete.
+
 ## Alpha.33 offline trust-policy authority-transition-chain release contract
 
 The full CLI adds `assemble-offline-trust-policy-authority-transition-chain`
