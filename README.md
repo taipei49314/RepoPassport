@@ -24,6 +24,13 @@ scenario — with evidence that a workload cannot forge from inside the sandbox.
 Functional success never overrides a capability violation. Missing observation
 coverage never becomes a pass.
 
+The complete roadmap scope is frozen in the canonical
+[`acceptance-registry.json`](acceptance-registry.json) as exactly 37 required
+rows. CI emits a current-source, producer-owned evaluation of that registry;
+an honest `INCOMPLETE` evaluation is expected while later milestones and
+external qualification remain unfinished. It is not a release approval or a
+substitute for the independent `RP-Q-*` gates.
+
 > **Status:** working `v1alpha1` vertical slice (`v0.1.0-alpha`).  
 > Supported path is intentionally narrow: local source snapshots, static
 > Node/Python discovery, deterministic plans, dependency-free CLI journeys, and

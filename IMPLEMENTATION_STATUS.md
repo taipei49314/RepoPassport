@@ -1,6 +1,6 @@
 # Implementation status
 
-Status date: 2026-08-11
+Status date: 2026-08-13
 
 RepoPassport `v0.1.0-alpha.33` is the current `v1alpha1` vertical slice. This
 source document does not claim completed Alpha.33 race, local/repro, fixed-VM,
@@ -26,10 +26,13 @@ Source conformance and release qualification fail closed on legacy/case-variant
 identity, workspace replacement, wrong main package, unreadable build
 information, revision mismatch, dirty source, missing required artifacts, and
 portable-kit substitution. PR checks establish only implementation status.
-`RP-M0-MODULE` remains incomplete until the full Linux/Windows source,
-external-consumer, release-binary, kit, and exact merged default-branch checks
-pass with no required skip. This module identity is not repository-owner or
-signer authentication, trusted time, provenance, or overall verification.
+The scoped `RP-M0-MODULE` row is now `PASS`: exact merged main first-attempt
+Linux and Windows checks cover the source, external consumer, release binaries,
+portable kits, and a second clean-source byte-for-byte release rebuild with no
+required skip. The acceptance registry re-derives this row for each current CI
+subject from the required Go and Windows checks. This does not close M0 and is
+not repository-owner or signer authentication, trusted time, provenance, or
+overall verification.
 
 ## Unreleased current-source qualification controller
 
@@ -75,9 +78,33 @@ This is a non-versioned current-source CI check, not a release receipt or a
 fixed-VM qualification. Podman continues to report the Docker-only engine
 diff, activity-notification, and peer-port observers as unavailable. Healthy
 results therefore remain capability `INCOMPLETE` and overall `INCONCLUSIVE`.
-The matrix can advance only the `RP-M1-JOURNEY` functional/reproducibility/
-cleanup row after a first-attempt exact merged-SHA run; it does not complete
-M1, any M2 observer row, external trust, or stable release qualification.
+The scoped `RP-M1-JOURNEY` functional/reproducibility/cleanup row is now
+`PASS`: an exact merged-main first-attempt run completed all four named
+Docker and Podman journeys with no required skip or labeled residue. The
+acceptance registry re-derives this row for each current CI subject from the
+exact backend matrix. It does not complete M1, any M2 observer row, external
+trust, or stable release qualification.
+
+## Unreleased machine-verifiable acceptance registry
+
+RFC-0003 freezes the full roadmap as exactly 37 ordered, required `RP-*` rows
+in canonical `acceptance-registry.json`. The strict parser and public schemas
+reject missing, duplicate, unknown, reordered, weakened, or noncanonical
+scope. Ordinary CI derives a separate canonical evaluation bound to its exact
+commit, Git tree, workflow run, attempt, and required-check results, then
+independently replays its digest and subject before retaining it outside the
+checkout.
+
+The tracked registry contains no self-referential commit or tree. The runtime
+evaluation is producer-owned CI transport with `formalClaim=false`; it is not
+external authority, trusted time, release approval, or append-only history.
+Ordinary CI validates an honest incomplete state instead of requiring false
+completion. `RP-M0-MODULE` and `RP-M1-JOURNEY` are current-check-derived,
+`RP-M0-QUAL` remains `BLOCKED`, and unfinished rows remain `NOT_RUN`.
+`RP-REGISTRY` itself remains `NOT_RUN` until every required row has current
+evidence. The separate completion operation cannot pass or set
+`stableEligible=true` unless all 37 exact rows, the four external
+qualification rows, and the stable-schema row are `PASS`.
 
 ## Alpha.33 bounded offline policy-authority transition chain
 
