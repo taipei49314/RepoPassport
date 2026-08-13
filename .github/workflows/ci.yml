@@ -385,3 +385,272 @@ jobs:
             done <<< "$residue"
             exit 1
           fi
+
+  acceptance-registry:
+    name: Machine-verifiable acceptance registry
+    needs:
+      - go
+      - schema-json
+      - windows-go
+      - container-integration
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out exact source
+        id: checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Set up exact Go
+        id: setup-go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Bind acceptance to the exact clean source tree
+        id: source-binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse --verify HEAD)"
+          tree_sha="$(git rev-parse --verify 'HEAD^{tree}')"
+          status="$(git status --porcelain=v1 --untracked-files=all --ignore-submodules=none)"
+          [[ "$head_sha" == "$GITHUB_SHA" ]]
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$tree_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ -z "$status" ]]
+          printf 'tree-sha=%s\n' "$tree_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Derive the bounded producer-owned evaluation
+        id: evaluate
+        env:
+          ACCEPTANCE_OUTPUT: ${{ runner.temp }}/acceptance-evaluation-v1.json
+          CONTAINER_RESULT: ${{ needs.container-integration.result }}
+          GO_RESULT: ${{ needs.go.result }}
+          SCHEMA_JSON_RESULT: ${{ needs.schema-json.result }}
+          WINDOWS_GO_RESULT: ${{ needs.windows-go.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod download
+          go mod verify
+          tree_sha="$(git rev-parse --verify 'HEAD^{tree}')"
+          go run ./cmd/repopass-acceptance-registry evaluate \
+            --registry acceptance-registry.json \
+            --repository github.com/taipei49314/RepoPassport \
+            --revision "$GITHUB_SHA" \
+            --tree-sha "$tree_sha" \
+            --event "$GITHUB_EVENT_NAME" \
+            --ref "$GITHUB_REF" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --go-result "$GO_RESULT" \
+            --schema-json-result "$SCHEMA_JSON_RESULT" \
+            --windows-go-result "$WINDOWS_GO_RESULT" \
+            --container-result "$CONTAINER_RESULT" \
+            --output "$ACCEPTANCE_OUTPUT"
+
+      - name: Independently replay the evaluation bytes
+        id: verify-evaluation
+        env:
+          ACCEPTANCE_OUTPUT: ${{ runner.temp }}/acceptance-evaluation-v1.json
+          CONTAINER_RESULT: ${{ needs.container-integration.result }}
+          EXPECTED_TREE_SHA: ${{ steps.source-binding.outputs.tree-sha }}
+          GO_RESULT: ${{ needs.go.result }}
+          SCHEMA_JSON_RESULT: ${{ needs.schema-json.result }}
+          WINDOWS_GO_RESULT: ${{ needs.windows-go.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import stat
+
+          def reject_duplicates(pairs):
+              value = {}
+              for key, item in pairs:
+                  if key in value:
+                      raise ValueError('duplicate JSON object name')
+                  value[key] = item
+              return value
+
+          registry_path = pathlib.Path('acceptance-registry.json')
+          evaluation_path = pathlib.Path(os.environ['ACCEPTANCE_OUTPUT'])
+
+          def read_bounded_regular(path, maximum):
+              metadata = path.lstat()
+              if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or
+                      metadata.st_size < 1 or metadata.st_size > maximum):
+                  raise SystemExit('acceptance input metadata is invalid')
+              raw = path.read_bytes()
+              after = path.lstat()
+              if (metadata.st_dev, metadata.st_ino, metadata.st_size) != (
+                      after.st_dev, after.st_ino, after.st_size
+              ) or len(raw) != metadata.st_size:
+                  raise SystemExit('acceptance input changed')
+              return raw
+
+          registry_raw = read_bounded_regular(registry_path, 256 * 1024)
+          evaluation_raw = read_bounded_regular(evaluation_path, 1024 * 1024)
+          registry = json.loads(registry_raw, object_pairs_hook=reject_duplicates)
+          document = json.loads(evaluation_raw, object_pairs_hook=reject_duplicates)
+          canonical_registry = json.dumps(registry, ensure_ascii=False, separators=(',', ':'), sort_keys=True).encode()
+          canonical_evaluation = json.dumps(document, ensure_ascii=False, separators=(',', ':'), sort_keys=True).encode()
+          if canonical_registry != registry_raw or canonical_evaluation != evaluation_raw:
+              raise SystemExit('acceptance JSON is not canonical')
+          expected_ids = [
+              'RP-B00', 'RP-B01', 'RP-B02', 'RP-B03', 'RP-B04',
+              'RP-M0-CORPUS', 'RP-M0-MODULE', 'RP-M0-QUAL', 'RP-M0-SPEC',
+              'RP-M1-JOURNEY',
+              'RP-M2-COVERAGE', 'RP-M2-MATRIX', 'RP-M2-RESIDUE', 'RP-M2-VERDICT',
+              'RP-M3-IDENTITY', 'RP-M3-INTEGRITY', 'RP-M3-PORTABLE', 'RP-M3-PRIVACY',
+              'RP-M4-CHECK', 'RP-M4-FORK', 'RP-M4-REPRO',
+              'RP-M5-JOURNEY', 'RP-M5-SECURITY', 'RP-M5-TRUTH',
+              'RP-M6-AUTHORITY', 'RP-M6-CLEANUP', 'RP-M6-ISOLATION', 'RP-M6-LIVE',
+              'RP-M7-CAPABILITY', 'RP-M7-CONFORMANCE', 'RP-M7-SUPPLYCHAIN',
+              'RP-Q-PROTOCOL', 'RP-Q-REPLAY', 'RP-Q-SUBJECT', 'RP-Q-VERDICT',
+              'RP-REGISTRY', 'RP-R-STABLE-SCHEMA',
+          ]
+          if (set(registry) != {'artifactType', 'product', 'rows', 'schemaVersion'} or
+                  registry['artifactType'] != 'repopass-acceptance-registry' or
+                  registry['product'] != 'repopass' or registry['schemaVersion'] != '1' or
+                  [row.get('id') for row in registry['rows']] != expected_ids):
+              raise SystemExit('registry identity or exact row set differs')
+          for row in registry['rows']:
+              if set(row) != {'appliesTo', 'criterion', 'evaluation', 'id', 'milestone', 'required'} or row['required'] is not True:
+                  raise SystemExit('registry row shape differs')
+              if row['id'] == 'RP-B00':
+                  expected_policy = {'kind': 'required-checks', 'requiredChecks': ['ci/container-matrix', 'ci/go', 'ci/schema-json', 'ci/windows-go']}
+              elif row['id'] in {'RP-B04', 'RP-M1-JOURNEY'}:
+                  expected_policy = {'kind': 'required-checks', 'requiredChecks': ['ci/container-matrix']}
+              elif row['id'] == 'RP-M0-MODULE':
+                  expected_policy = {'kind': 'required-checks', 'requiredChecks': ['ci/go', 'ci/windows-go']}
+              elif row['id'] == 'RP-M0-QUAL':
+                  expected_policy = {'kind': 'blocked', 'reasonCode': 'SOURCE_QUALIFICATION_PREREQUISITES_UNAVAILABLE'}
+              else:
+                  expected_policy = {'kind': 'not-run', 'reasonCode': 'ROADMAP_WORK_NOT_SCHEDULED'}
+              if row['evaluation'] != expected_policy:
+                  raise SystemExit('registry evaluation policy differs')
+          if set(document) != {
+              'artifactType', 'evaluationDigest', 'formalClaim', 'overallStatus',
+              'registryDigest', 'rows', 'run', 'schemaVersion', 'stableEligible',
+              'subject', 'trustBoundary'
+          }:
+              raise SystemExit('evaluation keys differ')
+          registry_digest = 'sha256:' + hashlib.sha256(registry_raw).hexdigest()
+          if document['registryDigest'] != registry_digest:
+              raise SystemExit('registryDigest differs')
+          digest_input = dict(document)
+          actual_digest = digest_input.pop('evaluationDigest')
+          canonical_input = json.dumps(digest_input, ensure_ascii=False, separators=(',', ':'), sort_keys=True).encode()
+          expected_digest = 'sha256:' + hashlib.sha256(b'repopass.acceptance-evaluation.v1\x00' + canonical_input).hexdigest()
+          if actual_digest != expected_digest:
+              raise SystemExit('evaluationDigest differs')
+          if document['artifactType'] != 'repopass-acceptance-evaluation' or document['schemaVersion'] != '1':
+              raise SystemExit('evaluation identity differs')
+          if document['formalClaim'] is not False or document['trustBoundary'] != 'producer-owned-ci':
+              raise SystemExit('evaluation trust boundary differs')
+          current_results = {
+              os.environ['CONTAINER_RESULT'], os.environ['GO_RESULT'],
+              os.environ['SCHEMA_JSON_RESULT'], os.environ['WINDOWS_GO_RESULT'],
+          }
+          expected_overall = 'FAIL' if current_results & {'failure', 'cancelled'} else 'INCOMPLETE'
+          if document['stableEligible'] is not False or document['overallStatus'] != expected_overall:
+              raise SystemExit('initial evaluation overstates roadmap completion')
+          if document['subject'] != {
+              'repository': 'github.com/taipei49314/RepoPassport',
+              'revision': os.environ['GITHUB_SHA'],
+              'treeSHA': os.environ['EXPECTED_TREE_SHA'],
+          }:
+              raise SystemExit('evaluation subject differs')
+          if document['run'] != {
+              'attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'event': os.environ['GITHUB_EVENT_NAME'],
+              'id': int(os.environ['GITHUB_RUN_ID']),
+              'ref': os.environ['GITHUB_REF'],
+              'workflowPath': '.github/workflows/ci.yml',
+          }:
+              raise SystemExit('evaluation run differs')
+          if len(document['rows']) != 37 or [row['id'] for row in document['rows']] != expected_ids:
+              raise SystemExit('evaluation row scope differs')
+          statuses = {row['id']: row['status'] for row in document['rows']}
+          if statuses['RP-M0-QUAL'] != 'BLOCKED':
+              raise SystemExit('RP-M0-QUAL is not blocked')
+          required_results = {
+              'ci/container-matrix': os.environ['CONTAINER_RESULT'],
+              'ci/go': os.environ['GO_RESULT'],
+              'ci/schema-json': os.environ['SCHEMA_JSON_RESULT'],
+              'ci/windows-go': os.environ['WINDOWS_GO_RESULT'],
+          }
+          for row, policy in zip(document['rows'], (item['evaluation'] for item in registry['rows'])):
+              if set(row) != {'evidence', 'id', 'reasonCode', 'status'}:
+                  raise SystemExit('row evaluation keys differ')
+              if policy['kind'] == 'blocked':
+                  expected = ([], policy['reasonCode'], 'BLOCKED')
+              elif policy['kind'] == 'not-run':
+                  expected = ([], policy['reasonCode'], 'NOT_RUN')
+              else:
+                  expected_evidence = [
+                      {'checkId': check_id, 'result': required_results[check_id]}
+                      for check_id in policy['requiredChecks']
+                  ]
+                  results = [item['result'] for item in expected_evidence]
+                  if row['id'] == 'RP-B00' and not (
+                      os.environ['GITHUB_EVENT_NAME'] == 'push' and
+                      os.environ['GITHUB_REF'] == 'refs/heads/main'
+                  ):
+                      expected = (expected_evidence, 'NOT_DEFAULT_BRANCH', 'NOT_RUN')
+                  elif 'failure' in results:
+                      expected = (expected_evidence, 'REQUIRED_CHECK_FAILED', 'FAIL')
+                  elif 'cancelled' in results:
+                      expected = (expected_evidence, 'REQUIRED_CHECK_CANCELLED', 'FAIL')
+                  elif 'skipped' in results:
+                      expected = (expected_evidence, 'REQUIRED_CHECK_MISSING_OR_SKIPPED', 'NOT_RUN')
+                  else:
+                      expected = (expected_evidence, 'CURRENT_REQUIRED_CHECKS_PASSED', 'PASS')
+              if (row['evidence'], row['reasonCode'], row['status']) != expected:
+                  raise SystemExit('row evaluation semantics differ')
+          expected_rollup = 'FAIL' if any(row['status'] == 'FAIL' for row in document['rows']) else 'INCOMPLETE'
+          if document['overallStatus'] != expected_rollup:
+              raise SystemExit('evaluation roll-up differs')
+          PY
+          head_sha="$(git rev-parse --verify HEAD)"
+          tree_sha="$(git rev-parse --verify 'HEAD^{tree}')"
+          status="$(git status --porcelain=v1 --untracked-files=all --ignore-submodules=none)"
+          [[ "$head_sha" == "$GITHUB_SHA" ]]
+          [[ "$tree_sha" == "$EXPECTED_TREE_SHA" ]]
+          [[ -z "$status" ]]
+
+      - name: Retain the non-release evaluation transport
+        id: upload-evaluation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repopass-acceptance-evaluation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/acceptance-evaluation-v1.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Fail closed when any upstream required check was non-success
+        id: fail-on-upstream
+        if: ${{ always() }}
+        env:
+          CONTAINER_RESULT: ${{ needs.container-integration.result }}
+          GO_RESULT: ${{ needs.go.result }}
+          SCHEMA_JSON_RESULT: ${{ needs.schema-json.result }}
+          WINDOWS_GO_RESULT: ${{ needs.windows-go.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GO_RESULT" != 'success' || \
+                "$SCHEMA_JSON_RESULT" != 'success' || \
+                "$WINDOWS_GO_RESULT" != 'success' || \
+                "$CONTAINER_RESULT" != 'success' ]]; then
+            exit 1
+          fi

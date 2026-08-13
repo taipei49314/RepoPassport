@@ -67,6 +67,8 @@ func TestAcceptanceRegistryRequiredCIContract(t *testing.T) {
 		}
 	}
 	for _, fragment := range []string{
+		"go mod download",
+		"go mod verify",
 		"go run ./cmd/repopass-acceptance-registry evaluate",
 		"--registry acceptance-registry.json",
 		"--repository github.com/taipei49314/RepoPassport",
@@ -91,7 +93,17 @@ func TestAcceptanceRegistryRequiredCIContract(t *testing.T) {
 		t.Fatal("acceptance source binding does not verify the exact clean tree")
 	}
 	verify := steps["verify-evaluation"]
-	for _, fragment := range []string{"python3 -", "object_pairs_hook", "evaluationDigest", "registryDigest", "producer-owned-ci", "stableEligible", "len(document['rows']) != 37"} {
+	for _, fragment := range []string{
+		"python3 -", "object_pairs_hook", "read_bounded_regular", "metadata.st_nlink != 1",
+		"256 * 1024", "1024 * 1024", "evaluationDigest", "registryDigest",
+		"producer-owned-ci", "stableEligible", "expected_ids", "'RP-R-STABLE-SCHEMA'",
+		"registry evaluation policy differs", "len(document['rows']) != 37",
+		`head_sha="$(git rev-parse --verify HEAD)"`,
+		`tree_sha="$(git rev-parse --verify 'HEAD^{tree}')"`,
+		`status="$(git status --porcelain=v1 --untracked-files=all --ignore-submodules=none)"`,
+		`[[ "$head_sha" == "$GITHUB_SHA" ]]`, `[[ "$tree_sha" == "$EXPECTED_TREE_SHA" ]]`,
+		`[[ -z "$status" ]]`,
+	} {
 		if !strings.Contains(verify.Run, fragment) {
 			t.Errorf("independent evaluation verifier is missing %q", fragment)
 		}
