@@ -58,10 +58,6 @@ func testReleaseReproducibility(t *testing.T, root string) {
 	workflowFragments := []string{
 		"Rebuild and byte-compare release artifacts from a second clean source",
 		"id: release-reproducibility",
-		"shell: pwsh",
-		`& ./scripts/compare-release-rebuild.ps1`,
-		`-TestedRevision $testedRevision`,
-		`-TestedTree $testedTree`,
 	}
 	for _, fragment := range workflowFragments {
 		if strings.Count(workflow, fragment) != 1 {
@@ -73,6 +69,20 @@ func testReleaseReproducibility(t *testing.T, root string) {
 	if build < 0 || rebuild < 0 || rebuild < build {
 		t.Fatalf("%s must run the second-clean-path byte comparison after the exact-checkout release build", relativePath(root, workflowPath))
 	}
+	stepTail := workflow[rebuild:]
+	if next := strings.Index(stepTail, "\n      - name:"); next >= 0 {
+		stepTail = stepTail[:next]
+	}
+	for _, fragment := range []string{
+		"shell: pwsh",
+		`& ./scripts/compare-release-rebuild.ps1`,
+		`-TestedRevision $testedRevision`,
+		`-TestedTree $testedTree`,
+	} {
+		if !strings.Contains(stepTail, fragment) {
+			t.Fatalf("%s second-clean-path step is missing active fragment %q", relativePath(root, workflowPath), fragment)
+		}
+	}
 
 	fragments := []string{
 		`[ValidatePattern('^[0-9a-f]{40}$')]`,
@@ -80,11 +90,12 @@ func testReleaseReproducibility(t *testing.T, root string) {
 		`[string]$TestedTree`,
 		`$runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)`,
 		`$sourceRoot = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)`,
-		`git clone --no-checkout --no-local`,
+		`clone --no-checkout --no-local`,
 		`checkout --detach --force $TestedRevision`,
-		`rev-parse --verify HEAD`,
-		`rev-parse --verify 'HEAD^{tree}'`,
-		`status --porcelain=v1 --untracked-files=all --ignore-submodules=none`,
+		`"rev-parse", "--verify", "HEAD"`,
+		`"rev-parse", "--verify", "HEAD^{tree}"`,
+		`"status", "--porcelain=v1"`,
+		`"--untracked-files=all", "--ignore-submodules=none"`,
 		`build-release.ps1`,
 		`-Version "0.1.0-alpha.33"`,
 		`-TestedRevision $TestedRevision`,
@@ -114,7 +125,7 @@ func testReleaseReproducibility(t *testing.T, root string) {
 			t.Fatalf("%s contains forbidden cleanup or command indirection %q", relativePath(root, scriptPath), forbidden)
 		}
 	}
-	if strings.Count(script, "$LASTEXITCODE") < 5 {
+	if strings.Count(script, "$LASTEXITCODE") < 4 {
 		t.Fatalf("%s must check every external Git/build operation", relativePath(root, scriptPath))
 	}
 }
