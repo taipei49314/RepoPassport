@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	linuxResourceControlLimit       = 4096
-	resourceContainerIdentityFormat = `{{printf "{\"id\":%q,\"runLabel\":%q}" .Id (index .Config.Labels "dev.repopass.run")}}`
-	nodeLinuxResourceScript         = `const fs=require("node:fs"),path=require("node:path");const emit=value=>process.stdout.write(JSON.stringify(value)+"\n"),max=BigInt(Number.MAX_SAFE_INTEGER);function decimal(value){if(!/^(0|[1-9][0-9]*)$/.test(value))throw new Error("invalid");const parsed=BigInt(value);if(parsed>max)throw new Error("large");return Number(parsed);}function file(name){return fs.readFileSync(name,"ascii").trim();}function named(name,key){const matches=file(name).split("\n").filter(line=>line.startsWith(key+" "));if(matches.length!==1)throw new Error("missing");return decimal(matches[0].slice(key.length+1));}function flat(name){return decimal(file(name));}try{const control=file("/proc/self/cgroup");if(control!=="0::/")throw new Error("private-cgroup");const root="/sys/fs/cgroup";file(path.join(root,"cgroup.controllers"));const cpuMax=file(path.join(root,"cpu.max")).split(" ");if(cpuMax.length!==2)throw new Error("cpu");const stat=fs.statfsSync("/outputs",{bigint:true}),limit=stat.blocks*stat.bsize,used=(stat.blocks-stat.bfree)*stat.bsize;if(limit<0n||used<0n||limit>max||used>max||stat.bsize<=0n||stat.bsize>max)throw new Error("statfs");emit({ok:true,cgroupVersion:2,cpuUsageUsec:named(path.join(root,"cpu.stat"),"usage_usec"),sandboxPeakMemoryBytes:flat(path.join(root,"memory.peak")),maxTasks:flat(path.join(root,"pids.peak")),pidsLimitEvents:named(path.join(root,"pids.events"),"max"),memoryOOMEvents:named(path.join(root,"memory.events"),"oom"),memoryOOMKillEvents:named(path.join(root,"memory.events"),"oom_kill"),memoryMaxBytes:flat(path.join(root,"memory.max")),memorySwapMaxBytes:flat(path.join(root,"memory.swap.max")),pidsMax:flat(path.join(root,"pids.max")),cpuQuotaMicros:decimal(cpuMax[0]),cpuPeriodMicros:decimal(cpuMax[1]),writableBytes:Number(used),writableLimitBytes:Number(limit),writableBlockSize:Number(stat.bsize)});}catch(_){emit({ok:false,error:"measurement-unavailable"});}`
-	pythonLinuxResourceScript       = `import json,os,posixpath,re
+	linuxResourceControlLimit             = 4096
+	resourceContainerIdentityFormat       = `{{printf "{\"id\":%q,\"runLabel\":%q}" .Id (index .Config.Labels "dev.repopass.run")}}`
+	podmanResourceContainerIdentityFormat = `{{.Id}}|{{index .Config.Labels "dev.repopass.run"}}`
+	nodeLinuxResourceScript               = `const fs=require("node:fs"),path=require("node:path");const emit=value=>process.stdout.write(JSON.stringify(value)+"\n"),max=BigInt(Number.MAX_SAFE_INTEGER);function decimal(value){if(!/^(0|[1-9][0-9]*)$/.test(value))throw new Error("invalid");const parsed=BigInt(value);if(parsed>max)throw new Error("large");return Number(parsed);}function file(name){return fs.readFileSync(name,"ascii").trim();}function named(name,key){const matches=file(name).split("\n").filter(line=>line.startsWith(key+" "));if(matches.length!==1)throw new Error("missing");return decimal(matches[0].slice(key.length+1));}function flat(name){return decimal(file(name));}try{const control=file("/proc/self/cgroup");if(control!=="0::/")throw new Error("private-cgroup");const root="/sys/fs/cgroup";file(path.join(root,"cgroup.controllers"));const cpuMax=file(path.join(root,"cpu.max")).split(" ");if(cpuMax.length!==2)throw new Error("cpu");const stat=fs.statfsSync("/outputs",{bigint:true}),limit=stat.blocks*stat.bsize,used=(stat.blocks-stat.bfree)*stat.bsize;if(limit<0n||used<0n||limit>max||used>max||stat.bsize<=0n||stat.bsize>max)throw new Error("statfs");emit({ok:true,cgroupVersion:2,cpuUsageUsec:named(path.join(root,"cpu.stat"),"usage_usec"),sandboxPeakMemoryBytes:flat(path.join(root,"memory.peak")),maxTasks:flat(path.join(root,"pids.peak")),pidsLimitEvents:named(path.join(root,"pids.events"),"max"),memoryOOMEvents:named(path.join(root,"memory.events"),"oom"),memoryOOMKillEvents:named(path.join(root,"memory.events"),"oom_kill"),memoryMaxBytes:flat(path.join(root,"memory.max")),memorySwapMaxBytes:flat(path.join(root,"memory.swap.max")),pidsMax:flat(path.join(root,"pids.max")),cpuQuotaMicros:decimal(cpuMax[0]),cpuPeriodMicros:decimal(cpuMax[1]),writableBytes:Number(used),writableLimitBytes:Number(limit),writableBlockSize:Number(stat.bsize)});}catch(_){emit({ok:false,error:"measurement-unavailable"});}`
+	pythonLinuxResourceScript             = `import json,os,posixpath,re
 MAX_SAFE=9007199254740991
 def emit(value):
     print(json.dumps(value,separators=(",",":")))
@@ -401,13 +402,23 @@ func (r *Runner) inspectResourceContainerIdentity(
 			"resource observer has no trusted immutable container binding",
 		)
 	}
+	identityFormat := resourceContainerIdentityFormat
+	decodeIdentity := decodeResourceContainerIdentity
+	switch prepared.Backend {
+	case "docker":
+	case "podman":
+		identityFormat = podmanResourceContainerIdentityFormat
+		decodeIdentity = decodePodmanResourceContainerIdentity
+	default:
+		return errors.New("resource observer backend is unsupported")
+	}
 	stdout := &cappedBuffer{limit: linuxResourceControlLimit}
 	stderr := &cappedBuffer{limit: linuxResourceControlLimit}
 	exitCode, runErr := r.executor.Run(
 		ctx,
 		prepared.Backend,
 		[]string{
-			"inspect", "--format", resourceContainerIdentityFormat,
+			"inspect", "--format", identityFormat,
 			containerID,
 		},
 		stdout,
@@ -417,7 +428,7 @@ func (r *Runner) inspectResourceContainerIdentity(
 		stderr.truncated || len(stderr.Bytes()) != 0 {
 		return errors.New("resource observer could not inspect the immutable container")
 	}
-	identity, err := decodeResourceContainerIdentity(stdout.Bytes())
+	identity, err := decodeIdentity(stdout.Bytes())
 	if err != nil {
 		return err
 	}
@@ -425,6 +436,36 @@ func (r *Runner) inspectResourceContainerIdentity(
 		return errors.New("resource observer container identity or run label changed")
 	}
 	return nil
+}
+
+func decodePodmanResourceContainerIdentity(
+	raw []byte,
+) (resourceContainerIdentity, error) {
+	if len(raw) == 0 || raw[len(raw)-1] != '\n' ||
+		bytes.Count(raw, []byte{'\n'}) != 1 {
+		return resourceContainerIdentity{}, errors.New(
+			"Podman container identity control is not one LF-terminated record",
+		)
+	}
+	record := raw[:len(raw)-1]
+	separator := bytes.IndexByte(record, '|')
+	if separator <= 0 || separator == len(record)-1 ||
+		bytes.IndexByte(record[separator+1:], '|') >= 0 {
+		return resourceContainerIdentity{}, errors.New(
+			"Podman container identity control has invalid fields",
+		)
+	}
+	identity := resourceContainerIdentity{
+		ID:       string(record[:separator]),
+		RunLabel: string(record[separator+1:]),
+	}
+	if !fullContainerIDPattern.MatchString(identity.ID) ||
+		!safeRunID(identity.RunLabel) {
+		return resourceContainerIdentity{}, errors.New(
+			"Podman container identity control is incomplete",
+		)
+	}
+	return identity, nil
 }
 
 func decodeResourceContainerIdentity(raw []byte) (resourceContainerIdentity, error) {
