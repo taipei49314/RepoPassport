@@ -25,6 +25,8 @@ const (
 	MaxSourceArchiveManifestV1JSONBytes                    = 16 << 20
 	MaxSourceQualificationReceiptV1JSONBytes               = 1 << 20
 	MaxSourceQualificationToolManifestV1JSONBytes          = 64 << 10
+	MaxAcceptanceRegistryV1JSONBytes                       = 256 << 10
+	MaxAcceptanceEvaluationV1JSONBytes                     = 1 << 20
 	verificationMaxDepth                                   = 128
 	verificationMaxNodes                                   = 500_000
 )
@@ -103,6 +105,12 @@ var sourceQualificationReceiptV1SchemaDocument []byte
 
 //go:embed source-qualification-tool-manifest-v1.schema.json
 var sourceQualificationToolManifestV1SchemaDocument []byte
+
+//go:embed acceptance-registry-v1.schema.json
+var acceptanceRegistryV1SchemaDocument []byte
+
+//go:embed acceptance-evaluation-v1.schema.json
+var acceptanceEvaluationV1SchemaDocument []byte
 
 var (
 	manifestSchemaOnce sync.Once
@@ -334,6 +342,20 @@ func ValidateSourceQualificationToolManifestV1JSON(raw []byte) error {
 	return validateDerivedSchemaJSON(raw, MaxSourceQualificationToolManifestV1JSONBytes, 8, 256, "source-qualification-tool-manifest-v1.schema.json")
 }
 
+// ValidateAcceptanceRegistryV1JSON validates the bounded public normative
+// acceptance catalogue shape. Exact row content and canonical bytes are
+// enforced by internal/acceptanceregistry.
+func ValidateAcceptanceRegistryV1JSON(raw []byte) error {
+	return validateDerivedSchemaJSON(raw, MaxAcceptanceRegistryV1JSONBytes, 16, 16_384, "acceptance-registry-v1.schema.json")
+}
+
+// ValidateAcceptanceEvaluationV1JSON validates the bounded producer-owned
+// runtime evaluation shape. Subject binding, exact rows, semantic roll-up, and
+// digests are enforced by internal/acceptanceregistry.
+func ValidateAcceptanceEvaluationV1JSON(raw []byte) error {
+	return validateDerivedSchemaJSON(raw, MaxAcceptanceEvaluationV1JSONBytes, 16, 16_384, "acceptance-evaluation-v1.schema.json")
+}
+
 func validateDerivedSchemaJSON(raw []byte, maxBytes, maxDepth, maxNodes int, name string) error {
 	value, err := structuredjson.Decode(raw, structuredjson.DecodeLimits{
 		MaxBytes: maxBytes, MaxDepth: maxDepth, MaxNodes: maxNodes,
@@ -387,6 +409,8 @@ func loadDerivedSchemas() error {
 			{"source-archive-manifest-v1.schema.json", sourceArchiveManifestV1SchemaDocument},
 			{"source-qualification-receipt-v1.schema.json", sourceQualificationReceiptV1SchemaDocument},
 			{"source-qualification-tool-manifest-v1.schema.json", sourceQualificationToolManifestV1SchemaDocument},
+			{"acceptance-registry-v1.schema.json", acceptanceRegistryV1SchemaDocument},
+			{"acceptance-evaluation-v1.schema.json", acceptanceEvaluationV1SchemaDocument},
 		}
 		for _, item := range documents {
 			document, err := jsonschema.UnmarshalJSON(bytes.NewReader(item.raw))
@@ -414,6 +438,8 @@ func loadDerivedSchemas() error {
 			"source-archive-manifest-v1.schema.json",
 			"source-qualification-receipt-v1.schema.json",
 			"source-qualification-tool-manifest-v1.schema.json",
+			"acceptance-registry-v1.schema.json",
+			"acceptance-evaluation-v1.schema.json",
 		} {
 			compiled, err := compiler.Compile(schemaBaseURL + name)
 			if err != nil {

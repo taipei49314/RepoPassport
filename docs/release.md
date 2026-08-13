@@ -1,5 +1,14 @@
 # Alpha release build and live gate
 
+The canonical acceptance registry and its ordinary CI evaluation are progress
+controls, not release authorization. A valid evaluation may be `INCOMPLETE`,
+has `formalClaim=false`, and remains producer-owned even when its transport
+digest and GitHub artifact are intact. Stable promotion additionally requires
+the separate completion gate to observe all 37 required rows as `PASS`,
+including every `RP-Q-*` external-qualification row and
+`RP-R-STABLE-SCHEMA`. No registry digest, self-CI run, or artifact substitutes
+for that external approval boundary.
+
 `v0.1.0-alpha.33` is the current narrow local vertical slice. This source
 document does not claim completed Alpha.33 race, local/repro, or fixed-VM live
 qualification. Alpha.32 and earlier evidence remain historical and do not

@@ -1,5 +1,27 @@
 # Known limitations
 
+## Machine-verifiable acceptance registry
+
+- The canonical 37-row registry prevents scope omission and deterministic
+  roll-up laundering, but it does not prove that a workflow, artifact store,
+  repository owner, or publisher is authentic.
+- Runtime evaluations are producer-owned CI records with
+  `formalClaim=false`. Their GitHub artifact IDs, digests, and same-workflow
+  replay provide transport integrity only; they are not external review,
+  append-only history, trusted time, or release authorization.
+- Ordinary CI intentionally accepts a structurally valid `INCOMPLETE`
+  evaluation. Stable completion is a separate fail-closed operation and
+  remains unavailable while any required row is `FAIL`, `BLOCKED`, or
+  `NOT_RUN`.
+- Initial current-check derivation is limited to `RP-B00`, `RP-B04`,
+  `RP-M0-MODULE`, and `RP-M1-JOURNEY`. `RP-M0-QUAL` remains `BLOCKED`; the
+  other unfinished rows, including `RP-REGISTRY`, remain `NOT_RUN` rather than
+  being inferred from implementation presence or historical evidence.
+- The filesystem implementation excludes a hostile same-principal or
+  administrator concurrently replacing operator-controlled runner paths. It
+  uses bounded reads and no-replace output but does not claim local
+  multi-principal isolation.
+
 RepoPassport `v0.1.0-alpha.33` is an early reference implementation with a
 deliberately narrow truthful scope. This document is part of the product
 contract.

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/acceptance-registry-v1.schema.json",
+  "title": "RepoPassport Acceptance Registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["artifactType", "product", "rows", "schemaVersion"],
+  "properties": {
+    "artifactType": {"const": "repopass-acceptance-registry"},
+    "product": {"const": "repopass"},
+    "rows": {
+      "type": "array",
+      "minItems": 37,
+      "maxItems": 37,
+      "items": {"$ref": "#/$defs/row"}
+    },
+    "schemaVersion": {"const": "1"}
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["appliesTo", "criterion", "evaluation", "id", "milestone", "required"],
+      "properties": {
+        "appliesTo": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "docker-linux-amd64",
+              "external-review",
+              "github",
+              "hosted-runner",
+              "linux-amd64",
+              "plugin",
+              "podman-linux-amd64",
+              "release",
+              "repository",
+              "ui",
+              "windows-amd64"
+            ]
+          }
+        },
+        "criterion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[ -~]+$"
+        },
+        "evaluation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "requiredChecks"],
+              "properties": {
+                "kind": {"const": "required-checks"},
+                "requiredChecks": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 4,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": ["ci/container-matrix", "ci/go", "ci/schema-json", "ci/windows-go"]
+                  }
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "reasonCode"],
+              "properties": {
+                "kind": {"enum": ["blocked", "not-run"]},
+                "reasonCode": {
+                  "enum": ["ROADMAP_WORK_NOT_SCHEDULED", "SOURCE_QUALIFICATION_PREREQUISITES_UNAVAILABLE"]
+                }
+              }
+            }
+          ]
+        },
+        "id": {"type": "string", "pattern": "^RP-[A-Z0-9-]{3,31}$"},
+        "milestone": {
+          "enum": ["BASELINE", "M0", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "QUALIFICATION", "RELEASE"]
+        },
+        "required": {"const": true}
+      }
+    }
+  }
+}

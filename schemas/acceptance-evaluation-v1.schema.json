@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.repopass.dev/v1alpha1/acceptance-evaluation-v1.schema.json",
+  "title": "RepoPassport Acceptance Evaluation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "artifactType",
+    "evaluationDigest",
+    "formalClaim",
+    "overallStatus",
+    "registryDigest",
+    "rows",
+    "run",
+    "schemaVersion",
+    "stableEligible",
+    "subject",
+    "trustBoundary"
+  ],
+  "properties": {
+    "artifactType": {"const": "repopass-acceptance-evaluation"},
+    "evaluationDigest": {"$ref": "#/$defs/digest"},
+    "formalClaim": {"const": false},
+    "overallStatus": {"enum": ["FAIL", "INCOMPLETE", "PASS"]},
+    "registryDigest": {"$ref": "#/$defs/digest"},
+    "rows": {
+      "type": "array",
+      "minItems": 37,
+      "maxItems": 37,
+      "items": {"$ref": "#/$defs/row"}
+    },
+    "run": {"$ref": "#/$defs/run"},
+    "schemaVersion": {"const": "1"},
+    "stableEligible": {"type": "boolean"},
+    "subject": {"$ref": "#/$defs/subject"},
+    "trustBoundary": {"const": "producer-owned-ci"}
+  },
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "gitObject": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "revision", "treeSHA"],
+      "properties": {
+        "repository": {"const": "github.com/taipei49314/RepoPassport"},
+        "revision": {"$ref": "#/$defs/gitObject"},
+        "treeSHA": {"$ref": "#/$defs/gitObject"}
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempt", "event", "id", "ref", "workflowPath"],
+      "properties": {
+        "attempt": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+        "event": {"enum": ["pull_request", "push", "workflow_dispatch"]},
+        "id": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "ref": {"type": "string", "minLength": 6, "maxLength": 256, "pattern": "^refs/[!-~]+$"},
+        "workflowPath": {"const": ".github/workflows/ci.yml"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checkId", "result"],
+      "properties": {
+        "checkId": {"enum": ["ci/container-matrix", "ci/go", "ci/schema-json", "ci/windows-go"]},
+        "result": {"enum": ["cancelled", "failure", "skipped", "success"]}
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence", "id", "reasonCode", "status"],
+      "properties": {
+        "evidence": {"type": "array", "maxItems": 4, "items": {"$ref": "#/$defs/evidence"}},
+        "id": {"type": "string", "pattern": "^RP-[A-Z0-9-]{3,31}$"},
+        "reasonCode": {
+          "enum": [
+            "CURRENT_REQUIRED_CHECKS_PASSED",
+            "NOT_DEFAULT_BRANCH",
+            "REQUIRED_CHECK_CANCELLED",
+            "REQUIRED_CHECK_FAILED",
+            "REQUIRED_CHECK_MISSING_OR_SKIPPED",
+            "ROADMAP_WORK_NOT_SCHEDULED",
+            "SOURCE_QUALIFICATION_PREREQUISITES_UNAVAILABLE"
+          ]
+        },
+        "status": {"enum": ["BLOCKED", "FAIL", "NOT_RUN", "PASS"]}
+      }
+    }
+  }
+}
