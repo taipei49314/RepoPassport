@@ -285,11 +285,18 @@ func TestContainerHealthyJourneys(t *testing.T) {
 				result.Results.Cleanup != domain.CleanupAllowedResidue ||
 				result.Results.Capability != domain.CapabilityIncomplete ||
 				result.Results.Overall != domain.OverallInconclusive {
+				ciProjection, projectionErr := json.Marshal(
+					healthyJourneyCIResultForLog(result),
+				)
+				if projectionErr != nil {
+					t.Fatal("marshal healthy journey CI projection")
+				}
 				t.Fatalf(
-					"healthy %s/%s verdicts = %#v, want pass/stable/allowed-residue/incomplete/inconclusive",
+					"healthy %s/%s verdicts = %#v; ci=%s; want pass/stable/allowed-residue/incomplete/inconclusive",
 					backend,
 					test.name,
 					result.Results,
+					ciProjection,
 				)
 			}
 			if result.Repeats.Requested != test.wantRepeats ||
@@ -357,6 +364,61 @@ func TestContainerHealthyJourneys(t *testing.T) {
 			}
 			assertContainersRemoved(t, backend, result.Observations)
 		})
+	}
+}
+
+type healthyJourneyCIError struct {
+	Code  domain.ErrorCode `json:"code"`
+	Phase domain.Phase     `json:"phase,omitempty"`
+}
+
+type healthyJourneyCIRunnerCoverage struct {
+	Backend                    string `json:"backend"`
+	Available                  bool   `json:"available"`
+	NetworkDeny                bool   `json:"networkDeny"`
+	NetworkAttemptObservation  string `json:"networkAttemptObservation"`
+	ProcessExecObservation     string `json:"processExecObservation"`
+	FilesystemWriteObservation string `json:"filesystemWriteObservation"`
+	FilesystemReadObservation  string `json:"filesystemReadObservation"`
+	PortObservation            string `json:"portObservation"`
+	ResourceUsage              string `json:"resourceUsage"`
+	ResourceLimitEnforcement   bool   `json:"resourceLimitEnforcement"`
+}
+
+type healthyJourneyCIResult struct {
+	Errors         []healthyJourneyCIError        `json:"errors"`
+	Repeats        domain.RepeatSummary           `json:"repeats"`
+	RunnerCoverage healthyJourneyCIRunnerCoverage `json:"runnerCoverage"`
+}
+
+func healthyJourneyCIResultForLog(
+	result domain.VerificationResult,
+) healthyJourneyCIResult {
+	errorsForLog := make([]healthyJourneyCIError, 0, len(result.Errors))
+	for _, finding := range result.Errors {
+		if finding == nil {
+			continue
+		}
+		errorsForLog = append(errorsForLog, healthyJourneyCIError{
+			Code:  finding.Code,
+			Phase: finding.Phase,
+		})
+	}
+	return healthyJourneyCIResult{
+		Errors:  errorsForLog,
+		Repeats: result.Repeats,
+		RunnerCoverage: healthyJourneyCIRunnerCoverage{
+			Backend:                    result.Runner.Backend,
+			Available:                  result.Runner.Available,
+			NetworkDeny:                result.Runner.NetworkDeny,
+			NetworkAttemptObservation:  result.Runner.NetworkAttemptObservation,
+			ProcessExecObservation:     result.Runner.ProcessExecObservation,
+			FilesystemWriteObservation: result.Runner.FilesystemWriteObservation,
+			FilesystemReadObservation:  result.Runner.FilesystemReadObservation,
+			PortObservation:            result.Runner.PortObservation,
+			ResourceUsage:              result.Runner.ResourceUsage,
+			ResourceLimitEnforcement:   result.Runner.ResourceLimitEnforcement,
+		},
 	}
 }
 
