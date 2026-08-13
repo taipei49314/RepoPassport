@@ -234,6 +234,36 @@ func TestEvaluateFailsClosedForRequiredCheckAndSubjectStates(t *testing.T) {
 	}
 }
 
+func TestEvaluateRejectsInvalidSubjectCheckAndPrivateRef(t *testing.T) {
+	registryRaw := readPublishedRegistry(t)
+	tests := map[string]func(*EvaluationRequest){
+		"uppercase revision": func(request *EvaluationRequest) {
+			request.Subject.Revision = strings.Repeat("A", 40)
+		},
+		"wrong repository": func(request *EvaluationRequest) {
+			request.Subject.Repository = "github.com/example/other"
+		},
+		"email ref": func(request *EvaluationRequest) {
+			request.Run.Ref = "refs/heads/alice@example.invalid"
+		},
+		"high entropy ref": func(request *EvaluationRequest) {
+			request.Run.Ref = "refs/heads/0123456789abcdef0123456789abcdef0123456789abcdef"
+		},
+		"unknown check result": func(request *EvaluationRequest) {
+			request.Checks.Go = "neutral"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			request := validEvaluationRequest()
+			mutate(&request)
+			if _, err := Evaluate(registryRaw, request); err == nil {
+				t.Fatal("Evaluate accepted an invalid or private input")
+			}
+		})
+	}
+}
+
 func TestParseEvaluationRejectsTamperingAndCompletionLaundering(t *testing.T) {
 	registryRaw := readPublishedRegistry(t)
 	raw, err := Evaluate(registryRaw, validEvaluationRequest())

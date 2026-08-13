@@ -46,7 +46,7 @@ func TestRunAcceptanceRegistryCommands(t *testing.T) {
 		}
 
 		stdout.Reset()
-		if code := run([]string{"require-complete", "--evaluation", output, "--registry", registry}, stdout, stderr); code == 0 {
+		if code := run([]string{"require-complete", "--evaluation", output}, stdout, stderr); code == 0 {
 			t.Fatal("require-complete accepted the incomplete roadmap")
 		}
 		assertAcceptanceCLIRecord(t, stdout.Bytes(), "ACCEPTANCE_INCOMPLETE", "INCOMPLETE")
@@ -99,6 +99,38 @@ func TestRunAcceptanceRegistryDoesNotReplaceOutputOrIgnoreWriterFailure(t *testi
 	failing := acceptanceFailWriter{}
 	if code := run([]string{"validate", "--registry", registry}, failing, io.Discard); code == 0 {
 		t.Fatal("stdout writer failure returned success")
+	}
+}
+
+func TestRunAcceptanceRegistryRejectsRedirectedOrHardLinkedInput(t *testing.T) {
+	registry := filepath.Join(acceptanceCLIRepositoryRoot(t), "acceptance-registry.json")
+	root := t.TempDir()
+	link := filepath.Join(root, "registry-link.json")
+	if err := os.Symlink(registry, link); err == nil {
+		stdout := new(bytes.Buffer)
+		if code := run([]string{"validate", "--registry", link}, stdout, io.Discard); code == 0 {
+			t.Fatal("validate accepted a symbolic-link input")
+		}
+	}
+	hardlink := filepath.Join(root, "registry-hardlink.json")
+	if err := os.Link(registry, hardlink); err == nil {
+		stdout := new(bytes.Buffer)
+		if code := run([]string{"validate", "--registry", hardlink}, stdout, io.Discard); code == 0 {
+			t.Fatal("validate accepted a hard-linked input")
+		}
+	}
+	if runtime.GOOS == "windows" {
+		withStream := filepath.Join(root, "registry-with-stream.json")
+		if err := os.WriteFile(withStream, acceptanceCLIRead(t, registry), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(withStream+":private", []byte("private"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		stdout := new(bytes.Buffer)
+		if code := run([]string{"validate", "--registry", withStream}, stdout, io.Discard); code == 0 {
+			t.Fatal("validate accepted a Windows alternate data stream")
+		}
 	}
 }
 
