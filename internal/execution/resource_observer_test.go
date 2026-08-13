@@ -450,6 +450,78 @@ func TestInspectResourceContainerIdentityRejectsMismatch(t *testing.T) {
 	}
 }
 
+func TestInspectResourceContainerIdentityUsesBackendSpecificFormats(t *testing.T) {
+	t.Parallel()
+	containerID := strings.Repeat("c", 64)
+	tests := []struct {
+		name       string
+		backend    string
+		wantFormat string
+		output     string
+	}{
+		{
+			name:       "Docker JSON projection",
+			backend:    "docker",
+			wantFormat: resourceContainerIdentityFormat,
+			output:     `{"id":"` + containerID + `","runLabel":"test1234"}`,
+		},
+		{
+			name:       "Podman scalar projection",
+			backend:    "podman",
+			wantFormat: podmanResourceContainerIdentityFormat,
+			output:     containerID + "|test1234\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeExecutor{
+				handler: func(
+					_ context.Context,
+					name string,
+					args []string,
+					stdout io.Writer,
+					_ io.Writer,
+				) (int, error) {
+					if name != test.backend ||
+						!containsAdjacent(args, "--format", test.wantFormat) {
+						t.Fatalf("identity inspect = %q %v", name, args)
+					}
+					_, _ = io.WriteString(stdout, test.output)
+					return 0, nil
+				},
+			}
+			err := testRunner(fake).inspectResourceContainerIdentity(
+				context.Background(),
+				sealPreparedRunForTest(&PreparedRun{
+					Backend: test.backend,
+					RunID:   "test1234",
+					Plan:    domain.ResolvedPlan{},
+				}),
+				containerID,
+			)
+			if err != nil {
+				t.Fatalf("valid %s identity projection rejected: %v", test.backend, err)
+			}
+		})
+	}
+}
+
+func TestDecodePodmanResourceContainerIdentityRejectsNonCanonicalControl(t *testing.T) {
+	containerID := strings.Repeat("c", 64)
+	for _, raw := range []string{
+		containerID + "|test1234",
+		containerID + "|test1234\r\n",
+		containerID + "|test1234\nextra\n",
+		containerID + "|unsafe-label!\n",
+		strings.Repeat("C", 64) + "|test1234\n",
+	} {
+		if _, err := decodePodmanResourceContainerIdentity([]byte(raw)); err == nil {
+			t.Fatalf("noncanonical Podman identity control accepted: %q", raw)
+		}
+	}
+}
+
 func TestInspectResourceContainerIdentityRejectsDirtyStderr(t *testing.T) {
 	containerID := strings.Repeat("c", 64)
 	fake := &fakeExecutor{
