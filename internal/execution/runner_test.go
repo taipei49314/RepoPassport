@@ -490,7 +490,8 @@ func TestLongLivedCreateArgsUseBackendSpecificNoSwapControls(t *testing.T) {
 		t.Fatalf("Docker create lost exact no-swap controls: %v", dockerArgs)
 	}
 	if containsArgument(dockerArgs, "--cgroup-conf") ||
-		containsArgument(dockerArgs, "memory.swap.max=0") {
+		containsArgument(dockerArgs, "memory.swap.max=0") ||
+		containsArgument(dockerArgs, "--read-only-tmpfs=false") {
 		t.Fatalf("Docker create contains Podman-only cgroup control: %v", dockerArgs)
 	}
 
@@ -501,6 +502,9 @@ func TestLongLivedCreateArgsUseBackendSpecificNoSwapControls(t *testing.T) {
 	}
 	if containsArgument(podmanArgs, "--memory-swap") {
 		t.Fatalf("Podman create contains incompatible Docker memory-swap flag: %v", podmanArgs)
+	}
+	if !containsArgument(podmanArgs, "--read-only-tmpfs=false") {
+		t.Fatalf("Podman create permits implicit writable system tmpfs mounts: %v", podmanArgs)
 	}
 }
 
