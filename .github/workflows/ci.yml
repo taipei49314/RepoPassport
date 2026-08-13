@@ -75,6 +75,21 @@ jobs:
           }
           & ./scripts/build-release.ps1 -Version 0.1.0-alpha.33 -TestedRevision $testedRevision
 
+      - name: Rebuild and byte-compare release artifacts from a second clean source
+        id: release-reproducibility
+        shell: pwsh
+        run: |
+          $testedRevision = (git rev-parse --verify HEAD).Trim()
+          $testedTree = (git rev-parse --verify 'HEAD^{tree}').Trim()
+          if ($LASTEXITCODE -ne 0 -or
+              $testedRevision -cnotmatch '^[0-9a-f]{40}$' -or
+              $testedTree -cnotmatch '^[0-9a-f]{40}$') {
+            throw 'unable to bind release reproducibility to checkout source'
+          }
+          & ./scripts/compare-release-rebuild.ps1 `
+            -TestedRevision $testedRevision `
+            -TestedTree $testedTree
+
   schema-json:
     name: Schema JSON syntax
     runs-on: ubuntu-latest
