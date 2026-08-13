@@ -2562,7 +2562,11 @@ func (r *Runner) buildCreateArgs(
 		"--memory", memoryBytes,
 	}
 	if prepared.Backend == "podman" {
-		args = append(args, "--cgroup-conf", "memory.swap.max=0")
+		args = append(
+			args,
+			"--cgroup-conf", "memory.swap.max=0",
+			"--read-only-tmpfs=false",
+		)
 	} else {
 		args = append(args, "--memory-swap", memoryBytes)
 	}
