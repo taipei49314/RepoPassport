@@ -19,7 +19,7 @@ function Invoke-GitFixed {
         [string]$FailureCode,
         [string[]]$Arguments
     )
-    $output = @(& $script:gitCommand @Arguments 2>$null)
+    $output = @(& $script:gitCommand -c core.longpaths=true @Arguments 2>$null)
     if ($LASTEXITCODE -ne 0) {
         Fail-Fixed $FailureCode
     }
@@ -52,6 +52,40 @@ function Assert-NoReparsePathComponents {
             Fail-Fixed $FailureCode
         }
     }
+}
+
+function Resolve-FixedGitCommand {
+    $candidates = @()
+    if ($env:OS -eq "Windows_NT") {
+        if (-not [string]::IsNullOrWhiteSpace($env:ProgramFiles)) {
+            $candidates += Join-Path $env:ProgramFiles "Git\cmd\git.exe"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($env:ProgramW6432)) {
+            $candidates += Join-Path $env:ProgramW6432 "Git\cmd\git.exe"
+        }
+        $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+        if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+            $candidates += Join-Path $programFilesX86 "Git\cmd\git.exe"
+        }
+    }
+    else {
+        $candidates += "/usr/bin/git"
+    }
+
+    foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        $full = [IO.Path]::GetFullPath($candidate)
+        if (-not [IO.File]::Exists($full)) {
+            continue
+        }
+        Assert-NoReparsePathComponents $full "REPRO_GIT_UNAVAILABLE"
+        $item = Get-Item -Force -LiteralPath $full -ErrorAction Stop
+        if ($item.PSIsContainer -or
+            ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            Fail-Fixed "REPRO_GIT_UNAVAILABLE"
+        }
+        return $full
+    }
+    Fail-Fixed "REPRO_GIT_UNAVAILABLE"
 }
 
 function Assert-ExactRegularInventory {
@@ -170,21 +204,28 @@ if (-not $secondSource.StartsWith($runnerPrefix, $comparison) -or
 Assert-NoReparsePathComponents $runnerTemp "REPRO_PATH_BOUNDARY_INVALID"
 Assert-NoReparsePathComponents $sourceRoot "REPRO_PATH_BOUNDARY_INVALID"
 
-$gitCommand = (Get-Command git -CommandType Application -ErrorAction Stop |
-    Select-Object -First 1).Source
 $gitNullDevice = if ($env:OS -eq "Windows_NT") { "NUL" } else { "/dev/null" }
 $env:GIT_DIR = $null
 $env:GIT_WORK_TREE = $null
 $env:GIT_INDEX_FILE = $null
 $env:GIT_OBJECT_DIRECTORY = $null
 $env:GIT_ALTERNATE_OBJECT_DIRECTORIES = $null
+$env:GIT_COMMON_DIR = $null
+$env:GIT_NAMESPACE = $null
+$env:GIT_CEILING_DIRECTORIES = $null
+$env:GIT_DISCOVERY_ACROSS_FILESYSTEM = $null
 $env:GIT_CONFIG_PARAMETERS = $null
 $env:GIT_CONFIG_COUNT = "0"
 $env:GIT_CONFIG_NOSYSTEM = "1"
 $env:GIT_CONFIG_GLOBAL = $gitNullDevice
 $env:GIT_CONFIG_SYSTEM = $gitNullDevice
+$env:GIT_EXEC_PATH = $null
+$env:GIT_SSH = $null
+$env:GIT_SSH_COMMAND = $null
+$env:GIT_ASKPASS = $null
 $env:GIT_NO_REPLACE_OBJECTS = "1"
 $env:GIT_TERMINAL_PROMPT = "0"
+$gitCommand = Resolve-FixedGitCommand
 
 $sourceRevision = @(Invoke-GitFixed "REPRO_SOURCE_IDENTITY_MISMATCH" @(
     "-C", $sourceRoot, "rev-parse", "--verify", "HEAD"
@@ -204,14 +245,15 @@ if ($sourceRevision.Count -ne 1 -or
     Fail-Fixed "REPRO_SOURCE_IDENTITY_MISMATCH"
 }
 
-@(& $gitCommand -c protocol.file.allow=always -c core.hooksPath=$gitNullDevice `
+@(& $gitCommand -c core.longpaths=true -c protocol.file.allow=always `
+    -c core.hooksPath=$gitNullDevice `
     clone --no-checkout --no-local --recurse-submodules=no --template= -- `
     $sourceRoot $secondSource 2>$null) | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail-Fixed "REPRO_CHECKOUT_FAILED"
 }
-@(& $gitCommand -C $secondSource checkout --detach --force $TestedRevision `
-    2>$null) | Out-Null
+@(& $gitCommand -c core.longpaths=true -C $secondSource `
+    checkout --detach --force $TestedRevision 2>$null) | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail-Fixed "REPRO_CHECKOUT_FAILED"
 }
