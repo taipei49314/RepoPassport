@@ -247,13 +247,13 @@ if ($sourceRevision.Count -ne 1 -or
 
 @(& $gitCommand -c core.longpaths=true -c protocol.file.allow=always `
     -c core.hooksPath=$gitNullDevice `
-    clone --no-checkout --no-local --recurse-submodules=no --template= -- `
+    clone --quiet --no-checkout --no-local --recurse-submodules=no --template= -- `
     $sourceRoot $secondSource 2>$null) | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail-Fixed "REPRO_CHECKOUT_FAILED"
 }
 @(& $gitCommand -c core.longpaths=true -C $secondSource `
-    checkout --detach --force $TestedRevision 2>$null) | Out-Null
+    checkout --quiet --detach --force $TestedRevision 2>$null) | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail-Fixed "REPRO_CHECKOUT_FAILED"
 }
