@@ -34,6 +34,7 @@ func TestCanonicalModuleIdentitySourceContract(t *testing.T) {
 		{"all_go_imports_reject_legacy_and_case_variants", testGoImports},
 		{"module_and_workspace_files_have_no_identity_replacements", testIdentityReplacements},
 		{"release_builder_uses_canonical_identity", testReleaseBuilder},
+		{"release_rebuilds_match_from_second_clean_path", testReleaseReproducibility},
 		{"readme_describes_the_canonical_repository", testREADME},
 		{"active_workflows_and_docs_reject_legacy_identity", testActiveIdentitySurfaces},
 		{"external_schemas_consumer_works_offline", testExternalSchemasConsumer},
@@ -46,6 +47,75 @@ func TestCanonicalModuleIdentitySourceContract(t *testing.T) {
 		if !t.Run(test.name, func(t *testing.T) { test.run(t, root) }) {
 			t.FailNow()
 		}
+	}
+}
+
+func testReleaseReproducibility(t *testing.T, root string) {
+	workflowPath := filepath.Join(root, ".github", "workflows", "ci.yml")
+	workflow := string(readFile(t, workflowPath))
+	scriptPath := filepath.Join(root, "scripts", "compare-release-rebuild.ps1")
+	script := string(readFile(t, scriptPath))
+	workflowFragments := []string{
+		"Rebuild and byte-compare release artifacts from a second clean source",
+		"id: release-reproducibility",
+		"shell: pwsh",
+		`& ./scripts/compare-release-rebuild.ps1`,
+		`-TestedRevision $testedRevision`,
+		`-TestedTree $testedTree`,
+	}
+	for _, fragment := range workflowFragments {
+		if strings.Count(workflow, fragment) != 1 {
+			t.Fatalf("%s must contain exactly one second-clean-path workflow fragment %q", relativePath(root, workflowPath), fragment)
+		}
+	}
+	build := strings.Index(workflow, "Build and qualify release artifacts from the exact checkout")
+	rebuild := strings.Index(workflow, "Rebuild and byte-compare release artifacts from a second clean source")
+	if build < 0 || rebuild < 0 || rebuild < build {
+		t.Fatalf("%s must run the second-clean-path byte comparison after the exact-checkout release build", relativePath(root, workflowPath))
+	}
+
+	fragments := []string{
+		`[ValidatePattern('^[0-9a-f]{40}$')]`,
+		`[string]$TestedRevision`,
+		`[string]$TestedTree`,
+		`$runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP)`,
+		`$sourceRoot = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE)`,
+		`git clone --no-checkout --no-local`,
+		`checkout --detach --force $TestedRevision`,
+		`rev-parse --verify HEAD`,
+		`rev-parse --verify 'HEAD^{tree}'`,
+		`status --porcelain=v1 --untracked-files=all --ignore-submodules=none`,
+		`build-release.ps1`,
+		`-Version "0.1.0-alpha.33"`,
+		`-TestedRevision $TestedRevision`,
+		`Assert-ExactRegularInventory`,
+		`Compare-FileBytes`,
+	}
+	for _, fragment := range fragments {
+		if !strings.Contains(script, fragment) {
+			t.Fatalf("%s is missing second-clean-path release contract fragment %q", relativePath(root, scriptPath), fragment)
+		}
+	}
+	for _, name := range []string{
+		"SHA256SUMS",
+		"repopass-linux-amd64",
+		"repopass-verify-linux-amd64",
+		"repopass-verify-linux-amd64.tar",
+		"repopass-verify-windows-amd64.exe",
+		"repopass-verify-windows-amd64.tar",
+		"repopass-windows-amd64.exe",
+	} {
+		if strings.Count(script, `"`+name+`"`) != 1 {
+			t.Fatalf("%s second-clean-path gate omits or duplicates exact release inventory member %q", relativePath(root, scriptPath), name)
+		}
+	}
+	for _, forbidden := range []string{"Remove-Item", "rm -rf", "Invoke-Expression", "Start-Process"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("%s contains forbidden cleanup or command indirection %q", relativePath(root, scriptPath), forbidden)
+		}
+	}
+	if strings.Count(script, "$LASTEXITCODE") < 5 {
+		t.Fatalf("%s must check every external Git/build operation", relativePath(root, scriptPath))
 	}
 }
 
@@ -357,8 +427,28 @@ func testActiveIdentitySurfaces(t *testing.T, root string) {
 	paths := []string{
 		filepath.Join(root, "README.md"),
 		filepath.Join(root, "IMPLEMENTATION_STATUS.md"),
-		filepath.Join(root, "docs", "release.md"),
-		filepath.Join(root, "spec", "versioning.md"),
+	}
+	for _, activeRoot := range []string{
+		filepath.Join(root, "docs"),
+		filepath.Join(root, "spec"),
+	} {
+		if err := filepath.WalkDir(activeRoot, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				if filepath.Clean(path) == filepath.Join(root, "docs", "rfcs") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(entry.Name(), ".md") {
+				paths = append(paths, path)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("REQUIRED_CHECK_NOT_RUN: active documentation identity scan failed")
+		}
 	}
 	workflowRoot := filepath.Join(root, ".github", "workflows")
 	if err := filepath.WalkDir(workflowRoot, func(path string, entry fs.DirEntry, err error) error {
