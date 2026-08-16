@@ -77,11 +77,17 @@ type gateExecutor interface {
 	Execute(context.Context, gateProcessRequest) (gateProcessResult, error)
 }
 
-// gateApplicationBinding is a lane-lifetime authority over every executable
-// byte and executable dependency reachable through the logical application
-// map. Verify MUST fail if any byte, name binding, loader, runtime, or toolchain
-// dependency can change. Implementations that cannot prove that property MUST
-// refuse BindApplications instead of authorizing a gate.
+// gateApplicationBinding is a lane-lifetime hold over every resolved gate
+// application file in the logical application map. Bind records each file's
+// name→file identity and content digest; Verify runs before every gate and
+// MUST fail when the name no longer resolves to the held file or the held
+// bytes no longer match the bound digest, so a substituted tool fails closed
+// instead of executing (RFC-0002 tool-substitution rejection). Platforms with
+// mandatory sharing additionally deny writers while held. Mutability outside
+// the held files — loaders, runtimes, toolchain trees — is not bound here; it
+// is declared by the receipt's fixed `gate-execution-is-self-ci` limitation.
+// Implementations that cannot provide at least held-identity verification
+// MUST refuse BindApplications instead of authorizing a gate.
 type gateApplicationBinding interface {
 	Verify(context.Context) error
 	Release() error

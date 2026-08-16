@@ -19,9 +19,10 @@ var errAuthenticatedLaneAttemptHistoryUnavailable = errors.New(
 	"authenticated source qualification attempt history is unavailable",
 )
 
-// unavailableLaneAttemptHistoryProvider is the only production provider until
-// an authenticated GitHub history adapter is added. It deliberately reads no
-// token or environment value and can never authorize an ordinal-1 attempt.
+// unavailableLaneAttemptHistoryProvider is the fail-closed fallback when the
+// workflow supplied no authenticated history credentials (see
+// newEnvironmentLaneAttemptHistoryProvider). It deliberately reads no token or
+// environment value and can never authorize an ordinal-1 attempt.
 type unavailableLaneAttemptHistoryProvider struct{}
 
 func (unavailableLaneAttemptHistoryProvider) HasPriorExecution(
@@ -152,7 +153,7 @@ func produceControllerLaneStage(
 	request ProduceLaneRequest,
 ) (produceLaneStageOutcome, *qualificationReceipt, error) {
 	historyScope := productionLaneAttemptHistoryScope(request)
-	prior, historyErr := (unavailableLaneAttemptHistoryProvider{}).HasPriorExecution(
+	prior, historyErr := newEnvironmentLaneAttemptHistoryProvider().HasPriorExecution(
 		ctx,
 		historyScope,
 	)
