@@ -39,7 +39,7 @@
     "productDimensions": {"$ref": "#/$defs/productDimensions"},
     "qualificationStatus": {"enum": ["PASS", "FAIL", "BLOCKED", "NOT_RUN"]},
     "run": {"$ref": "#/$defs/run"},
-    "schemaVersion": {"const": "1"},
+    "schemaVersion": {"const": "2"},
     "source": {"$ref": "#/$defs/source"},
     "subject": {"$ref": "#/$defs/subject"}
   },
@@ -314,7 +314,7 @@
       ],
       "properties": {
         "gitVersion": {"$ref": "#/$defs/printable128"},
-        "goVersion": {"const": "go1.26.5"},
+        "goVersion": {"const": "go1.26.6"},
         "goarch": {"const": "amd64"},
         "goos": {"enum": ["linux", "windows"]},
         "kernelVersion": {"$ref": "#/$defs/printable128"},
@@ -330,7 +330,7 @@
       "additionalProperties": false,
       "required": ["goVersion", "mainPackage", "modulePath", "sha256", "vcsModified", "vcsRevision"],
       "properties": {
-        "goVersion": {"const": "go1.26.5"},
+        "goVersion": {"const": "go1.26.6"},
         "mainPackage": {"const": "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify"},
         "modulePath": {"const": "github.com/taipei49314/RepoPassport"},
         "sha256": {"$ref": "#/$defs/sha256"},

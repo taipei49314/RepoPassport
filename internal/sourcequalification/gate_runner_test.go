@@ -269,9 +269,9 @@ func TestRunRequiredGatesEnforcesSemanticStdoutPredicates(t *testing.T) {
 		gateID string
 		mutate func(*gateProcessResult)
 	}{
-		{"Go version requires LF", "RP-M0-QUAL-GO-VERSION", func(result *gateProcessResult) { result.Stdout = []byte("go version go1.26.5 windows/amd64\r\n") }},
-		{"Go version rejects extra line", "RP-M0-QUAL-GO-VERSION", func(result *gateProcessResult) { result.Stdout = []byte("go version go1.26.5 windows/amd64\nextra\n") }},
-		{"Go version binds OS arch", "RP-M0-QUAL-GO-VERSION", func(result *gateProcessResult) { result.Stdout = []byte("go version go1.26.5 linux/amd64\n") }},
+		{"Go version requires LF", "RP-M0-QUAL-GO-VERSION", func(result *gateProcessResult) { result.Stdout = []byte("go version go1.26.6 windows/amd64\r\n") }},
+		{"Go version rejects extra line", "RP-M0-QUAL-GO-VERSION", func(result *gateProcessResult) { result.Stdout = []byte("go version go1.26.6 windows/amd64\nextra\n") }},
+		{"Go version binds OS arch", "RP-M0-QUAL-GO-VERSION", func(result *gateProcessResult) { result.Stdout = []byte("go version go1.26.6 linux/amd64\n") }},
 		{"Tidy requires empty output", "RP-M0-QUAL-TIDY-DIFF", func(result *gateProcessResult) { result.Stdout = []byte("diff --git a/go.mod b/go.mod\n") }},
 		{"Tidy rejects source change", "RP-M0-QUAL-TIDY-DIFF", func(result *gateProcessResult) { result.SourceChanged = true }},
 		{"Format requires empty stdout", "RP-M0-QUAL-FORMAT", func(result *gateProcessResult) { result.Stdout = []byte("internal/sourcequalification/gate.go\n") }},
@@ -562,7 +562,7 @@ func passingGateSteps(request gateRunRequest) []gateTestStep {
 	for index, specification := range registry {
 		steps[index].result.ExitCode = gateTestInt64(0)
 		if specification.ID == "RP-M0-QUAL-GO-VERSION" {
-			steps[index].result.Stdout = []byte("go version go1.26.5 " + request.GOOS + "/" + request.GOARCH + "\n")
+			steps[index].result.Stdout = []byte("go version go1.26.6 " + request.GOOS + "/" + request.GOARCH + "\n")
 		}
 	}
 	return steps

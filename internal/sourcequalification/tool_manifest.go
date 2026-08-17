@@ -11,8 +11,8 @@ import (
 
 const (
 	toolManifestArtifactType  = "repopass-source-qualification-toolset"
-	toolManifestSchemaVersion = "1"
-	toolManifestGoVersion     = "go1.26.5"
+	toolManifestSchemaVersion = "2"
+	toolManifestGoVersion     = "go1.26.6"
 	toolManifestMainPackage   = "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify"
 	toolManifestModulePath    = "github.com/taipei49314/RepoPassport"
 	toolManifestLinuxPath     = "repopass-source-qualify-linux-amd64"

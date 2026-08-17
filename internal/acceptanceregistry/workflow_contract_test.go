@@ -50,7 +50,7 @@ func TestAcceptanceRegistryRequiredCIContract(t *testing.T) {
 	if steps["checkout"].Uses != "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" || steps["checkout"].With["persist-credentials"] != "false" {
 		t.Fatal("acceptance checkout is not pinned and credential-free")
 	}
-	if steps["setup-go"].Uses != "actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00" || steps["setup-go"].With["go-version"] != "1.26.5" || steps["setup-go"].With["cache"] != "false" {
+	if steps["setup-go"].Uses != "actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00" || steps["setup-go"].With["go-version"] != "1.26.6" || steps["setup-go"].With["cache"] != "false" {
 		t.Fatal("acceptance Go setup is not exact")
 	}
 	evaluate := steps["evaluate"]

@@ -18,13 +18,13 @@ import (
 
 const (
 	receiptArtifactType       = "repopass-source-qualification-receipt"
-	receiptSchemaVersion      = "1"
+	receiptSchemaVersion      = "2"
 	receiptPredicateType      = "https://repopass.dev/source-qualification/v1"
 	receiptRepositoryURL      = "https://github.com/taipei49314/RepoPassport"
 	receiptModulePath         = "github.com/taipei49314/RepoPassport"
 	receiptModuleVersion      = "0.1.0-alpha.33"
 	receiptControllerPackage  = "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify"
-	receiptGoVersion          = "go1.26.5"
+	receiptGoVersion          = "go1.26.6"
 	receiptArchiveName        = "repopass-source.tar"
 	receiptManifestName       = "source-archive-manifest-v1.json"
 	receiptArchiveRole        = "source-payload"
