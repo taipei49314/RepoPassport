@@ -401,7 +401,7 @@ func receiptParserDocument(lane Lane, archive, manifest []byte) map[string]any {
 
 	platform := map[string]any{
 		"gitVersion":         "git version 2.50.1",
-		"goVersion":          "go1.26.5",
+		"goVersion":          "go1.26.6",
 		"goarch":             "amd64",
 		"goos":               "linux",
 		"kernelVersion":      "6.11.0",
@@ -481,7 +481,7 @@ func receiptParserDocument(lane Lane, archive, manifest []byte) map[string]any {
 			"startedAt":     "2026-08-11T00:00:00Z",
 		},
 		"controller": map[string]any{
-			"goVersion":   "go1.26.5",
+			"goVersion":   "go1.26.6",
 			"mainPackage": "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify",
 			"modulePath":  "github.com/taipei49314/RepoPassport",
 			"sha256":      receiptParserSHA256([]byte("controller-" + string(lane))),
@@ -514,7 +514,7 @@ func receiptParserDocument(lane Lane, archive, manifest []byte) map[string]any {
 			"workflowRunId":      workflowRunID,
 			"workflowURL":        "https://github.com/taipei49314/RepoPassport/actions/runs/" + workflowRunID,
 		},
-		"schemaVersion": "1",
+		"schemaVersion": "2",
 		"source": map[string]any{
 			"archive": map[string]any{
 				"name":   "repopass-source.tar",

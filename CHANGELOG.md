@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Accept RFC-0004 and migrate the frozen Go toolchain identity from
+  go1.26.5 to go1.26.6 across ordinary CI, the source-qualification workflow,
+  the `RP-M0-QUAL-GO-VERSION` predicate, and the receipt/tool-manifest
+  contracts, because govulncheck reports eight stdlib vulnerabilities fixed
+  in go1.26.6. Receipt and tool-manifest `schemaVersion` advance to `"2"`;
+  schema and artifact file names keep their v1 lineage; the attempt-tombstone
+  contract and all historical go1.26.5 evidence are unchanged.
 - Accept RFC-0001 and begin the intentional pre-v0 Go module migration from
   `github.com/repopass/repopass` to the controlled, case-sensitive public
   namespace `github.com/taipei49314/RepoPassport`. Repository imports, the

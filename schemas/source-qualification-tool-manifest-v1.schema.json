@@ -7,7 +7,7 @@
   "required": ["artifactType", "schemaVersion", "subject", "tools"],
   "properties": {
     "artifactType": {"const": "repopass-source-qualification-toolset"},
-    "schemaVersion": {"const": "1"},
+    "schemaVersion": {"const": "2"},
     "subject": {"$ref": "#/$defs/subject"},
     "tools": {
       "type": "array",
@@ -71,7 +71,7 @@
       "properties": {
         "goarch": {"const": "amd64"},
         "goos": {"enum": ["linux", "windows"]},
-        "goVersion": {"const": "go1.26.5"},
+        "goVersion": {"const": "go1.26.6"},
         "mainPackage": {"const": "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify"},
         "modulePath": {"const": "github.com/taipei49314/RepoPassport"},
         "path": {

@@ -97,7 +97,7 @@ func TestToolManifestRejectsNonCanonicalAndBoundedInput(t *testing.T) {
 	)
 	tooDeep, err := canonicaljson.Marshal(map[string]any{
 		"artifactType":  "repopass-source-qualification-toolset",
-		"schemaVersion": "1",
+		"schemaVersion": "2",
 		"subject":       []any{[]any{[]any{[]any{[]any{[]any{[]any{[]any{[]any{"too-deep"}}}}}}}}},
 		"tools":         []any{},
 	})
@@ -151,7 +151,7 @@ func TestToolManifestRejectsCanonicalContractTampering(t *testing.T) {
 		{
 			name: "wrong schema version",
 			mutate: func(document map[string]any) {
-				document["schemaVersion"] = "2"
+				document["schemaVersion"] = "1"
 			},
 		},
 		{
@@ -376,7 +376,7 @@ func toolManifestDocument(subject Subject, linuxController, windowsController []
 		return map[string]any{
 			"goarch":      "amd64",
 			"goos":        goos,
-			"goVersion":   "go1.26.5",
+			"goVersion":   "go1.26.6",
 			"mainPackage": "github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify",
 			"modulePath":  "github.com/taipei49314/RepoPassport",
 			"path":        path,
@@ -388,7 +388,7 @@ func toolManifestDocument(subject Subject, linuxController, windowsController []
 	}
 	return map[string]any{
 		"artifactType":  "repopass-source-qualification-toolset",
-		"schemaVersion": "1",
+		"schemaVersion": "2",
 		"subject": map[string]any{
 			"baseRevision":    subject.BaseRevision,
 			"dirty":           subject.Dirty,

@@ -494,7 +494,7 @@ func evaluateGateResult(
 func gateSemanticPredicate(id string, request gateRunRequest, stdout []byte) bool {
 	switch id {
 	case "RP-M0-QUAL-GO-VERSION":
-		want := "go version go1.26.5 " + request.GOOS + "/" + request.GOARCH + "\n"
+		want := "go version go1.26.6 " + request.GOOS + "/" + request.GOARCH + "\n"
 		return string(stdout) == want
 	case "RP-M0-QUAL-TIDY-DIFF":
 		return len(stdout) == 0

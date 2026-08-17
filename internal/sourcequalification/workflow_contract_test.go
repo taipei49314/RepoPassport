@@ -704,7 +704,7 @@ func requireWorkflowControllerBuild(t *testing.T, job *yaml.Node, binary string)
 	}
 	setup := workflowRequiredActionStep(t, job, "setup-go", "actions/setup-go")
 	if got, want := workflowScalarMap(t, workflowRequiredMapping(t, setup, "with")), map[string]string{
-		"cache": "false", "go-version": "1.26.5",
+		"cache": "false", "go-version": "1.26.6",
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("setup-go inputs = %#v, want exact no-cache Go toolchain %#v", got, want)
 	}
@@ -1157,7 +1157,7 @@ func requireWorkflowSafety(t *testing.T, workflow *yaml.Node) {
 				}
 			case "actions/setup-go":
 				if got, want := workflowScalarMap(t, workflowRequiredMapping(t, step, "with")), map[string]string{
-					"cache": "false", "go-version": "1.26.5",
+					"cache": "false", "go-version": "1.26.6",
 				}; !reflect.DeepEqual(got, want) {
 					t.Errorf("%s setup-go inputs = %#v, want %#v", jobName, got, want)
 				}
