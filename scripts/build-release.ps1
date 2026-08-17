@@ -22,7 +22,7 @@ try {
 	$env:GOCACHEPROG = ""
 	$goVersionLine = @(& $goCommand version 2>$null)
 	if ($LASTEXITCODE -ne 0 -or $goVersionLine.Count -ne 1 -or
-		([string]$goVersionLine[0]) -notmatch '^go version go1\.26\.5 [^\s/]+/[^\s/]+$') {
+		([string]$goVersionLine[0]) -notmatch '^go version go1\.26\.6 [^\s/]+/[^\s/]+$') {
 		throw "wrong Go toolchain"
 	}
 }
