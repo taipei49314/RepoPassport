@@ -594,16 +594,13 @@ func controllerRuntimeFact(
 	if application == "" {
 		return "", errGateInvalidInput
 	}
-	result, err := newOSGateExecutor().Execute(ctx, gateProcessRequest{
-		Application: application,
-		Args:        append([]string(nil), args...),
-		Dir:         directory,
-		Env:         append([]string(nil), environment...),
-		Network:     NetworkNone,
-		Timeout:     30 * time.Second,
-		StdoutLimit: controllerRuntimeFactLimit,
-		StderrLimit: controllerRuntimeFactLimit,
-	})
+	result, err := executeTrustedControllerRuntimeFact(
+		ctx,
+		application,
+		append([]string(nil), args...),
+		directory,
+		append([]string(nil), environment...),
+	)
 	if err != nil || result.ExitCode == nil || *result.ExitCode != 0 || result.Blocked ||
 		result.TimedOut || result.Cancelled || result.StdoutOverflow || result.StderrOverflow ||
 		result.CleanupFailed || len(result.Stderr) != 0 {
@@ -622,4 +619,69 @@ func controllerRuntimeFact(
 		return "", errGateInvalidInput
 	}
 	return line, nil
+}
+
+// executeTrustedControllerRuntimeFact runs a fixed trusted-tool observation
+// without the gate executor. NetworkNone gate isolation is a source-gate
+// prerequisite and must stay fail-closed on Windows until an enforceable
+// boundary exists; platform facts are not those gates.
+func executeTrustedControllerRuntimeFact(
+	ctx context.Context,
+	application string,
+	args []string,
+	directory string,
+	environment []string,
+) (gateProcessResult, error) {
+	environment, environmentOK := normalizeGateProcessEnvironment(environment)
+	if ctx == nil || !environmentOK || !cleanAbsoluteGatePath(application) ||
+		!cleanAbsoluteGatePath(directory) || len(args) > maximumGateArguments {
+		return gateProcessResult{}, errGateInvalidInput
+	}
+	for _, argument := range args {
+		if strings.IndexByte(argument, 0) >= 0 {
+			return gateProcessResult{}, errGateInvalidInput
+		}
+	}
+	if ctx.Err() != nil {
+		return gateProcessResult{Cancelled: true}, errGateInvalidInput
+	}
+	if !availableGateApplication(application) || !validGateProcessDirectory(directory) {
+		return gateProcessResult{}, errGateInvalidInput
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(runCtx, application, args...)
+	command.Dir = directory
+	command.Env = environment
+	stdout := newGateOutputCapture(controllerRuntimeFactLimit)
+	stderr := newGateOutputCapture(controllerRuntimeFactLimit)
+	command.Stdout = stdout
+	command.Stderr = stderr
+	err := command.Run()
+
+	result := gateProcessResult{}
+	result.Stdout, result.StdoutOverflow = stdout.result()
+	result.Stderr, result.StderrOverflow = stderr.result()
+	if runCtx.Err() != nil {
+		if ctx.Err() != nil {
+			result.Cancelled = true
+		} else {
+			result.TimedOut = true
+		}
+		return result, errGateInvalidInput
+	}
+	if err != nil {
+		var exitError *exec.ExitError
+		if !errors.As(err, &exitError) || command.ProcessState == nil {
+			return result, errGateInvalidInput
+		}
+		result.ExitCode = gateProcessExitCode(command.ProcessState.ExitCode())
+		return result, nil
+	}
+	if command.ProcessState == nil {
+		return result, errGateInvalidInput
+	}
+	result.ExitCode = gateProcessExitCode(command.ProcessState.ExitCode())
+	return result, nil
 }
