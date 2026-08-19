@@ -151,8 +151,7 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 	}
 	for _, path := range readable {
 		_ = windowsGrantAppContainerPath(path, sid, false, false)
-		base := filepath.Base(path)
-		if strings.EqualFold(base, "bin") || strings.EqualFold(base, "tool") {
+		if windowsAppContainerReadableTree(path) {
 			windowsGrantAppContainerExistingTree(path, sid)
 		}
 	}
@@ -164,6 +163,18 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 		return err
 	}
 	return nil
+}
+
+func windowsAppContainerReadableTree(path string) bool {
+	base := filepath.Base(path)
+	if strings.EqualFold(base, "bin") || strings.EqualFold(base, "tool") {
+		return true
+	}
+	if !strings.EqualFold(base, "src") && !strings.EqualFold(base, "pkg") {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(filepath.Dir(path), "bin", "go.exe"))
+	return err == nil
 }
 
 func windowsAppContainerAncestorPaths(path string) []string {
@@ -267,7 +278,8 @@ func windowsExecutableTree(application string) []string {
 	if (strings.EqualFold(base, "go.exe") || strings.EqualFold(base, "gofmt.exe")) &&
 		strings.EqualFold(filepath.Base(directory), "bin") {
 		root := filepath.Dir(directory)
-		paths = append(paths, root, filepath.Join(root, "pkg", "tool"))
+		paths = append(paths, root, filepath.Join(root, "pkg", "tool"),
+			filepath.Join(root, "pkg"), filepath.Join(root, "src"))
 	}
 	if strings.EqualFold(base, "git.exe") && strings.EqualFold(filepath.Base(directory), "cmd") {
 		paths = append(paths, filepath.Dir(directory))
