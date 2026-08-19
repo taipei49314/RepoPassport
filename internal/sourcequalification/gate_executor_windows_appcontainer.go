@@ -144,6 +144,11 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 		}
 		windowsGrantAppContainerExistingTree(path, sid, false)
 	}
+	// go.exe launches vet.exe -flags with stdout attached to NUL. AppContainer
+	// cannot open the Null device unless this SID is on that device DACL.
+	// Best-effort: SCHEMA-JSON and other NetworkNone gates do not need NUL, so
+	// a device-DACL failure must not Block the whole launcher.
+	_ = windowsGrantAppContainerNullDevice(sid)
 	for _, path := range writable {
 		if err := windowsGrantAppContainerPath(path, sid, true, true); err != nil {
 			return err
@@ -173,7 +178,8 @@ func windowsAppContainerReadableTree(path string) bool {
 	if strings.EqualFold(base, "bin") || strings.EqualFold(base, "tool") {
 		return true
 	}
-	if !strings.EqualFold(base, "src") && !strings.EqualFold(base, "pkg") {
+	if !strings.EqualFold(base, "src") && !strings.EqualFold(base, "pkg") &&
+		!strings.EqualFold(base, "lib") {
 		return false
 	}
 	_, err := os.Lstat(filepath.Join(filepath.Dir(path), "bin", "go.exe"))
@@ -248,6 +254,115 @@ func windowsGrantAppContainerAncestorPath(path string, sid *windows.SID) error {
 	return err
 }
 
+func windowsGrantAppContainerNullDevice(sid *windows.SID) error {
+	if sid == nil {
+		return windows.ERROR_INVALID_SID
+	}
+	access := windows.ACCESS_MASK(
+		windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.SYNCHRONIZE,
+	)
+	var firstErr error
+	if err := windowsGrantAppContainerNullDeviceHandle(sid, access); err == nil {
+		return nil
+	} else {
+		firstErr = err
+	}
+	for _, path := range []string{`\\.\NUL`, `NUL`} {
+		if _, err := windowsSetAppContainerPathAccess(path, sid, access, uint32(windows.NO_INHERITANCE)); err == nil {
+			return nil
+		} else if firstErr == nil {
+			firstErr = err
+		}
+		if _, err := windowsSetAppContainerPathAccess(path, sid, windows.GENERIC_ALL, uint32(windows.NO_INHERITANCE)); err == nil {
+			return nil
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func windowsGrantAppContainerNullDeviceHandle(sid *windows.SID, access windows.ACCESS_MASK) error {
+	name, err := windows.UTF16PtrFromString(`\\.\NUL`)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(
+		name,
+		windows.READ_CONTROL|windows.WRITE_DAC,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		0,
+		0,
+	)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(handle)
+
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return err
+	}
+	var merged *windows.ACL
+	preserveWorld := true
+	if descriptor != nil {
+		existing, _, daclErr := descriptor.DACL()
+		if daclErr == nil && existing != nil {
+			merged = existing
+			preserveWorld = false
+		}
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(sid)
+	entries := make([]windows.EXPLICIT_ACCESS, 0, 2)
+	if preserveWorld {
+		world, worldErr := windows.CreateWellKnownSid(windows.WinWorldSid)
+		if worldErr != nil {
+			return worldErr
+		}
+		pinner.Pin(world)
+		entries = append(entries, windows.EXPLICIT_ACCESS{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       uint32(windows.NO_INHERITANCE),
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(world),
+			},
+		})
+	}
+	entries = append(entries, windows.EXPLICIT_ACCESS{
+		AccessPermissions: access,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       uint32(windows.NO_INHERITANCE),
+		Trustee: windows.TRUSTEE{
+			TrusteeForm:  windows.TRUSTEE_IS_SID,
+			TrusteeType:  windows.TRUSTEE_IS_USER,
+			TrusteeValue: windows.TrusteeValueFromSID(sid),
+		},
+	})
+	acl, err := windows.ACLFromEntries(entries, merged)
+	if err != nil {
+		return err
+	}
+	err = windows.SetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		acl,
+		nil,
+	)
+	runtime.KeepAlive(acl)
+	return err
+}
+
 func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writable, readable []string) {
 	required = uniqueExistingWindowsPaths([]string{request.Application, request.Dir})
 	var writePaths, readPaths []string
@@ -282,7 +397,8 @@ func windowsExecutableTree(application string) []string {
 		strings.EqualFold(filepath.Base(directory), "bin") {
 		root := filepath.Dir(directory)
 		paths = append(paths, root, filepath.Join(root, "pkg", "tool"),
-			filepath.Join(root, "pkg"), filepath.Join(root, "src"))
+			filepath.Join(root, "pkg"), filepath.Join(root, "src"),
+			filepath.Join(root, "lib"))
 	}
 	if strings.EqualFold(base, "git.exe") && strings.EqualFold(filepath.Base(directory), "cmd") {
 		paths = append(paths, filepath.Dir(directory))
