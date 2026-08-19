@@ -1,0 +1,76 @@
+name: zz-debug-linux-isolation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/sq-debug-linux-isolation
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - id: dump-rootless-unshare
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "=== runner ==="
+          uname -a
+          echo "ImageOS=${ImageOS-}"
+          echo "ImageVersion=${ImageVersion-}"
+          id
+          echo "=== sysctl ==="
+          for key in \
+            kernel.unprivileged_userns_clone \
+            kernel.apparmor_restrict_unprivileged_userns \
+            user.max_user_namespaces; do
+            sysctl -n "$key" 2>/dev/null | sed "s/^/$key=/" || echo "$key=UNAVAILABLE"
+          done
+          echo "=== subids ==="
+          grep -E "$(id -un)|$(id -u)" /etc/subuid /etc/subgid || true
+          echo "=== trusted walk ==="
+          walk() {
+            local current="$1"
+            while true; do
+              if [ -L "$current" ]; then
+                echo "SYMLINK path=$current -> $(readlink "$current")"
+              fi
+              stat -c 'mode=%a uid=%u gid=%g nlink=%h type=%F perm_write=%A name=%N' "$current" || echo "MISSING $current"
+              local parent
+              parent="$(dirname "$current")"
+              if [ "$parent" = "$current" ]; then
+                break
+              fi
+              current="$parent"
+            done
+          }
+          walk /usr/bin/unshare
+          echo "---"
+          walk /usr/bin/true
+          echo "=== unshare version ==="
+          unshare --version || true
+          echo "=== exact production probe ==="
+          set +e
+          /usr/bin/unshare --user --map-root-user --pid --fork --kill-child=KILL --mount-proc --net -- /usr/bin/true
+          echo "exact_probe_exit=$?"
+          echo "=== flag variants ==="
+          /usr/bin/unshare --user -- /usr/bin/true
+          echo "user_only_exit=$?"
+          /usr/bin/unshare --user --map-root-user -- /usr/bin/true
+          echo "map_root_exit=$?"
+          /usr/bin/unshare --user --map-root-user --pid --fork -- /usr/bin/true
+          echo "pid_fork_exit=$?"
+          /usr/bin/unshare --user --map-root-user --pid --fork --kill-child=KILL -- /usr/bin/true
+          echo "kill_child_exit=$?"
+          /usr/bin/unshare --user --map-root-user --pid --fork --kill-child=KILL --mount-proc -- /usr/bin/true
+          echo "mount_proc_exit=$?"
+          /usr/bin/unshare --user --map-root-user --pid --fork --kill-child=KILL --mount-proc --net -- /usr/bin/true
+          echo "net_exit=$?"
+          echo "=== privileged replay-shaped probe ==="
+          sudo /usr/bin/unshare --net --pid --mount-proc --fork --kill-child -- /usr/bin/true
+          echo "sudo_unshare_exit=$?"
+          echo "=== done ==="
