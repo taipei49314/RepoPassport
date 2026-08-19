@@ -241,9 +241,9 @@ func newRepositoryInspectorWithScratch(
 	if createScratch == nil || entropy == nil {
 		return nil, nil, errors.New("isolated Git environment could not be created")
 	}
-	scratchParent := filepath.Clean(os.TempDir())
-	if !filepath.IsAbs(scratchParent) || !validGateExternalDirectory(requestedRoot, scratchParent) {
-		return nil, nil, errors.New("isolated Git environment parent is invalid")
+	scratchParent, err := canonicalIsolatedGitScratchParent(requestedRoot, os.TempDir())
+	if err != nil {
+		return nil, nil, err
 	}
 	for attempt := 0; attempt < maximumRepositoryScratchCreationAttempts; attempt++ {
 		name, err := newRepositoryScratchName(entropy)
@@ -278,6 +278,26 @@ func newRepositoryScratchName(entropy io.Reader) (string, error) {
 		return "", err
 	}
 	return repositoryScratchPrefix + hex.EncodeToString(random), nil
+}
+
+func canonicalIsolatedGitScratchParent(repositoryRoot, tempDir string) (string, error) {
+	if tempDir == "" {
+		return "", errors.New("isolated Git environment parent is invalid")
+	}
+	absolute, err := filepath.Abs(tempDir)
+	if err != nil {
+		return "", errors.New("isolated Git environment parent is invalid")
+	}
+	absolute = filepath.Clean(absolute)
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil || !filepath.IsAbs(resolved) {
+		return "", errors.New("isolated Git environment parent is invalid")
+	}
+	resolved = filepath.Clean(resolved)
+	if !validGateExternalDirectory(repositoryRoot, resolved) {
+		return "", errors.New("isolated Git environment parent is invalid")
+	}
+	return resolved, nil
 }
 
 func resolveTrustedGitExecutable(repositoryRoot string) (string, error) {
