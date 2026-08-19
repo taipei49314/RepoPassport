@@ -3,9 +3,40 @@
 package sourcequalification
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestLinuxSelectGateIsolationRefusesNonHostPidNamespace(t *testing.T) {
+	t.Parallel()
+	if !linuxInNonHostPidNamespace() {
+		t.Skip("host pid namespace")
+	}
+	_, _, _, ok := linuxSelectGateIsolation(
+		context.Background(),
+		NetworkNone,
+		linuxRootlessProbeEnvironment(),
+		"/usr/bin/true",
+		nil,
+	)
+	if ok {
+		t.Fatal("nested unshare --pid was selected from inside a pid namespace")
+	}
+}
+
+func TestLinuxOSGateExecutorBlocksWithoutCleanupFailedInNonHostPidNamespace(t *testing.T) {
+	if !linuxInNonHostPidNamespace() {
+		t.Skip("host pid namespace")
+	}
+	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
+	result, err := newOSGateExecutor().Execute(context.Background(), request)
+	if !result.Blocked || result.CleanupFailed || !errors.Is(err, errGateIsolationUnavailable) {
+		t.Fatalf("nested isolation result = %#v, err=%v", result, err)
+	}
+}
 
 func TestLinuxRootlessGateIsolationArgumentsKeepMappedRoot(t *testing.T) {
 	t.Parallel()
