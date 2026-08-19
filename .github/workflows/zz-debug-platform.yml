@@ -42,11 +42,46 @@ jobs:
           sudo chmod go-w "$target"
           mode="$(stat -c '%a' "$target")"
           test "$((8#$mode & 8#022))" -eq 0
+      - name: build-controller-linux
+        if: runner.os == 'Linux'
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask
+          mkdir -p "$RUNNER_TEMP/source-qualification-controller-debug"
+          export CGO_ENABLED=0
+          go build -trimpath -buildvcs=true \
+            -o "$RUNNER_TEMP/source-qualification-controller-debug/repopass-source-qualify-linux-amd64" \
+            ./internal/sourcequalification/cmd/repopass-source-qualify
+          stat -c 'controller mode=%a uid=%u gid=%g nlink=%h path=%n' \
+            "$RUNNER_TEMP/source-qualification-controller-debug/repopass-source-qualify-linux-amd64"
+      - name: build-controller-windows
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "PATH=$env:PATH"
+          Get-Command go, git, pwsh | Format-List Name, Source, CommandType, Path
+          $controllerRoot = Join-Path $env:RUNNER_TEMP 'source-qualification-controller-debug'
+          [IO.Directory]::CreateDirectory($controllerRoot) | Out-Null
+          $env:CGO_ENABLED = '0'
+          $controller = Join-Path $controllerRoot 'repopass-source-qualify-windows-amd64.exe'
+          go build -trimpath -buildvcs=true -o $controller ./internal/sourcequalification/cmd/repopass-source-qualify
+          if ($LASTEXITCODE -ne 0) { throw 'controller build failed' }
+          Get-Item $controller | Format-List FullName, Length, Mode, LinkType, Attributes
       - name: dump-platform-configuration
         working-directory: ${{ github.workspace }}/qualification-source
         env:
           SQ_DEBUG_REPO_ROOT: ${{ github.workspace }}/qualification-source
+          SQ_DEBUG_CONTROLLER: ${{ runner.temp }}/source-qualification-controller-debug
         shell: bash
         run: |
           set -euo pipefail
+          umask
+          echo "PATH=$PATH"
+          command -v go
+          command -v git
+          command -v pwsh
           go test -count=1 -run TestZZDebugPlatformConfigurationCI -v ./internal/sourcequalification/

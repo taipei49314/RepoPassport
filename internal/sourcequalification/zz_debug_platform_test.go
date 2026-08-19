@@ -28,8 +28,25 @@ func TestZZDebugPlatformConfigurationCI(t *testing.T) {
 		lane = LaneWindowsAMD64
 	}
 
-	fmt.Printf("debug workspace=%q runnerTemp=%q goos=%s\n", absolute, os.Getenv("RUNNER_TEMP"), runtime.GOOS)
+	fmt.Printf("debug workspace=%q runnerTemp=%q goos=%s cwd=%q\n",
+		absolute, os.Getenv("RUNNER_TEMP"), runtime.GOOS, evalOrErr("."))
 	dumpEnv("ImageOS", "ImageVersion", "RUNNER_OS", "RUNNER_ARCH", "SystemRoot")
+	if self, err := os.Executable(); err != nil {
+		fmt.Printf("debug testSelf err=%v\n", err)
+	} else {
+		dumpResolved(absolute, "test-self", self)
+	}
+	if controllerDir := os.Getenv("SQ_DEBUG_CONTROLLER"); controllerDir != "" {
+		pattern := filepath.Join(filepath.Clean(controllerDir), "repopass-source-qualify*")
+		matches, globErr := filepath.Glob(pattern)
+		fmt.Printf("debug controllerGlob pattern=%q err=%v matches=%q\n", pattern, globErr, matches)
+		for _, path := range matches {
+			info, statErr := os.Lstat(path)
+			fmt.Printf("debug controllerFile path=%q lstatErr=%v mode=%v perm=%#o size=%d\n",
+				path, statErr, fileMode(info), filePerm(info), fileSize(info))
+			dumpResolved(absolute, "controller", path)
+		}
+	}
 
 	temp := os.Getenv("RUNNER_TEMP")
 	if temp == "" {
@@ -130,6 +147,38 @@ func dumpFact(t *testing.T, applications map[string]string, label string, args [
 	defer cancel()
 	line, err := controllerRuntimeFact(ctx, application, args, directory, controllerRuntimeFactEnvironment(environment))
 	fmt.Printf("debug fact %s line=%q err=%v\n", label, line, err)
+}
+
+func dumpResolved(repository, name, path string) {
+	info, statErr := os.Lstat(path)
+	resolved, evalErr := filepath.EvalSymlinks(path)
+	trusted, trustedErr := trustedControllerRuntimePath(repository, path)
+	fmt.Printf("debug tool %s path=%q lstatErr=%v mode=%v perm=%#o writeBits=%#o eval=%q evalErr=%v trusted=%q trustedErr=%v inside=%v available=%v validGate=%v\n",
+		name, path, statErr, fileMode(info), filePerm(info), filePerm(info)&0o022, resolved, evalErr, trusted, trustedErr,
+		pathWithinRepository(repository, path),
+		availableGateApplication(path),
+		trustedErr == nil && validGateApplication(repository, trusted, []string{filepath.Dir(trusted)}))
+}
+
+func fileMode(info os.FileInfo) os.FileMode {
+	if info == nil {
+		return 0
+	}
+	return info.Mode()
+}
+
+func filePerm(info os.FileInfo) os.FileMode {
+	if info == nil {
+		return 0
+	}
+	return info.Mode().Perm()
+}
+
+func fileSize(info os.FileInfo) int64 {
+	if info == nil {
+		return 0
+	}
+	return info.Size()
 }
 
 func evalOrErr(path string) string {
