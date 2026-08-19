@@ -136,10 +136,12 @@ func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
-	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	dir := requireSchemaJSONAppContainerRoot(t)
 	application := requireBuiltSourceQualifyApplication(t)
-	writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
-	writeSchemaJSONFixture(t, dir, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
+	if _, err := os.Stat(filepath.Join(dir, "schemas")); err != nil {
+		writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
+		writeSchemaJSONFixture(t, dir, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
+	}
 
 	started := time.Now()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
@@ -443,4 +445,26 @@ func requireSchemaJSONAppContainerFixtureRoot(t *testing.T) string {
 	}
 	t.Skip("schema JSON AppContainer ancestor chain crosses a host profile root")
 	return ""
+}
+
+func requireSchemaJSONAppContainerRoot(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if ok {
+		moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+		if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err == nil &&
+			schemaJSONAppContainerRootGrantable(moduleRoot) {
+			return moduleRoot
+		}
+	}
+	return requireSchemaJSONAppContainerFixtureRoot(t)
+}
+
+func schemaJSONAppContainerRootGrantable(dir string) bool {
+	for _, ancestor := range windowsAppContainerAncestorPaths(dir) {
+		if windowsAppContainerAncestorGrantForbidden(ancestor) {
+			return false
+		}
+	}
+	return dir != ""
 }

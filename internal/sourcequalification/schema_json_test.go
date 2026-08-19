@@ -23,6 +23,20 @@ func TestValidateSchemaJSONAcceptsStrictSchemaAndFixtureDocuments(t *testing.T) 
 	}
 }
 
+func TestValidateSchemaJSONAcceptsModuleRoot(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("module root %q: %v", root, err)
+	}
+	if err := ValidateSchemaJSON(root); err != nil {
+		t.Fatalf("ValidateSchemaJSON rejected this repository: %v", err)
+	}
+}
+
 func TestValidateSchemaJSONRejectsInvalidOrMissingContracts(t *testing.T) {
 	tests := []struct {
 		name  string
