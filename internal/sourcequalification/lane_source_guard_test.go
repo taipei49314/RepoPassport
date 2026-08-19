@@ -128,6 +128,39 @@ func TestQualificationLaneSourceGuardRestoresModuleDownloadExecutableMode(t *tes
 	}
 }
 
+func TestQualificationLaneSourceGuardRestoresGoSumDespiteEarlierUnrestorableFile(t *testing.T) {
+	fixture := newGitRepositoryFixtureWithGoSum(t)
+	readme := filepath.Join(fixture.root, "README.md")
+	sumPath := filepath.Join(fixture.root, "go.sum")
+	original, err := os.ReadFile(sumPath)
+	if err != nil {
+		t.Fatalf("read tracked go.sum: %v", err)
+	}
+	guard := newQualificationLaneSourceGuard(t, fixture, worktreeMutatingExecutor{
+		mutate: func() error {
+			if err := os.WriteFile(sumPath, append(append([]byte(nil), original...), []byte("golang.org/x/sync v0.21.0 h1:deadbeef\n")...), 0o644); err != nil {
+				return err
+			}
+			if err := os.Remove(readme); err != nil {
+				return err
+			}
+			return os.Mkdir(readme, 0o755)
+		},
+	})
+
+	result, execErr := guard.Execute(context.Background(), moduleDownloadGateProcessRequest())
+	if execErr != nil {
+		t.Fatalf("MODULE-DOWNLOAD source guard returned execution error: %v", execErr)
+	}
+	if !result.SourceChanged {
+		t.Fatal("directory substituted for README.md was accepted")
+	}
+	restored, err := os.ReadFile(sumPath)
+	if err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("go.sum after unrestorable earlier path = %q, want snapshot bytes %q (err=%v)", restored, original, err)
+	}
+}
+
 func TestQualificationLaneSourceGuardBreaksModuleDownloadHardLink(t *testing.T) {
 	fixture := newGitRepositoryFixtureWithGoSum(t)
 	sumPath := filepath.Join(fixture.root, "go.sum")
