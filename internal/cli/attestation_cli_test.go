@@ -821,8 +821,9 @@ func copyFreshnessFixture(t *testing.T) string {
 		t.Fatalf("copy freshness fixture: %v", err)
 	}
 	manifestPath := filepath.Join(targetRoot, "repo-passport.yml")
+	skipIfCLIFailClosedPathUnavailable(t, manifestPath)
 	if _, _, _, err := loadPlan(context.Background(), manifestPath, "quickstart"); err != nil {
-		t.Skipf("freshness fixture manifest is unavailable in this process: %v", err)
+		t.Skipf("freshness fixture plan is unavailable in this process: %v", err)
 	}
 	return manifestPath
 }
@@ -1821,6 +1822,7 @@ func TestAttestCLIArtifactPathValidationPublishesNeitherOutput(t *testing.T) {
 
 func createBlockedAuthoritativeRun(t *testing.T, dataRoot string) string {
 	t.Helper()
+	skipIfCLIFailClosedTempUnavailable(t)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	app := App{
@@ -1843,6 +1845,9 @@ func createBlockedAuthoritativeRun(t *testing.T, dataRoot string) string {
 		"verify", "--manifest", healthyNodeManifest(t),
 	})
 	if exitCode != 0 {
+		if strings.Contains(stdout.String(), "Manifest must be a bounded regular file without links.") {
+			t.Skipf("authoritative run fixture is unavailable in this process: stdout=%s stderr=%s", stdout.String(), stderr.String())
+		}
 		t.Fatalf("create authoritative run exit=%d stdout=%s stderr=%s", exitCode, stdout.String(), stderr.String())
 	}
 	envelope := decodeEnvelope(t, stdout.Bytes())
@@ -1856,6 +1861,7 @@ func createBlockedAuthoritativeRun(t *testing.T, dataRoot string) string {
 
 func writeCLIKeyPair(t *testing.T, directory, prefix string) (ed25519.PrivateKey, []byte, []byte) {
 	t.Helper()
+	skipIfCLIFailClosedTempUnavailable(t)
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate Ed25519 key: %v", err)

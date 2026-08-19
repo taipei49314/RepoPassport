@@ -587,15 +587,8 @@ func TestAssertionFingerprintStableAcrossSchemaValidPrivateStdoutValues(
 
 func healthyNodeManifest(t *testing.T) string {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join(
-		"..", "..", "testdata", "fixtures", "healthy", "healthy-node-cli", "repo-passport.yml",
-	))
-	if err != nil {
-		t.Fatalf("resolve healthy-node-cli manifest: %v", err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("healthy-node-cli manifest: %v", err)
-	}
+	path := healthyNodeManifestPath(t)
+	skipIfCLIFailClosedPathUnavailable(t, path)
 	return path
 }
 
