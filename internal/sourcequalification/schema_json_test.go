@@ -18,6 +18,9 @@ func TestValidateSchemaJSONAcceptsStrictSchemaAndFixtureDocuments(t *testing.T) 
 	if err := ValidateSchemaJSON(root); err != nil {
 		t.Fatalf("ValidateSchemaJSON rejected strict fixture tree: %v", err)
 	}
+	if err := validatePackageDirectoryChain(root); err != nil {
+		t.Fatalf("schema JSON directory chain must be valid without opening the volume root: %v", err)
+	}
 }
 
 func TestValidateSchemaJSONRejectsInvalidOrMissingContracts(t *testing.T) {

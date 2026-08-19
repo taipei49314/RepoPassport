@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 const (
@@ -617,6 +618,13 @@ func validatePackageDirectoryChain(path string) error {
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
+			return nil
+		}
+		// Windows AppContainer cannot open the volume root. EvalSymlinks on the
+		// target already rejected a redirected root; skipping the volume keeps
+		// the reparse check on every real ancestor without SetNamedSecurityInfo
+		// on D:\ or C:\.
+		if runtime.GOOS == "windows" && filepath.Dir(parent) == parent {
 			return nil
 		}
 		current = parent

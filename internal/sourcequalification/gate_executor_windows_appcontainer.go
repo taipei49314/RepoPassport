@@ -156,7 +156,77 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 			windowsGrantAppContainerExistingTree(path, sid)
 		}
 	}
+	// AppContainer lacks SeChangeNotifyPrivilege. Schema JSON opens Dir and
+	// every ancestor except the volume root. Grant path-only traverse on Dir's
+	// ancestors. Do not grant Application/GOROOT ancestors: SetNamedSecurityInfo
+	// on C:\hostedtoolcache hangs CI. Do not inherit or TreeReset.
+	windowsGrantAppContainerAncestorChain(request.Dir, sid)
 	return nil
+}
+
+func windowsAppContainerAncestorPaths(path string) []string {
+	path = filepath.Clean(path)
+	if path == "" {
+		return nil
+	}
+	ancestors := make([]string, 0, 8)
+	for {
+		parent := filepath.Dir(path)
+		if parent == path {
+			return ancestors
+		}
+		path = parent
+		ancestors = append(ancestors, path)
+	}
+}
+
+func windowsGrantAppContainerAncestorChain(path string, sid *windows.SID) {
+	for _, ancestor := range windowsAppContainerAncestorPaths(path) {
+		if windowsAppContainerAncestorGrantForbidden(ancestor) {
+			continue
+		}
+		_ = windowsGrantAppContainerAncestorPath(ancestor, sid)
+	}
+}
+
+func windowsAppContainerAncestorGrantForbidden(path string) bool {
+	if windowsAppContainerTreeMutationForbidden(path) {
+		return true
+	}
+	path = filepath.Clean(path)
+	volume := filepath.VolumeName(path)
+	if volume == "" {
+		return true
+	}
+	relative := strings.TrimPrefix(path, volume)
+	relative = strings.Trim(relative, `\`)
+	if relative == "" {
+		return true
+	}
+	first, _, _ := strings.Cut(strings.ToLower(relative), `\`)
+	switch first {
+	case "users", "program files", "program files (x86)", "programdata", "windows", "documents and settings":
+		return true
+	default:
+		return false
+	}
+}
+
+func windowsGrantAppContainerAncestorPath(path string, sid *windows.SID) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	_, err = windowsSetAppContainerPathAccess(
+		path,
+		sid,
+		windows.GENERIC_READ|windows.GENERIC_EXECUTE,
+		uint32(windows.NO_INHERITANCE),
+	)
+	return err
 }
 
 func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writable, readable []string) {

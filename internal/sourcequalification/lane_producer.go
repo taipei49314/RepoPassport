@@ -374,14 +374,34 @@ func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(current, file.Data) {
+	if !bytes.Equal(current, file.Data) {
+		if err := restoreQualificationLaneTrackedFileWritable(path, info); err != nil {
+			return err
+		}
+		out, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+		if err != nil {
+			return err
+		}
+		if err := writeAndCloseExactBytes(out, file.Data); err != nil {
+			return err
+		}
+	}
+	return restoreQualificationLaneTrackedFileMode(path, file.GitMode)
+}
+
+func restoreQualificationLaneTrackedFileWritable(path string, info os.FileInfo) error {
+	if info.Mode().Perm()&0o200 != 0 {
 		return nil
 	}
-	out, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-	if err != nil {
-		return err
+	return os.Chmod(path, info.Mode().Perm()|0o200)
+}
+
+func restoreQualificationLaneTrackedFileMode(path, gitMode string) error {
+	mode := os.FileMode(0o644)
+	if gitMode == "100755" {
+		mode = 0o755
 	}
-	return writeAndCloseExactBytes(out, file.Data)
+	return os.Chmod(path, mode)
 }
 
 func writeAndCloseExactBytes(file *os.File, data []byte) error {
