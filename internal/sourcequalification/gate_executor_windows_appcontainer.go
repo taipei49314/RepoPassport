@@ -222,7 +222,7 @@ func windowsGrantAppContainerAncestorPath(path string, sid *windows.SID) error {
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+	if !info.IsDir() {
 		return nil
 	}
 	_, err = windowsSetAppContainerPathAccess(

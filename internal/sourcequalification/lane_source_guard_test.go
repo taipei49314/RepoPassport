@@ -332,6 +332,15 @@ func newGitRepositoryFixtureWithGoSum(t *testing.T) *gitRepositoryFixture {
 	return fixture
 }
 
+func TestIsModuleDownloadGateProcessMatchesRegistry(t *testing.T) {
+	if !isModuleDownloadGateProcess(moduleDownloadGateProcessRequest()) {
+		t.Fatal("frozen MODULE-DOWNLOAD argv was not recognized for tracked restore")
+	}
+	if isModuleDownloadGateProcess(gateProcessRequest{Application: "go", Args: []string{"version"}}) {
+		t.Fatal("GO-VERSION argv was treated as MODULE-DOWNLOAD restore")
+	}
+}
+
 func moduleDownloadGateProcessRequest() gateProcessRequest {
 	return gateProcessRequest{
 		Application: "go",

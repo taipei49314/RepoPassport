@@ -164,6 +164,39 @@ func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
 	}
 }
 
+func TestOSGateExecutorIsolatesSchemaJSONThroughJunctionAncestor(t *testing.T) {
+	parent := requireSchemaJSONAppContainerFixtureRoot(t)
+	real := filepath.Join(parent, "real")
+	writeSchemaJSONFixture(t, real, "schemas/example.schema.json", []byte(`{"type":"object"}`))
+	writeSchemaJSONFixture(t, real, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
+	alias := filepath.Join(parent, "junc")
+	if !createSchemaJSONDirectoryRedirect(t, alias, parent) {
+		t.Skip("directory junction fixture is unavailable")
+	}
+	dir := filepath.Join(alias, "real")
+	application := requireBuiltSourceQualifyApplication(t)
+
+	started := time.Now()
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application: application,
+		Args:        []string{"validate-schema-json", "--root", "."},
+		Dir:         dir,
+		Env:         windowsNetworkNoneGoVersionEnvironment(requireTrustedWindowsGoApplication(t), dir),
+		Network:     NetworkNone,
+		Timeout:     30 * time.Second,
+		StdoutLimit: 4096,
+		StderrLimit: 4096,
+	})
+	if time.Since(started) > 20*time.Second {
+		t.Fatal("junction-ancestor schema JSON AppContainer grant walked too long")
+	}
+	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.TimedOut || result.Cancelled || result.CleanupFailed {
+		t.Fatalf("junction-ancestor validate-schema-json result = %#v err=%v stdout=%q stderr=%q",
+			result, err, result.Stdout, result.Stderr)
+	}
+}
+
 func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
 	t.Parallel()
 	application := `C:\hostedtoolcache\windows\go\1.26.6\x64\bin\go.exe`
