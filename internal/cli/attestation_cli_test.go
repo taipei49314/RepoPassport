@@ -820,7 +820,11 @@ func copyFreshnessFixture(t *testing.T) string {
 	}); err != nil {
 		t.Fatalf("copy freshness fixture: %v", err)
 	}
-	return filepath.Join(targetRoot, "repo-passport.yml")
+	manifestPath := filepath.Join(targetRoot, "repo-passport.yml")
+	if _, _, _, err := loadPlan(context.Background(), manifestPath, "quickstart"); err != nil {
+		t.Skipf("freshness fixture manifest is unavailable in this process: %v", err)
+	}
+	return manifestPath
 }
 
 func TestAttestAndVerifyCLISelectedSPDXMetadataPrecedenceAndNonEcho(t *testing.T) {

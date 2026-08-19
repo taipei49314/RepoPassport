@@ -72,7 +72,7 @@ func TestWriteNewBundleFailuresNeverExposePartialFinal(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			parent := t.TempDir()
+			parent := unlinkedTempDir(t)
 			output := filepath.Join(parent, "bundle.tar")
 			operations := defaultBundleFileOperations()
 			test.configure(&operations)
@@ -181,7 +181,7 @@ func TestWriteNewBundlePostPublishFailuresReportRecoveryState(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			parent := t.TempDir()
+			parent := unlinkedTempDir(t)
 			output := filepath.Join(parent, "bundle.tar")
 			operations := defaultBundleFileOperations()
 			test.configure(&operations, output)
@@ -207,7 +207,7 @@ func TestWriteNewBundlePostPublishFailuresReportRecoveryState(t *testing.T) {
 }
 
 func TestWriteNewBundleCleanupDoesNotDeleteReusedTemporaryName(t *testing.T) {
-	parent := t.TempDir()
+	parent := unlinkedTempDir(t)
 	output := filepath.Join(parent, "bundle.tar")
 	replacement := []byte("replacement-owned-by-someone-else")
 	var reusedPath string
@@ -240,7 +240,7 @@ func TestWriteNewBundleCleanupDoesNotDeleteReusedTemporaryName(t *testing.T) {
 }
 
 func TestWriteNewBundleDoesNotClobberExistingOrNonregularDestination(t *testing.T) {
-	parent := t.TempDir()
+	parent := unlinkedTempDir(t)
 	existing := filepath.Join(parent, "existing.tar")
 	want := []byte("existing-content")
 	if err := os.WriteFile(existing, want, 0o600); err != nil {
@@ -266,7 +266,7 @@ func TestWriteNewBundleDoesNotClobberExistingOrNonregularDestination(t *testing.
 }
 
 func TestWriteNewBundleDoesNotClobberSymlinkDestinationWhenAvailable(t *testing.T) {
-	parent := t.TempDir()
+	parent := unlinkedTempDir(t)
 	want := []byte("existing-content")
 	victim := filepath.Join(parent, "victim.txt")
 	if err := os.WriteFile(victim, want, 0o600); err != nil {
@@ -325,7 +325,7 @@ func TestWriteNewPublicKeyFailuresNeverExposePartialFinal(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			parent := t.TempDir()
+			parent := unlinkedTempDir(t)
 			output := filepath.Join(parent, "signer-public.pem")
 			operations := defaultBundleFileOperations()
 			test.configure(&operations)
@@ -347,7 +347,7 @@ func TestWriteNewPublicKeyFailuresNeverExposePartialFinal(t *testing.T) {
 func TestWriteSigningArtifactsBundleFailureRetainsOnlyCompletePublicKey(t *testing.T) {
 	_, privateKey := generateKey(t)
 	publicKeyPEM := publicKeyPEMForTest(t, privateKey)
-	parent := t.TempDir()
+	parent := unlinkedTempDir(t)
 	bundlePath := filepath.Join(parent, "bundle.tar")
 	publicPath := filepath.Join(parent, "signer-public.pem")
 	publicOperations := defaultBundleFileOperations()
@@ -415,7 +415,7 @@ func TestWriteSigningArtifactsPreflightRejectsCollisionAndUnsafeDestinations(t *
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			parent := t.TempDir()
+			parent := unlinkedTempDir(t)
 			bundlePath, publicPath := test.prepare(parent)
 			err := WriteSigningArtifacts(bundlePath, []byte("complete-bundle"), publicPath, publicKeyPEM)
 			if domain.ErrorCodeOf(err) != domain.CodeEvidenceBuildFailed {
@@ -428,7 +428,7 @@ func TestWriteSigningArtifactsPreflightRejectsCollisionAndUnsafeDestinations(t *
 	}
 
 	t.Run("symlink public output", func(t *testing.T) {
-		parent := t.TempDir()
+		parent := unlinkedTempDir(t)
 		victim := filepath.Join(parent, "victim")
 		want := []byte("preserve")
 		if err := os.WriteFile(victim, want, 0o600); err != nil {
@@ -452,7 +452,7 @@ func TestWriteSigningArtifactsPreflightRejectsCollisionAndUnsafeDestinations(t *
 	})
 
 	t.Run("malformed public content", func(t *testing.T) {
-		parent := t.TempDir()
+		parent := unlinkedTempDir(t)
 		bundlePath := filepath.Join(parent, "bundle.tar")
 		publicPath := filepath.Join(parent, "public.pem")
 		err := WriteSigningArtifacts(bundlePath, []byte("complete-bundle"), publicPath, []byte("not a public key\n"))

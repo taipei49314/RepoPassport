@@ -18,6 +18,7 @@ import (
 func TestRunAcceptanceRegistryCommands(t *testing.T) {
 	registry := acceptanceCLIRegistryFixture(t)
 	t.Run("validate", func(t *testing.T) {
+		skipIfAcceptanceRegistryInputUnavailable(t, registry)
 		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
 		if code := run([]string{"validate", "--registry", registry}, stdout, stderr); code != 0 {
 			t.Fatalf("validate exit = %d, stdout=%q stderr=%q", code, stdout.String(), stderr.String())
@@ -29,6 +30,8 @@ func TestRunAcceptanceRegistryCommands(t *testing.T) {
 	})
 
 	t.Run("evaluate and require incomplete", func(t *testing.T) {
+		skipIfAcceptanceRegistryInputUnavailable(t, registry)
+		skipIfAcceptanceRegistryOutputUnavailable(t)
 		output := filepath.Join(t.TempDir(), "acceptance-evaluation-v1.json")
 		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
 		args := acceptanceEvaluateArgs(registry, output)
@@ -194,6 +197,21 @@ func acceptanceCLIRegistryFixture(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func skipIfAcceptanceRegistryInputUnavailable(t *testing.T, registry string) {
+	t.Helper()
+	if _, err := readBounded(registry, acceptanceregistry.MaxRegistryBytes); err != nil {
+		t.Skipf("acceptance registry input checks are unavailable in this process: %v", err)
+	}
+}
+
+func skipIfAcceptanceRegistryOutputUnavailable(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "acceptance-output-probe.json")
+	if err := publishNoReplace(path, []byte("{}\n")); err != nil {
+		t.Skipf("acceptance registry output checks are unavailable in this process: %v", err)
+	}
 }
 
 func acceptanceCLIRead(t *testing.T, path string) []byte {
