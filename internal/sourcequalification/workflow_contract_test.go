@@ -613,6 +613,10 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		"SQ_TREE_SHA":             "${{ needs.context.outputs.tree-sha }}",
 		"SQ_WORKFLOW_RUN_ATTEMPT": "${{ needs.context.outputs.workflow-run-attempt }}",
 		"SQ_WORKFLOW_RUN_ID":      "${{ needs.context.outputs.workflow-run-id }}",
+		// Read-only token for the authenticated attempt-history provider; the
+		// gates never see it (gate environments are rebuilt from scratch).
+		"SQ_GITHUB_TOKEN":   "${{ github.token }}",
+		"SQ_GITHUB_API_URL": "${{ github.api_url }}",
 	}
 	if got := workflowScalarMap(t, workflowRequiredMapping(t, produce, "env")); !reflect.DeepEqual(got, wantProduceEnvironment) {
 		t.Errorf("%s produce-lane environment = %#v, want exact trusted context bindings %#v",

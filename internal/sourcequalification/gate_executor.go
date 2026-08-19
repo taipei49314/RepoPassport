@@ -32,14 +32,14 @@ func newOSGateExecutor() gateExecutor {
 }
 
 func (osGateExecutor) BindApplications(
-	context.Context,
-	map[string]string,
+	ctx context.Context,
+	applications map[string]string,
 ) (gateApplicationBinding, error) {
-	// Process-group/job containment does not make the host toolchain immutable.
-	// Until a platform implementation can hold and execute fixed executable and
-	// dependency identities for the entire lane, production qualification must
-	// report BLOCKED rather than accept mutable pathnames as trusted tools.
-	return nil, errGateApplicationBindingUnavailable
+	// Hold every resolved application file for the lane lifetime: the name→file
+	// identity and content digest are re-verified before each gate, and
+	// platforms with mandatory sharing (Windows) additionally deny writers
+	// while held. See gateApplicationBinding for the exact contract.
+	return newOSGateApplicationBinding(ctx, applications)
 }
 
 func (osGateExecutor) Execute(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {

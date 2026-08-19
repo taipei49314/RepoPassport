@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Implement the two RFC-0002 production authorities whose absence kept lane
+  production BLOCKED before any gate ran: a lane-lifetime gate-application
+  binding that resolves, holds, digests, and re-verifies every gate executable
+  before each gate (name→file identity plus content digest; Windows holds
+  additionally deny writers through mandatory read-only sharing), and an
+  authenticated GitHub attempt-history provider that answers the ordinal-1
+  prior-execution question from workflow-run history — never artifacts or
+  receipt claims — treats a rerun attempt as prior execution, and fails closed
+  on any incomplete, inconsistent, or unauthenticated view. The qualification
+  workflow passes a read-only token to the controller only; gate and git
+  subprocess environments remain allowlist-built and never see it. Loader,
+  runtime, and toolchain-tree mutability outside the held files remains
+  declared by the fixed `gate-execution-is-self-ci` limitation. Lanes can now
+  reach gate execution; every gate must still pass on its own merits.
 - Accept RFC-0004 and migrate the frozen Go toolchain identity from
   go1.26.5 to go1.26.6 across ordinary CI, the source-qualification workflow,
   the `RP-M0-QUAL-GO-VERSION` predicate, and the receipt/tool-manifest

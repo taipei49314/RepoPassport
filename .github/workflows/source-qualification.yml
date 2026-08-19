@@ -127,6 +127,8 @@ jobs:
           SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
           SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
           SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+          SQ_GITHUB_TOKEN: ${{ github.token }}
+          SQ_GITHUB_API_URL: ${{ github.api_url }}
         run: |
           set -euo pipefail
           github_output=$GITHUB_OUTPUT
@@ -232,6 +234,8 @@ jobs:
           SQ_TREE_SHA: ${{ needs.context.outputs.tree-sha }}
           SQ_WORKFLOW_RUN_ID: ${{ needs.context.outputs.workflow-run-id }}
           SQ_WORKFLOW_RUN_ATTEMPT: ${{ needs.context.outputs.workflow-run-attempt }}
+          SQ_GITHUB_TOKEN: ${{ github.token }}
+          SQ_GITHUB_API_URL: ${{ github.api_url }}
         run: |
           $ErrorActionPreference = 'Stop'
           $controller = Join-Path $env:RUNNER_TEMP 'source-qualification-controller-windows\repopass-source-qualify-windows-amd64.exe'
