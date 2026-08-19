@@ -1,0 +1,71 @@
+name: zz-debug-source-dirty
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/sq-debug-source-dirty
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          path: qualification-source
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          cache: false
+          go-version: 1.26.6
+      - shell: bash
+        working-directory: ${{ github.workspace }}/qualification-source
+        run: |
+          set -euo pipefail
+          rm -f .git/config.worktree
+          test ! -e .git/config.worktree
+          for name in go git pwsh gofmt uname; do
+            path="$(command -v "$name")"
+            target="$(readlink -f "$path")"
+            sudo chmod go-w "$target"
+            mode="$(stat -c '%a' "$target")"
+            test "$((8#$mode & 8#022))" -eq 0
+            echo "tool $name mode=$mode path=$target"
+          done
+          echo "=== before isolation ==="
+          git status --porcelain=v1
+          ls -la .git/config.worktree 2>/dev/null || echo 'config.worktree absent'
+          go_bin="$(readlink -f "$(command -v go)")"
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+          private="$RUNNER_TEMP/sq-debug-private"
+          mkdir -m 700 "$private" "$private/home" "$private/go-cache" "$private/go-mod-cache" "$private/tmp"
+          echo "=== privileged go version ==="
+          sudo -n -- /usr/bin/unshare --pid --fork --kill-child=KILL --mount-proc --net -- \
+            /usr/bin/setpriv --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
+              --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs -- \
+              /usr/bin/env -i -- \
+                HOME="$private/home" \
+                LANG=C \
+                LC_ALL=C \
+                PATH="$(dirname "$go_bin"):/usr/bin:/bin" \
+                TZ=UTC \
+                GOCACHE="$private/go-cache" \
+                GOMODCACHE="$private/go-mod-cache" \
+                GOTMPDIR="$private/tmp" \
+                GOTOOLCHAIN=local \
+                GOPROXY=off \
+                GOSUMDB=off \
+                "$go_bin" version
+          echo "go_version_exit=$?"
+          echo "=== after isolation ==="
+          git status --porcelain=v1
+          git diff --stat
+          ls -la .git/config.worktree 2>/dev/null || echo 'config.worktree absent'
+          find . -name 'config.worktree' -o -name '*.tmp' | head
+          echo "ImageVersion=${ImageVersion-}"
