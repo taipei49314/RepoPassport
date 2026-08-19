@@ -667,14 +667,15 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		}
 		restrict := workflowRequiredStep(t, job, "restrict-pwsh-write-bits")
 		requireWorkflowScriptFragments(t, restrict,
-			"command -v pwsh",
+			"for name in go git pwsh gofmt uname",
+			"command -v",
 			"readlink -f",
 			"sudo chmod go-w",
 			"stat -c '%a'",
 			"8#022",
 		)
 		if workflowStepIndex(t, job, "restrict-pwsh-write-bits") >= workflowStepIndex(t, job, "produce-lane") {
-			t.Error("linux must restrict pwsh group/other write bits before produce-lane")
+			t.Error("linux must restrict runtime tool group/other write bits before produce-lane")
 		}
 	} else {
 		for _, fragment := range []string{"$githubOutput", "Remove-Item Env:GITHUB_OUTPUT"} {

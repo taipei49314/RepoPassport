@@ -120,14 +120,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pwsh_path="$(command -v pwsh)"
-          test -n "$pwsh_path"
-          target="$(readlink -f "$pwsh_path")"
-          test -n "$target"
-          test -f "$target"
-          sudo chmod go-w "$target"
-          mode="$(stat -c '%a' "$target")"
-          test "$((8#$mode & 8#022))" -eq 0
+          for name in go git pwsh gofmt uname; do
+            path="$(command -v "$name")"
+            test -n "$path"
+            target="$(readlink -f "$path")"
+            test -n "$target"
+            test -f "$target"
+            sudo chmod go-w "$target"
+            mode="$(stat -c '%a' "$target")"
+            test "$((8#$mode & 8#022))" -eq 0
+          done
       - id: drop-checkout-worktree-config
         working-directory: ${{ github.workspace }}/qualification-source
         shell: bash
