@@ -9,16 +9,24 @@ import (
 
 func TestLinuxRootlessGateIsolationArgumentsKeepMappedRoot(t *testing.T) {
 	t.Parallel()
-	args := linuxRootlessGateIsolationArguments(NetworkNone, "/usr/bin/true", []string{"--version"})
+	args, ok := linuxRootlessGateIsolationArguments(NetworkNone, "/usr/bin/true", []string{"--version"})
+	if !ok {
+		t.Fatal("rootless NetworkNone isolation helpers were not trusted")
+	}
 	for _, want := range []string{"--user", "--map-root-user", "--pid", "--fork", "--kill-child=KILL", "--mount-proc", "--net", "--", "/usr/bin/true", "--version"} {
 		if !containsExactArg(args, want) {
 			t.Fatalf("rootless NetworkNone arguments %q missing %q", args, want)
 		}
 	}
-	modules := linuxRootlessGateIsolationArguments(NetworkGoModules, "/usr/bin/true", nil)
+	requireLoopbackBringUpBefore(t, args, "/usr/bin/true")
+	modules, ok := linuxRootlessGateIsolationArguments(NetworkGoModules, "/usr/bin/true", nil)
+	if !ok {
+		t.Fatal("rootless Go-modules isolation helpers were not trusted")
+	}
 	if containsExactArg(modules, "--net") {
 		t.Fatalf("rootless Go-modules arguments isolated the host network: %q", modules)
 	}
+	requireNoLoopbackBringUp(t, modules)
 }
 
 func TestLinuxPrivilegedGateIsolationArgumentsUseReplayShapedNetns(t *testing.T) {
@@ -53,9 +61,11 @@ func TestLinuxPrivilegedGateIsolationArgumentsUseReplayShapedNetns(t *testing.T)
 	if !containsExactArg(none, "--net") {
 		t.Fatalf("privileged NetworkNone arguments omitted --net: %q", none)
 	}
+	requireLoopbackBringUpBefore(t, none, "--reuid=1001")
 	if containsExactArg(modules, "--net") {
 		t.Fatalf("privileged Go-modules arguments isolated the host network: %q", modules)
 	}
+	requireNoLoopbackBringUp(t, modules)
 }
 
 func privilegedIsolationArgs(
@@ -68,6 +78,35 @@ func privilegedIsolationArgs(
 	t.Helper()
 	_, args, ok := linuxPrivilegedGateIsolationCommand(network, 1001, 1001, environment, application, arguments)
 	return args, ok
+}
+
+func requireLoopbackBringUpBefore(t *testing.T, arguments []string, later string) {
+	t.Helper()
+	scriptIndex := -1
+	laterIndex := -1
+	for index, argument := range arguments {
+		if strings.Contains(argument, `link set lo up && exec "$@"`) {
+			scriptIndex = index
+		}
+		if later != "" && argument == later && laterIndex < 0 {
+			laterIndex = index
+		}
+	}
+	if scriptIndex < 0 {
+		t.Fatalf("NetworkNone isolation omitted loopback bring-up: %q", arguments)
+	}
+	if later != "" && (laterIndex < 0 || scriptIndex >= laterIndex) {
+		t.Fatalf("loopback bring-up was not before %q: %q", later, arguments)
+	}
+}
+
+func requireNoLoopbackBringUp(t *testing.T, arguments []string) {
+	t.Helper()
+	for _, argument := range arguments {
+		if strings.Contains(argument, "link set lo up") {
+			t.Fatalf("non-NetworkNone isolation brought up loopback: %q", arguments)
+		}
+	}
 }
 
 func containsExactArg(arguments []string, want string) bool {
@@ -94,7 +133,11 @@ func TestLinuxPrivilegedGateIsolationCommandRefusesInvalidIdentities(t *testing.
 
 func TestLinuxRootlessAndPrivilegedIsolationAreDistinctVectors(t *testing.T) {
 	t.Parallel()
-	rootless := strings.Join(linuxRootlessGateIsolationArguments(NetworkNone, "/usr/bin/true", nil), "\x00")
+	rootlessArgs, ok := linuxRootlessGateIsolationArguments(NetworkNone, "/usr/bin/true", nil)
+	if !ok {
+		t.Fatal("rootless NetworkNone isolation helpers were not trusted")
+	}
+	rootless := strings.Join(rootlessArgs, "\x00")
 	_, privileged, ok := linuxPrivilegedGateIsolationCommand(NetworkNone, 1001, 1001, []string{"HOME=/"}, "/usr/bin/true", nil)
 	if !ok {
 		t.Fatal("privileged helpers were not trusted")
