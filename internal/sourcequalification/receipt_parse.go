@@ -852,9 +852,43 @@ func validReceiptRunnerImage(value string, lane Lane) bool {
 		if strings.HasPrefix(suffix, "-") {
 			suffix = suffix[1:]
 		}
-		return validReceiptNumericVersion(suffix)
+		if suffix == "" {
+			return false
+		}
+		imageID, qualifier, found := strings.Cut(suffix, "-")
+		if !validReceiptNumericVersion(imageID) {
+			return false
+		}
+		if found && !validReceiptRunnerImageQualifier(qualifier) {
+			return false
+		}
+		return true
 	}
 	return false
+}
+
+func validReceiptRunnerImageQualifier(value string) bool {
+	if len(value) == 0 || len(value) > receiptMaxPlatformBytes {
+		return false
+	}
+	first := value[0]
+	if (first < 'a' || first > 'z') && (first < 'A' || first > 'Z') && (first < '0' || first > '9') {
+		return false
+	}
+	for _, current := range []byte(value) {
+		if (current >= 'a' && current <= 'z') ||
+			(current >= 'A' && current <= 'Z') ||
+			(current >= '0' && current <= '9') {
+			continue
+		}
+		switch current {
+		case '.', '-', '_':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validReceiptPositiveDecimal(value string, maxDigits int) bool {
