@@ -139,6 +139,7 @@ func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	application := requireBuiltSourceQualifyApplication(t)
 	writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
@@ -166,6 +167,7 @@ func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesSchemaJSONThroughJunctionAncestor(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	parent := requireSchemaJSONAppContainerFixtureRoot(t)
 	real := filepath.Join(parent, "real")
 	writeSchemaJSONFixture(t, real, "schemas/example.schema.json", []byte(`{"type":"object"}`))
@@ -202,6 +204,7 @@ func TestOSGateExecutorIsolatesSchemaJSONThroughJunctionAncestor(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesGoVetWithNetworkNone(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.invalid/vetprobe\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -233,6 +236,7 @@ func TestOSGateExecutorIsolatesGoVetWithNetworkNone(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesGoTestWithNetworkNone(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.invalid/testprobe\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -264,6 +268,7 @@ func TestOSGateExecutorIsolatesGoTestWithNetworkNone(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	modcache := filepath.Join(dir, "modcache")
 	gocache := filepath.Join(dir, "gocache")
@@ -338,6 +343,7 @@ func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("caller path is unavailable")
@@ -453,6 +459,7 @@ func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
 }
 
 func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
 	locked := filepath.Join(dir, "locked-pack")
@@ -481,6 +488,7 @@ func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t
 }
 
 func TestOSGateExecutorIsolatesGoVersionWithNetworkNone(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
@@ -505,6 +513,7 @@ func TestOSGateExecutorIsolatesGoVersionWithNetworkNone(t *testing.T) {
 }
 
 func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
 	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
 	request := gateProcessRequest{

@@ -15,6 +15,15 @@ const (
 	gateExecutorNetworkTargetEnvironment = "REPOPASS_GATE_EXECUTOR_NETWORK_TARGET"
 )
 
+func skipIfHostLoopbackUnavailable(t *testing.T) {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("host loopback listen is unavailable: %v", err)
+	}
+	_ = listener.Close()
+}
+
 func TestOSGateExecutorEnforcesNetworkNoneOrBlocksBeforeInvocation(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
