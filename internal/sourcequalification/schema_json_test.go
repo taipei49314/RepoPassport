@@ -163,6 +163,21 @@ func TestValidateSchemaJSONRejectsDirectoryRedirectWithoutFollowingIt(t *testing
 	}
 }
 
+func TestValidateSchemaJSONAcceptsAliasSpellingOfTheSameDirectory(t *testing.T) {
+	parent := t.TempDir()
+	realRoot := filepath.Join(parent, "real")
+	writeSchemaJSONFixture(t, realRoot, "schemas/example.schema.json", []byte(`{"type":"object"}`))
+	writeSchemaJSONFixture(t, realRoot, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
+	aliasParent := filepath.Join(parent, "alias")
+	if !createSchemaJSONDirectoryRedirect(t, aliasParent, parent) {
+		t.Skip("directory alias fixture is unavailable")
+	}
+	aliasedRoot := filepath.Join(aliasParent, "real")
+	if err := ValidateSchemaJSON(aliasedRoot); err != nil {
+		t.Fatalf("ValidateSchemaJSON rejected an EvalSymlinks spelling of the same directory: %v", err)
+	}
+}
+
 type schemaJSONWideTestDirectory struct {
 	remaining int
 	emitted   int

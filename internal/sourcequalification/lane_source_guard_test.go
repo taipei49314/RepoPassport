@@ -128,6 +128,46 @@ func TestQualificationLaneSourceGuardRestoresModuleDownloadExecutableMode(t *tes
 	}
 }
 
+func TestQualificationLaneSourceGuardBreaksModuleDownloadHardLink(t *testing.T) {
+	fixture := newGitRepositoryFixtureWithGoSum(t)
+	sumPath := filepath.Join(fixture.root, "go.sum")
+	alias := filepath.Join(t.TempDir(), "go.sum.alias")
+	original, err := os.ReadFile(sumPath)
+	if err != nil {
+		t.Fatalf("read tracked go.sum: %v", err)
+	}
+	guard := newQualificationLaneSourceGuard(t, fixture, worktreeMutatingExecutor{
+		mutate: func() error {
+			return os.Link(sumPath, alias)
+		},
+	})
+
+	result, execErr := guard.Execute(context.Background(), moduleDownloadGateProcessRequest())
+	if execErr != nil {
+		if strings.Contains(execErr.Error(), "hard-link") || errors.Is(execErr, os.ErrPermission) {
+			t.Skipf("hard-link fixture is unavailable: %v", execErr)
+		}
+		t.Fatalf("MODULE-DOWNLOAD source guard returned execution error: %v", execErr)
+	}
+	if result.SourceChanged {
+		if _, err := os.Lstat(alias); err != nil {
+			t.Skipf("hard-link fixture is unavailable: %v", err)
+		}
+		t.Fatal("MODULE-DOWNLOAD hard-linked go.sum was treated as SOURCE_DIRTY")
+	}
+	restored, err := os.ReadFile(sumPath)
+	if err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("hard-linked go.sum after MODULE-DOWNLOAD = %q, want snapshot bytes %q (err=%v)", restored, original, err)
+	}
+	info, err := os.Lstat(sumPath)
+	if err != nil {
+		t.Fatalf("stat restored go.sum: %v", err)
+	}
+	if err := validateWorktreeEntryMetadata(sumPath, info, "100644"); err != nil {
+		t.Fatalf("restored go.sum still has a hard-link alias: %v", err)
+	}
+}
+
 func TestQualificationLaneSourceGuardRejectsModuleDownloadUntrackedFile(t *testing.T) {
 	fixture := newGitRepositoryFixture(t)
 	untracked := filepath.Join(fixture.root, "untracked.txt")
