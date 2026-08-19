@@ -109,12 +109,15 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		if checkErr != nil {
 			result.CleanupFailed = true
 		} else if alive {
+			// Residual members after Wait are reaped first. CleanupFailed is
+			// reserved for a tree that is still alive after SIGKILL, matching
+			// the timeout path. Direct Kill of a sudo-started group can be
+			// EPERM; unixKillProcessGroup then uses sudo kill.
 			terminated = true
-			result.CleanupFailed = true
 		}
 	}
 	if terminated {
-		if err := syscall.Kill(-processGroup, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		if err := unixKillProcessGroup(processGroup); err != nil && !errors.Is(err, syscall.ESRCH) {
 			result.CleanupFailed = true
 		}
 	}
@@ -402,6 +405,53 @@ func linuxIsolationProbe(ctx context.Context, application string, arguments, env
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
 	}
 	return err == nil && probeContext.Err() == nil
+}
+
+func unixKillProcessGroup(processGroup int) error {
+	if processGroup <= 1 {
+		return syscall.EINVAL
+	}
+	err := syscall.Kill(-processGroup, syscall.SIGKILL)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	if !errors.Is(err, syscall.EPERM) {
+		return err
+	}
+	return unixPrivilegedKillProcessGroup(processGroup)
+}
+
+func linuxPrivilegedKillProcessGroupCommand(processGroup int) (string, []string, bool) {
+	if processGroup <= 1 {
+		return "", nil, false
+	}
+	sudo, sudoOK := trustedLinuxSystemApplication("/usr/bin/sudo")
+	kill, killOK := trustedLinuxSystemApplication("/usr/bin/kill")
+	if !killOK {
+		kill, killOK = trustedLinuxSystemApplication("/bin/kill")
+	}
+	if !sudoOK || !killOK {
+		return "", nil, false
+	}
+	return sudo, []string{"-n", "--", kill, "-s", "KILL", "--", "-" + strconv.Itoa(processGroup)}, true
+}
+
+func unixPrivilegedKillProcessGroup(processGroup int) error {
+	sudo, arguments, ok := linuxPrivilegedKillProcessGroupCommand(processGroup)
+	if !ok {
+		return syscall.EPERM
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, sudo, arguments...)
+	command.Dir = "/"
+	command.Env = linuxPrivilegedLauncherEnvironment()
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	err := command.Run()
+	if command.Process != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	return err
 }
 
 func linuxRootlessProbeEnvironment() []string {

@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -21,6 +23,63 @@ func TestLinuxPid1IsHostInitMatchesProcComm(t *testing.T) {
 	if got := linuxPid1IsHostInit(); got != want {
 		t.Fatalf("linuxPid1IsHostInit() = %v, /proc/1/comm = %q", got, comm)
 	}
+}
+
+func TestLinuxPrivilegedKillProcessGroupCommand(t *testing.T) {
+	t.Parallel()
+	if _, _, ok := linuxPrivilegedKillProcessGroupCommand(1); ok {
+		t.Fatal("pid 1 process group was accepted")
+	}
+	if _, _, ok := linuxPrivilegedKillProcessGroupCommand(0); ok {
+		t.Fatal("process group 0 was accepted")
+	}
+	if _, _, ok := linuxPrivilegedKillProcessGroupCommand(-9); ok {
+		t.Fatal("negative process group was accepted")
+	}
+	sudo, args, ok := linuxPrivilegedKillProcessGroupCommand(9562)
+	if !ok {
+		t.Skip("privileged kill helpers were not trusted")
+	}
+	if sudo != "/usr/bin/sudo" {
+		t.Fatalf("privileged kill launcher = %q, want /usr/bin/sudo", sudo)
+	}
+	for _, want := range []string{"-n", "--", "-s", "KILL", "--", "-9562"} {
+		if !containsExactArg(args, want) {
+			t.Fatalf("privileged kill arguments %q missing %q", args, want)
+		}
+	}
+	if !containsExactArg(args, "/usr/bin/kill") && !containsExactArg(args, "/bin/kill") {
+		t.Fatalf("privileged kill arguments %q omitted kill", args)
+	}
+	killIndex := -1
+	pgidIndex := -1
+	for index, argument := range args {
+		if argument == "/usr/bin/kill" || argument == "/bin/kill" {
+			killIndex = index
+		}
+		if argument == "-9562" {
+			pgidIndex = index
+		}
+	}
+	if killIndex < 0 || pgidIndex < 2 || args[pgidIndex-1] != "--" {
+		t.Fatalf("process group %q was not after kill --: %q", "-9562", args)
+	}
+}
+
+func TestUnixKillProcessGroupReapsMembers(t *testing.T) {
+	command := exec.Command("sleep", "30")
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	processGroup := command.Process.Pid
+	if err := unixKillProcessGroup(processGroup); err != nil && !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("unixKillProcessGroup: %v", err)
+	}
+	if !waitUnixGateProcessGroup(processGroup, time.Now().Add(5*time.Second)) {
+		t.Fatal("process group survived SIGKILL")
+	}
+	_ = command.Wait()
 }
 
 func TestLinuxSelectGateIsolationRefusesInheritedPidNamespaceMarker(t *testing.T) {
