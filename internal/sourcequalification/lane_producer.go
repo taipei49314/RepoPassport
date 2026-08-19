@@ -353,38 +353,32 @@ func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error
 	}
 
 	info, statErr := os.Lstat(path)
-	if errors.Is(statErr, os.ErrNotExist) {
-		mode := os.FileMode(0o644)
-		if file.GitMode == "100755" {
-			mode = 0o755
-		}
-		created, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-		if createErr != nil {
-			return createErr
-		}
-		return writeAndCloseExactBytes(created, file.Data)
-	}
-	if statErr != nil {
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
 	}
-	if !info.Mode().IsRegular() {
-		return errors.New("tracked restore path is not a regular file")
-	}
-	current, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(current, file.Data) {
+	if statErr == nil {
+		if !info.Mode().IsRegular() {
+			return errors.New("tracked restore path is not a regular file")
+		}
 		if err := restoreQualificationLaneTrackedFileWritable(path, info); err != nil {
 			return err
 		}
-		out, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
-		if err != nil {
+		// Unlink before recreate. O_TRUNC on a shared inode would rewrite the
+		// other hard link (Go's module cache) and leave nlink>1 for inspect.
+		if err := os.Remove(path); err != nil {
 			return err
 		}
-		if err := writeAndCloseExactBytes(out, file.Data); err != nil {
-			return err
-		}
+	}
+	mode := os.FileMode(0o644)
+	if file.GitMode == "100755" {
+		mode = 0o755
+	}
+	created, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if createErr != nil {
+		return createErr
+	}
+	if err := writeAndCloseExactBytes(created, file.Data); err != nil {
+		return err
 	}
 	return restoreQualificationLaneTrackedFileMode(path, file.GitMode)
 }
