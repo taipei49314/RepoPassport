@@ -139,12 +139,10 @@ func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
 }
 
 func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
-	dir := requireSchemaJSONAppContainerRoot(t)
+	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	application := requireBuiltSourceQualifyApplication(t)
-	if _, err := os.Stat(filepath.Join(dir, "schemas")); err != nil {
-		writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
-		writeSchemaJSONFixture(t, dir, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
-	}
+	writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
+	writeSchemaJSONFixture(t, dir, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
 
 	started := time.Now()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
@@ -314,26 +312,27 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 		t.Fatal("caller path is unavailable")
 	}
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
-	if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil ||
-		!schemaJSONAppContainerRootGrantable(moduleRoot) {
+	if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil {
 		if os.Getenv("GITHUB_ACTIONS") == "true" {
-			t.Fatalf("module root %q must be AppContainer-grantable on GitHub Actions", moduleRoot)
+			t.Fatalf("module root %q is missing go.mod", moduleRoot)
 		}
-		t.Skip("module root AppContainer ancestor chain crosses a host profile root")
+		t.Skip("module root is unavailable")
 	}
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	src := filepath.Join(dir, "module")
 	modcache := filepath.Join(dir, "modcache")
 	gocache := filepath.Join(dir, "gocache")
 	gopath := filepath.Join(dir, "gopath")
 	tmpdir := filepath.Join(dir, "tmp")
-	for _, path := range []string{modcache, gocache, gopath, tmpdir} {
+	for _, path := range []string{src, modcache, gocache, gopath, tmpdir} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
+	copyGrantableModuleTree(t, moduleRoot, src)
 	application := requireTrustedWindowsGoApplication(t)
 	download := exec.Command(application, "mod", "download", "-modcacherw", "all")
-	download.Dir = moduleRoot
+	download.Dir = src
 	download.Env = []string{
 		"PATH=" + filepath.Dir(application),
 		"HOME=" + dir,
@@ -353,6 +352,9 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 		"WINDIR=" + os.Getenv("WINDIR"),
 	}
 	if output, err := download.CombinedOutput(); err != nil {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("host readonly module download unavailable: %v\n%s", err, output)
+		}
 		t.Skipf("host readonly module download unavailable: %v\n%s", err, output)
 	}
 
@@ -375,7 +377,7 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
 		Application: application,
 		Args:        []string{"vet", "./..."},
-		Dir:         moduleRoot,
+		Dir:         src,
 		Env:         env,
 		Network:     NetworkNone,
 		Timeout:     5 * time.Minute,
@@ -671,17 +673,49 @@ func requireSchemaJSONAppContainerFixtureRoot(t *testing.T) string {
 	return ""
 }
 
-func requireSchemaJSONAppContainerRoot(t *testing.T) string {
+func copyGrantableModuleTree(t *testing.T, src, dst string) {
 	t.Helper()
-	_, thisFile, _, ok := runtime.Caller(0)
-	if ok {
-		moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
-		if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err == nil &&
-			schemaJSONAppContainerRootGrantable(moduleRoot) {
-			return moduleRoot
+	err := filepath.WalkDir(src, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		portable := filepath.ToSlash(rel)
+		if portable == ".git" || strings.HasPrefix(portable, ".git/") {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copy module tree: %v", err)
 	}
-	return requireSchemaJSONAppContainerFixtureRoot(t)
 }
 
 func schemaJSONAppContainerRootGrantable(dir string) bool {
