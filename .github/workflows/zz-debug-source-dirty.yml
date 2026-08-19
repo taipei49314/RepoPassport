@@ -167,3 +167,20 @@ jobs:
           set -e
           echo "source_guard_exit=$guard_exit"
           dump_git_state "after source-guard reproduction"
+
+          echo "=== produceQualificationLane reproduction ==="
+          go build -trimpath -buildvcs=true \
+            -o "$RUNNER_TEMP/sq-debug-controller" \
+            ./internal/sourcequalification/cmd/repopass-source-qualify
+          dump_git_state "after controller build"
+          set +e
+          env SQ_DEBUG_PRODUCE_LANE=1 \
+            SQ_DEBUG_REPO_ROOT="$root" \
+            SQ_DEBUG_BASE="$base" \
+            SQ_DEBUG_TESTED="$tested" \
+            SQ_DEBUG_CONTROLLER="$RUNNER_TEMP/sq-debug-controller" \
+            "$RUNNER_TEMP/sq-debug-guard.test" -test.run TestDebugProduceQualificationLane -test.v
+          produce_exit=$?
+          set -e
+          echo "produce_lane_exit=$produce_exit"
+          dump_git_state "after produceQualificationLane reproduction"

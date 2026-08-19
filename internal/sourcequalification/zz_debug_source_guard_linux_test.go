@@ -168,6 +168,108 @@ func mustTrustedLookPath(t *testing.T, repositoryRoot, name string) string {
 	return resolved
 }
 
+type debugHistoryNoPrior struct{}
+
+func (debugHistoryNoPrior) HasPriorExecution(context.Context, laneAttemptHistoryScope) (bool, error) {
+	return false, nil
+}
+
+type loggingLaneInspector struct {
+	calls int
+}
+
+func (inspector *loggingLaneInspector) InspectRepository(
+	request RepositoryRequest,
+) (RepositorySnapshot, error) {
+	inspector.calls++
+	snapshot, err := InspectRepository(request)
+	if err != nil {
+		fmt.Printf("produce-inspect-%d INSPECT_ERR=%v\n", inspector.calls, err)
+		return snapshot, err
+	}
+	fmt.Printf(
+		"produce-inspect-%d INSPECT_OK files=%d tree=%s\n",
+		inspector.calls,
+		len(snapshot.Files),
+		snapshot.Subject.TreeSHA,
+	)
+	return snapshot, nil
+}
+
+func TestDebugProduceQualificationLane(t *testing.T) {
+	if os.Getenv("SQ_DEBUG_PRODUCE_LANE") != "1" {
+		t.Skip("debug produce-lane reproduction disabled")
+	}
+
+	root := os.Getenv("SQ_DEBUG_REPO_ROOT")
+	base := os.Getenv("SQ_DEBUG_BASE")
+	tested := os.Getenv("SQ_DEBUG_TESTED")
+	controller := os.Getenv("SQ_DEBUG_CONTROLLER")
+	parent := os.Getenv("RUNNER_TEMP")
+	if root == "" || base == "" || tested == "" || controller == "" || parent == "" {
+		t.Fatal("SQ_DEBUG_* and RUNNER_TEMP are required")
+	}
+	parent, err := filepath.Abs(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent = filepath.Clean(parent)
+
+	workspace, cleanup, err := createPrivateQualificationWorkspace(parent, "sqdebugproducews")
+	if err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	defer func() {
+		if cleanup != nil {
+			_ = cleanup()
+		}
+	}()
+
+	outputDir := filepath.Join(parent, "sqdebugproduceout")
+	request := ProduceLaneRequest{
+		RepoRoot:               root,
+		Lane:                   LaneLinuxAMD64,
+		Event:                  "push",
+		ExpectedRef:            canonicalMainRef,
+		ExpectedBaseRevision:   base,
+		ExpectedTestedRevision: tested,
+		ExpectedTreeSHA:        strings.TrimSpace(mustGitLine(t, root, "rev-parse", "HEAD^{tree}")),
+		WorkflowRunID:          "1",
+		WorkflowRunAttempt:     1,
+		PrivateLogRoot:         workspace,
+		OutputDir:              outputDir,
+	}
+
+	configuration, err := buildProductionLaneConfiguration(context.Background(), request, debugHistoryNoPrior{})
+	if err != nil {
+		t.Fatalf("buildProductionLaneConfiguration: %v", err)
+	}
+	inspector := &loggingLaneInspector{}
+	configuration.dependencies.Repository = inspector
+	configuration.dependencies.SelfController = productionLaneSelfController{
+		path:           controller,
+		expectedGOOS:   "linux",
+		testedRevision: tested,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	status, laneErr := produceQualificationLane(ctx, configuration.laneRequest, configuration.dependencies)
+	fmt.Printf("produceQualificationLane status=%q err=%v inspectCalls=%d\n", status, laneErr, inspector.calls)
+	t.Logf("produceQualificationLane status=%q err=%v inspectCalls=%d", status, laneErr, inspector.calls)
+}
+
+func mustGitLine(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(output))
+}
+
 func uniqueDirs(applications map[string]string) []string {
 	seen := map[string]struct{}{}
 	var dirs []string
