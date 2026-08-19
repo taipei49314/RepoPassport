@@ -4,6 +4,7 @@ package sourcequalification
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -188,6 +189,10 @@ func TestQualificationLaneSourceGuardRestoresIsolatedFullModuleDownload(t *testi
 	}
 	fixture := newGitRepositoryFixture(t)
 	replaceFixtureWithTrackedModuleTree(t, fixture, moduleRoot)
+	if _, err := InspectRepository(fixture.request()); err != nil {
+		t.Fatalf("InspectRepository rejected copied module tree: %v objects=%s",
+			err, diagnoseGitObjectStore(t, fixture.root))
+	}
 
 	home, err := os.MkdirTemp("", "repopass-isolated-full-download-")
 	if err != nil {
@@ -257,6 +262,9 @@ func replaceFixtureWithTrackedModuleTree(t *testing.T, fixture *gitRepositoryFix
 			t.Fatal(err)
 		}
 	}
+	fixture.git(t, "config", "gc.auto", "0")
+	fixture.git(t, "config", "gc.autoDetach", "false")
+	fixture.git(t, "config", "maintenance.auto", "false")
 
 	listed, err := exec.Command("git", "-C", moduleRoot, "ls-files", "-z").Output()
 	if err != nil {
@@ -340,6 +348,57 @@ func unexpectedWorktreePaths(t *testing.T, root string, snapshot RepositorySnaps
 		t.Fatalf("worktree extras walk: %v", err)
 	}
 	return extras
+}
+
+func diagnoseGitObjectStore(t *testing.T, root string) string {
+	t.Helper()
+	objectRoot := filepath.Join(root, ".git", "objects")
+	var report []string
+	err := filepath.WalkDir(objectRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			report = append(report, "walk "+path+": "+walkErr.Error())
+			return walkErr
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			report = append(report, "lstat "+path+": "+err.Error())
+			return nil
+		}
+		name := entry.Name()
+		if name == "" || name == "." || name == ".." || filepath.Base(name) != name {
+			report = append(report, "name "+path)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			report = append(report, "symlink "+path)
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			report = append(report, "special "+path+" mode="+info.Mode().String())
+		}
+		if info.Mode().IsRegular() {
+			if err := validateNoLinkMetadata(path, info); err != nil {
+				report = append(report, path+": "+err.Error())
+			}
+		}
+		if info.IsDir() {
+			directory, _, err := openValidatedPackageDirectory(path)
+			if err != nil {
+				report = append(report, "open "+path+": "+err.Error())
+			} else {
+				_ = directory.Close()
+			}
+		}
+		if len(report) >= 8 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, filepath.SkipAll) {
+		report = append(report, err.Error())
+	}
+	if len(report) == 0 {
+		return "none"
+	}
+	return strings.Join(report, "; ")
 }
 
 func isolatedGoModuleEnvironment(goPath, home, modcache, gocache, tmpdir string, network bool) []string {
