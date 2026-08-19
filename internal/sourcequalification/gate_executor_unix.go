@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -31,8 +32,14 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	}
 	defer stderrReader.Close()
 
-	isolationApplication, ok := trustedLinuxSystemApplication("/usr/bin/unshare")
-	if !ok || !linuxGateIsolationAvailable(ctx, isolationApplication, request.Network) {
+	isolationApplication, isolationArguments, isolationEnvironment, ok := linuxSelectGateIsolation(
+		ctx,
+		request.Network,
+		request.Env,
+		request.Application,
+		request.Args,
+	)
+	if !ok {
 		_ = stdoutWriter.Close()
 		_ = stderrWriter.Close()
 		return gateProcessResult{Blocked: true}, errors.Join(
@@ -40,10 +47,9 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 			errGateIsolationUnavailable,
 		)
 	}
-	isolationArguments := linuxGateIsolationArguments(request.Network, request.Application, request.Args)
 	command := exec.Command(isolationApplication, isolationArguments...)
 	command.Dir = request.Dir
-	command.Env = append([]string(nil), request.Env...)
+	command.Env = append([]string(nil), isolationEnvironment...)
 	command.Stdout = stdoutWriter
 	command.Stderr = stderrWriter
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -155,7 +161,50 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	return result, nil
 }
 
-func linuxGateIsolationArguments(network NetworkMode, application string, arguments []string) []string {
+func linuxSelectGateIsolation(
+	ctx context.Context,
+	network NetworkMode,
+	environment []string,
+	application string,
+	arguments []string,
+) (string, []string, []string, bool) {
+	probeApplication, probeOK := trustedLinuxSystemApplication("/usr/bin/true")
+	if !probeOK {
+		return "", nil, nil, false
+	}
+	unshare, unshareOK := trustedLinuxSystemApplication("/usr/bin/unshare")
+	if unshareOK {
+		rootlessArguments := linuxRootlessGateIsolationArguments(network, probeApplication, nil)
+		if linuxIsolationProbe(ctx, unshare, rootlessArguments, linuxRootlessProbeEnvironment()) {
+			return unshare, linuxRootlessGateIsolationArguments(network, application, arguments), append([]string(nil), environment...), true
+		}
+	}
+	sudo, privilegedArguments, ok := linuxPrivilegedGateIsolationCommand(
+		network,
+		os.Getuid(),
+		os.Getgid(),
+		linuxPrivilegedProbeEnvironment(),
+		probeApplication,
+		nil,
+	)
+	if !ok || !linuxIsolationProbe(ctx, sudo, privilegedArguments, linuxPrivilegedLauncherEnvironment()) {
+		return "", nil, nil, false
+	}
+	sudo, privilegedArguments, ok = linuxPrivilegedGateIsolationCommand(
+		network,
+		os.Getuid(),
+		os.Getgid(),
+		environment,
+		application,
+		arguments,
+	)
+	if !ok {
+		return "", nil, nil, false
+	}
+	return sudo, privilegedArguments, linuxPrivilegedLauncherEnvironment(), true
+}
+
+func linuxRootlessGateIsolationArguments(network NetworkMode, application string, arguments []string) []string {
 	result := []string{
 		"--user",
 		"--map-root-user",
@@ -169,6 +218,47 @@ func linuxGateIsolationArguments(network NetworkMode, application string, argume
 	}
 	result = append(result, "--", application)
 	return append(result, arguments...)
+}
+
+func linuxPrivilegedGateIsolationCommand(
+	network NetworkMode,
+	uid, gid int,
+	environment []string,
+	application string,
+	arguments []string,
+) (string, []string, bool) {
+	if uid < 0 || gid < 0 || application == "" {
+		return "", nil, false
+	}
+	sudo, sudoOK := trustedLinuxSystemApplication("/usr/bin/sudo")
+	unshare, unshareOK := trustedLinuxSystemApplication("/usr/bin/unshare")
+	setpriv, setprivOK := trustedLinuxSystemApplication("/usr/bin/setpriv")
+	env, envOK := trustedLinuxSystemApplication("/usr/bin/env")
+	if !sudoOK || !unshareOK || !setprivOK || !envOK {
+		return "", nil, false
+	}
+	result := []string{"-n", "--", unshare, "--pid", "--fork", "--kill-child=KILL", "--mount-proc"}
+	if network == NetworkNone {
+		result = append(result, "--net")
+	}
+	result = append(result,
+		"--",
+		setpriv,
+		"--reuid="+strconv.Itoa(uid),
+		"--regid="+strconv.Itoa(gid),
+		"--clear-groups",
+		"--inh-caps=-all",
+		"--ambient-caps=-all",
+		"--bounding-set=-all",
+		"--no-new-privs",
+		"--",
+		env,
+		"-i",
+		"--",
+	)
+	result = append(result, environment...)
+	result = append(result, application)
+	return sudo, append(result, arguments...), true
 }
 
 func trustedLinuxSystemApplication(application string) (string, bool) {
@@ -192,21 +282,28 @@ func trustedLinuxSystemApplication(application string) (string, bool) {
 	return application, true
 }
 
-func linuxGateIsolationAvailable(ctx context.Context, isolationApplication string, network NetworkMode) bool {
-	probeApplication, ok := trustedLinuxSystemApplication("/usr/bin/true")
-	if !ok {
+func linuxIsolationProbe(ctx context.Context, application string, arguments, environment []string) bool {
+	if application == "" || len(arguments) == 0 || len(environment) == 0 {
 		return false
 	}
 	probeContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	command := exec.CommandContext(
-		probeContext,
-		isolationApplication,
-		linuxGateIsolationArguments(network, probeApplication, nil)...,
-	)
+	command := exec.CommandContext(probeContext, application, arguments...)
 	command.Dir = "/"
-	command.Env = []string{"HOME=/", "LANG=C", "LC_ALL=C", "PATH=/usr/bin:/bin", "TZ=UTC"}
+	command.Env = append([]string(nil), environment...)
 	return command.Run() == nil && probeContext.Err() == nil
+}
+
+func linuxRootlessProbeEnvironment() []string {
+	return []string{"HOME=/", "LANG=C", "LC_ALL=C", "PATH=/usr/bin:/bin", "TZ=UTC"}
+}
+
+func linuxPrivilegedProbeEnvironment() []string {
+	return linuxRootlessProbeEnvironment()
+}
+
+func linuxPrivilegedLauncherEnvironment() []string {
+	return []string{"LANG=C", "LC_ALL=C", "PATH=/usr/bin:/bin", "TZ=UTC"}
 }
 
 func drainUnixGatePipe(reader *os.File, destination io.Writer) <-chan error {
