@@ -174,9 +174,12 @@ func linuxSelectGateIsolation(
 	}
 	unshare, unshareOK := trustedLinuxSystemApplication("/usr/bin/unshare")
 	if unshareOK {
-		rootlessArguments := linuxRootlessGateIsolationArguments(network, probeApplication, nil)
-		if linuxIsolationProbe(ctx, unshare, rootlessArguments, linuxRootlessProbeEnvironment()) {
-			return unshare, linuxRootlessGateIsolationArguments(network, application, arguments), append([]string(nil), environment...), true
+		rootlessProbe, probeOK := linuxRootlessGateIsolationArguments(network, probeApplication, nil)
+		if probeOK && linuxIsolationProbe(ctx, unshare, rootlessProbe, linuxRootlessProbeEnvironment()) {
+			rootlessArguments, argsOK := linuxRootlessGateIsolationArguments(network, application, arguments)
+			if argsOK {
+				return unshare, rootlessArguments, append([]string(nil), environment...), true
+			}
 		}
 	}
 	sudo, privilegedArguments, ok := linuxPrivilegedGateIsolationCommand(
@@ -204,7 +207,7 @@ func linuxSelectGateIsolation(
 	return sudo, privilegedArguments, linuxPrivilegedLauncherEnvironment(), true
 }
 
-func linuxRootlessGateIsolationArguments(network NetworkMode, application string, arguments []string) []string {
+func linuxRootlessGateIsolationArguments(network NetworkMode, application string, arguments []string) ([]string, bool) {
 	result := []string{
 		"--user",
 		"--map-root-user",
@@ -216,8 +219,19 @@ func linuxRootlessGateIsolationArguments(network NetworkMode, application string
 	if network == NetworkNone {
 		result = append(result, "--net")
 	}
-	result = append(result, "--", application)
-	return append(result, arguments...)
+	result = append(result, "--")
+	if network == NetworkNone {
+		wrapped, ok := linuxLoopbackThenExec(application, arguments)
+		if !ok {
+			return nil, false
+		}
+		return append(result, wrapped...), true
+	}
+	if application == "" {
+		return nil, false
+	}
+	result = append(result, application)
+	return append(result, arguments...), true
 }
 
 func linuxPrivilegedGateIsolationCommand(
@@ -241,11 +255,10 @@ func linuxPrivilegedGateIsolationCommand(
 	if network == NetworkNone {
 		result = append(result, "--net")
 	}
-	result = append(result,
-		"--",
+	inner := []string{
 		setpriv,
-		"--reuid="+strconv.Itoa(uid),
-		"--regid="+strconv.Itoa(gid),
+		"--reuid=" + strconv.Itoa(uid),
+		"--regid=" + strconv.Itoa(gid),
 		"--clear-groups",
 		"--inh-caps=-all",
 		"--ambient-caps=-all",
@@ -255,10 +268,66 @@ func linuxPrivilegedGateIsolationCommand(
 		env,
 		"-i",
 		"--",
-	)
-	result = append(result, environment...)
-	result = append(result, application)
-	return sudo, append(result, arguments...), true
+	}
+	inner = append(inner, environment...)
+	inner = append(inner, application)
+	inner = append(inner, arguments...)
+	result = append(result, "--")
+	if network == NetworkNone {
+		wrapped, ok := linuxLoopbackThenExec(inner[0], inner[1:])
+		if !ok {
+			return "", nil, false
+		}
+		return sudo, append(result, wrapped...), true
+	}
+	return sudo, append(result, inner...), true
+}
+
+func linuxLoopbackThenExec(application string, arguments []string) ([]string, bool) {
+	if application == "" {
+		return nil, false
+	}
+	bash, ip, ok := linuxTrustedLoopbackHelper()
+	if !ok {
+		return nil, false
+	}
+	// unshare --net starts with no interfaces. Docker --network none still has
+	// loopback; localhost tests and httptest need it. This does not add a route.
+	script := ip + ` link set lo up && exec "$@"`
+	result := []string{bash, "-c", script, "repopass-netns-lo", application}
+	return append(result, arguments...), true
+}
+
+func linuxTrustedLoopbackHelper() (bash, ip string, ok bool) {
+	for _, candidate := range []string{"/usr/bin/bash", "/bin/bash"} {
+		if resolved, trusted := trustedLinuxSystemApplication(candidate); trusted && safeLinuxIsolationExecutable(resolved) {
+			bash = resolved
+			break
+		}
+	}
+	for _, candidate := range []string{"/usr/sbin/ip", "/usr/bin/ip", "/bin/ip"} {
+		if resolved, trusted := trustedLinuxSystemApplication(candidate); trusted && safeLinuxIsolationExecutable(resolved) {
+			ip = resolved
+			break
+		}
+	}
+	return bash, ip, bash != "" && ip != ""
+}
+
+func safeLinuxIsolationExecutable(path string) bool {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return false
+	}
+	for _, current := range path {
+		if current == '/' || current == '-' || current == '_' || current == '.' ||
+			current >= '0' && current <= '9' ||
+			current >= 'A' && current <= 'Z' ||
+			current >= 'a' && current <= 'z' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func trustedLinuxSystemApplication(application string) (string, bool) {
