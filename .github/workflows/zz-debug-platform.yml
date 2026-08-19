@@ -90,6 +90,16 @@ jobs:
           command -v go
           command -v git
           command -v pwsh
+          ls -la .git | sed -n '1,80p'
+          if [ -e .git/config.worktree ]; then
+            echo '--- config.worktree ---'
+            wc -c .git/config.worktree
+            cat -A .git/config.worktree || true
+          else
+            echo 'config.worktree absent'
+          fi
+          git config --show-origin --get-regexp 'extension|worktree|sparse' || true
+          git config --local --list || true
           go test -count=1 -run TestZZDebugPlatformConfigurationCI -v ./internal/sourcequalification/
       - name: dump-platform-configuration-windows
         if: runner.os == 'Windows'
@@ -102,5 +112,16 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Write-Host "PATH=$env:PATH"
           Get-Command go, git, pwsh, gofmt | Format-List Name, Source, CommandType, Path
+          Get-ChildItem -Force .git | Format-Table Name, Length, Mode, LinkType
+          $worktree = Join-Path '.git' 'config.worktree'
+          if (Test-Path $worktree) {
+            Write-Host '--- config.worktree ---'
+            Get-Item $worktree | Format-List FullName, Length, Attributes
+            Get-Content -LiteralPath $worktree -Raw
+          } else {
+            Write-Host 'config.worktree absent'
+          }
+          git config --show-origin --get-regexp 'extension|worktree|sparse'
+          git config --local --list
           go test -count=1 -run TestZZDebugPlatformConfigurationCI -v ./internal/sourcequalification/
           if ($LASTEXITCODE -ne 0) { throw 'platform dump failed' }
