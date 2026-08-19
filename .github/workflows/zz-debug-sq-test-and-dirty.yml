@@ -1,0 +1,71 @@
+name: zz-debug-sq-test-and-dirty
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/zz-debug-sq-remaining
+
+permissions:
+  contents: read
+
+jobs:
+  windows-gotest:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          path: qualification-source
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          cache: false
+          go-version: 1.26.6
+      - shell: pwsh
+        working-directory: ${{ github.workspace }}/qualification-source
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CGO_ENABLED = '0'
+          $env:GOTOOLCHAIN = 'local'
+          $env:GOFLAGS = ''
+          go mod download -modcacherw all
+          go build -trimpath -o "$env:RUNNER_TEMP/zz-debug-sq.exe" ./internal/sourcequalification/cmd/zz-debug-sq
+          Write-Output '=== atomicfile ==='
+          & "$env:RUNNER_TEMP/zz-debug-sq.exe" gotest (Resolve-Path .).Path test -count=1 -timeout=2m -failfast ./internal/atomicfile
+          Write-Output '=== failfast ./... ==='
+          & "$env:RUNNER_TEMP/zz-debug-sq.exe" gotest (Resolve-Path .).Path test -count=1 -timeout=8m -failfast ./...
+
+  linux-remaining:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          path: qualification-source
+          persist-credentials: false
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          cache: false
+          go-version: 1.26.6
+      - shell: bash
+        run: |
+          set -euo pipefail
+          for name in go git pwsh gofmt uname; do
+            path="$(command -v "$name")"
+            target="$(readlink -f "$path")"
+            sudo chmod go-w "$target"
+          done
+          rm -f "${{ github.workspace }}/qualification-source/.git/config.worktree"
+      - shell: bash
+        working-directory: ${{ github.workspace }}/qualification-source
+        run: |
+          set -euo pipefail
+          export CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=
+          go build -trimpath -o "$RUNNER_TEMP/zz-debug-sq" ./internal/sourcequalification/cmd/zz-debug-sq
+          base="$(git rev-parse HEAD^1)"
+          tested="$(git rev-parse HEAD)"
+          echo "=== remaining gates ==="
+          "$RUNNER_TEMP/zz-debug-sq" remaining "$(pwd)" "$base" "$tested"
