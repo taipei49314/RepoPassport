@@ -169,9 +169,11 @@ jobs:
           dump_git_state "after source-guard reproduction"
 
           echo "=== produceQualificationLane reproduction ==="
+          export CGO_ENABLED=0
           go build -trimpath -buildvcs=true \
             -o "$RUNNER_TEMP/sq-debug-controller" \
             ./internal/sourcequalification/cmd/repopass-source-qualify
+          go version -m "$RUNNER_TEMP/sq-debug-controller" | sed -n '1,40p'
           dump_git_state "after controller build"
           set +e
           env SQ_DEBUG_PRODUCE_LANE=1 \

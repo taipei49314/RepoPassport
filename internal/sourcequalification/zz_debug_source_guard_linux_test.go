@@ -244,6 +244,24 @@ func TestDebugProduceQualificationLane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProductionLaneConfiguration: %v", err)
 	}
+	identity, _, inspectErr := inspectQualificationController(controller, "linux", tested)
+	fmt.Printf(
+		"InspectSelfController err=%v go=%s main=%s modified=%t revision=%s\n",
+		inspectErr,
+		identity.GoVersion,
+		identity.MainPackage,
+		identity.VCSModified,
+		identity.VCSRevision,
+	)
+	if inspectErr == nil {
+		fmt.Printf(
+			"validateReceiptController err=%v\n",
+			validateReceiptController(identity, receiptSubject{TestedRevision: tested}),
+		)
+	}
+	if configuration.laneRequest.Gate.Applications != nil {
+		configuration.laneRequest.Gate.Applications["repopass-source-qualify"] = controller
+	}
 	inspector := &loggingLaneInspector{}
 	configuration.dependencies.Repository = inspector
 	configuration.dependencies.SelfController = productionLaneSelfController{
