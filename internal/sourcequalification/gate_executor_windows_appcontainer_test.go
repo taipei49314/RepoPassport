@@ -515,6 +515,7 @@ func windowsNetworkNoneGoVersionEnvironment(application, dir string) []string {
 		"GOFLAGS=",
 		"GOCACHEPROG=",
 		"GOTELEMETRY=off",
+		"CGO_ENABLED=0",
 		"GOCACHE=" + dir,
 		"GOMODCACHE=" + dir,
 		"GOPATH=" + filepath.Join(dir, "go"),

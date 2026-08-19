@@ -142,20 +142,20 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 		if err := windowsGrantAppContainerPath(path, sid, false, false); err != nil {
 			return err
 		}
-		windowsGrantAppContainerExistingTree(path, sid)
+		windowsGrantAppContainerExistingTree(path, sid, false)
 	}
 	for _, path := range writable {
 		if err := windowsGrantAppContainerPath(path, sid, true, true); err != nil {
 			return err
 		}
 		// TreeReset may skip existing children. MODULE-DOWNLOAD fills GOMODCACHE
-		// outside AppContainer; go vet must read those files under NetworkNone.
-		windowsGrantAppContainerExistingTree(path, sid)
+		// outside AppContainer; go vet must read and GOCACHE must stay writable.
+		windowsGrantAppContainerExistingTree(path, sid, true)
 	}
 	for _, path := range readable {
 		_ = windowsGrantAppContainerPath(path, sid, false, false)
 		if windowsAppContainerReadableTree(path) {
-			windowsGrantAppContainerExistingTree(path, sid)
+			windowsGrantAppContainerExistingTree(path, sid, false)
 		}
 	}
 	// AppContainer lacks SeChangeNotifyPrivilege. Schema JSON opens Dir and
@@ -407,17 +407,17 @@ func windowsGrantAppContainerPath(path string, sid *windows.SID, writable, propa
 	return nil
 }
 
-func windowsGrantAppContainerExistingTree(root string, sid *windows.SID) {
+func windowsGrantAppContainerExistingTree(root string, sid *windows.SID, writable bool) {
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
 		windowsAppContainerTreeMutationForbidden(root) {
 		return
 	}
 	budget := 500_000
-	windowsGrantAppContainerExistingTreeLimited(root, sid, 0, &budget)
+	windowsGrantAppContainerExistingTreeLimited(root, sid, writable, 0, &budget)
 }
 
-func windowsGrantAppContainerExistingTreeLimited(root string, sid *windows.SID, depth int, budget *int) {
+func windowsGrantAppContainerExistingTreeLimited(root string, sid *windows.SID, writable bool, depth int, budget *int) {
 	if depth > maximumQualificationWorkspaceCleanupDepth || budget == nil || *budget <= 0 {
 		return
 	}
@@ -445,9 +445,9 @@ func windowsGrantAppContainerExistingTreeLimited(root string, sid *windows.SID, 
 			if err != nil || info.Mode()&os.ModeSymlink != 0 {
 				continue
 			}
-			_ = windowsGrantAppContainerPath(child, sid, false, false)
+			_ = windowsGrantAppContainerPath(child, sid, writable, false)
 			if info.IsDir() {
-				windowsGrantAppContainerExistingTreeLimited(child, sid, depth+1, budget)
+				windowsGrantAppContainerExistingTreeLimited(child, sid, writable, depth+1, budget)
 			}
 		}
 		if err == io.EOF || len(entries) < 128 {

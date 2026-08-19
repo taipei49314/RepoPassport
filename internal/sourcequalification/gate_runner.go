@@ -405,6 +405,7 @@ func gateEnvironment(configuration gateRunEnvironment, network NetworkMode) []st
 		"GOFLAGS=",
 		"GOCACHEPROG=",
 		"GOTELEMETRY=off",
+		"CGO_ENABLED=0",
 		"GOCACHE=" + configuration.GoCacheDir,
 		"GOMODCACHE=" + configuration.GoModCacheDir,
 		"GOPATH=" + filepath.Join(configuration.HomeDir, "go"),

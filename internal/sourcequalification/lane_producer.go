@@ -323,33 +323,67 @@ func isModuleDownloadGateProcess(request gateProcessRequest) bool {
 }
 
 // restoreQualificationLaneTrackedFiles overwrites snapshot-tracked worktree
-// files in place. Go 1.26 `go mod download -modcacherw all` rewrites go.sum
-// with modules that `go mod tidy` does not keep. The gate's job is to fill the
-// private module cache; the inspected Git tree remains the source of truth.
-// Untracked files are left in place so inspect still fails closed.
+// files that no longer match the inspected Git tree. Go 1.26
+// `go mod download -modcacherw all` rewrites go.sum with modules that
+// `go mod tidy` does not keep. Matching files are left untouched so a
+// single unrestorable path cannot block restoring go.sum. Untracked files
+// are left in place so inspect still fails closed.
 func restoreQualificationLaneTrackedFiles(root string, snapshot RepositorySnapshot) error {
 	if root == "" {
 		return errors.New("tracked restore root is empty")
 	}
+	var firstErr error
 	for _, file := range snapshot.Files {
-		if err := restoreQualificationLaneTrackedFile(root, file); err != nil {
-			return err
+		path, err := qualificationLaneTrackedRestorePath(root, file)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if !qualificationLaneTrackedFileNeedsRestore(path, file) {
+			continue
+		}
+		if err := restoreQualificationLaneTrackedFile(root, file); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
-func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error {
+func qualificationLaneTrackedRestorePath(root string, file RepositoryFile) (string, error) {
 	if err := validateRepositoryPath(file.Path); err != nil {
-		return err
+		return "", err
 	}
 	path := filepath.Clean(filepath.Join(root, filepath.FromSlash(file.Path)))
 	if !filepath.IsAbs(path) {
-		return errors.New("tracked restore path is not absolute")
+		return "", errors.New("tracked restore path is not absolute")
 	}
-	contains, err := securePackagePathContains(root, path)
+	parent := filepath.Dir(path)
+	contains, err := securePackagePathContains(root, parent)
 	if err != nil || !contains {
-		return errors.New("tracked restore path escaped the repository")
+		return "", errors.New("tracked restore path escaped the repository")
+	}
+	return path, nil
+}
+
+func qualificationLaneTrackedFileNeedsRestore(path string, file RepositoryFile) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != file.Size ||
+		file.Size != int64(len(file.Data)) {
+		return true
+	}
+	if err := validateWorktreeEntryMetadata(path, info, file.GitMode); err != nil {
+		return true
+	}
+	data, err := os.ReadFile(path)
+	return err != nil || !bytes.Equal(data, file.Data)
+}
+
+func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error {
+	path, err := qualificationLaneTrackedRestorePath(root, file)
+	if err != nil {
+		return err
 	}
 
 	info, statErr := os.Lstat(path)
@@ -360,13 +394,17 @@ func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error
 		if !info.Mode().IsRegular() {
 			return errors.New("tracked restore path is not a regular file")
 		}
-		if err := restoreQualificationLaneTrackedFileWritable(path, info); err != nil {
-			return err
-		}
 		// Unlink before recreate. O_TRUNC on a shared inode would rewrite the
 		// other hard link (Go's module cache) and leave nlink>1 for inspect.
+		// Do not chmod first: a root-owned 0444 file fails chmod and would
+		// skip unlink even when the directory is writable.
 		if err := os.Remove(path); err != nil {
-			return err
+			if chmodErr := restoreQualificationLaneTrackedFileWritable(path, info); chmodErr != nil {
+				return err
+			}
+			if err := os.Remove(path); err != nil {
+				return err
+			}
 		}
 	}
 	mode := os.FileMode(0o644)
