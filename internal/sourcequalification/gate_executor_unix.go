@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -52,7 +53,7 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	command.Env = append([]string(nil), isolationEnvironment...)
 	command.Stdout = stdoutWriter
 	command.Stderr = stderrWriter
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	if err := command.Start(); err != nil {
 		_ = stdoutWriter.Close()
 		_ = stderrWriter.Close()
@@ -358,10 +359,12 @@ func linuxInNonHostPidNamespace() bool {
 	// Nested unshare --pid from an existing pid namespace leaks the inner
 	// init onto the host when the outer pid-namespace init exits. Isolation
 	// selection therefore refuses to launch another unshare from inside one.
-	// The isolation wrapper also plants REPOPASS_LINUX_PID_NAMESPACE=1 because
-	// /proc/self/status NSpid can still look like the host from inside the
-	// privileged exec chain.
+	// NSpid and inherited env can still look like the host from inside the
+	// privileged exec chain; pid 1's comm does not.
 	if os.Getenv(linuxPidNamespaceEnvironmentName) == linuxPidNamespaceEnvironmentValue {
+		return true
+	}
+	if !linuxPid1IsHostInit() {
 		return true
 	}
 	status, err := os.ReadFile("/proc/self/status")
@@ -369,6 +372,19 @@ func linuxInNonHostPidNamespace() bool {
 		return true
 	}
 	return linuxStatusNSpidCount(status) != 1
+}
+
+func linuxPid1IsHostInit() bool {
+	comm, err := os.ReadFile("/proc/1/comm")
+	if err != nil {
+		return false
+	}
+	switch strings.TrimSpace(string(comm)) {
+	case "init", "systemd":
+		return true
+	default:
+		return false
+	}
 }
 
 func linuxIsolationProbe(ctx context.Context, application string, arguments, environment []string) bool {
@@ -380,7 +396,7 @@ func linuxIsolationProbe(ctx context.Context, application string, arguments, env
 	command := exec.CommandContext(probeContext, application, arguments...)
 	command.Dir = "/"
 	command.Env = append([]string(nil), environment...)
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
 	err := command.Run()
 	if command.Process != nil {
 		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
