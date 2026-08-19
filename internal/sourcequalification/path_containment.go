@@ -180,12 +180,16 @@ func openPackagePathIdentity(path string) (packageFileIdentity, bool, error) {
 	if err != nil {
 		return packageFileIdentity{}, false, errPackagePathContainment
 	}
-	snapshot, snapshotErr := snapshotPackageHandle(file, false)
+	info, statErr := file.Stat()
+	identity, identityErr := packageFileIdentity{}, error(nil)
+	if statErr == nil {
+		identity, identityErr = packageContainmentFileIdentity(file, info)
+	}
 	closeErr := file.Close()
-	if snapshotErr != nil || closeErr != nil {
+	if statErr != nil || identityErr != nil || closeErr != nil {
 		return packageFileIdentity{}, false, errPackagePathContainment
 	}
-	return snapshot.identity, false, nil
+	return identity, false, nil
 }
 
 func openPackageDirectoryIdentity(path string) (packageFileIdentity, error) {

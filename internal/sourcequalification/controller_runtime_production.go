@@ -435,7 +435,7 @@ func trustedControllerRuntimePath(repositoryRoot, path string) (string, error) {
 		return "", errGateInvalidInput
 	}
 	abs = filepath.Clean(abs)
-	resolved, err := filepath.EvalSymlinks(abs)
+	resolved, err := canonicalTrustedRuntimePath(abs)
 	if err != nil || !filepath.IsAbs(resolved) || pathWithinRepository(repositoryRoot, resolved) {
 		return "", errGateInvalidInput
 	}
@@ -445,6 +445,14 @@ func trustedControllerRuntimePath(repositoryRoot, path string) (string, error) {
 		return "", errGateInvalidInput
 	}
 	return filepath.Clean(resolved), nil
+}
+
+func canonicalTrustedRuntimePath(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil && filepath.IsAbs(resolved) {
+		return filepath.Clean(resolved), nil
+	}
+	return canonicalTrustedRuntimePathPlatform(path)
 }
 
 func controllerRuntimeSystemRoot(repositoryRoot string) (string, error) {
