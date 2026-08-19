@@ -95,14 +95,14 @@ jobs:
       lane-artifact-id: ${{ steps.upload-lane.outputs.artifact-id }}
     steps:
       - id: checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           path: qualification-source
           persist-credentials: false
           ref: ${{ needs.context.outputs.tested-revision }}
       - id: setup-go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           cache: false
           go-version: 1.26.6
@@ -221,14 +221,14 @@ jobs:
       lane-artifact-id: ${{ steps.upload-lane.outputs.artifact-id }}
     steps:
       - id: checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           path: qualification-source
           persist-credentials: false
           ref: ${{ needs.context.outputs.tested-revision }}
       - id: setup-go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           cache: false
           go-version: 1.26.6
@@ -359,7 +359,7 @@ jobs:
             [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]]
           done
       - id: checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           path: qualification-source
@@ -373,7 +373,7 @@ jobs:
           rm -f .git/config.worktree
           test ! -e .git/config.worktree
       - id: setup-go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           cache: false
           go-version: 1.26.6
