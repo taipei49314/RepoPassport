@@ -192,6 +192,7 @@ func DebugIsolatedRemainingGates(
 		{"TIDY-DIFF", goPath, []string{"mod", "tidy", "-diff"}, NetworkNone, false, 3 * time.Minute},
 		{"FORMAT", gofmtPath, []string{"-l", "."}, NetworkNone, false, 2 * time.Minute},
 		{"VET", goPath, []string{"vet", "./..."}, NetworkNone, false, 4 * time.Minute},
+		{"TEST", goPath, []string{"test", "-count=1", "-timeout=8m", "-failfast", "./..."}, NetworkNone, false, 10 * time.Minute},
 	}
 	var report strings.Builder
 	for _, gate := range gates {
