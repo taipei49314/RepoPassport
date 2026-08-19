@@ -662,6 +662,17 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		if !strings.Contains(script, "unset GITHUB_OUTPUT") {
 			t.Error("linux produce-lane must hide the step-output channel from the candidate controller")
 		}
+		restrict := workflowRequiredStep(t, job, "restrict-pwsh-write-bits")
+		requireWorkflowScriptFragments(t, restrict,
+			"command -v pwsh",
+			"readlink -f",
+			"sudo chmod go-w",
+			"stat -c '%a'",
+			"8#022",
+		)
+		if workflowStepIndex(t, job, "restrict-pwsh-write-bits") >= workflowStepIndex(t, job, "produce-lane") {
+			t.Error("linux must restrict pwsh group/other write bits before produce-lane")
+		}
 	} else {
 		for _, fragment := range []string{"$githubOutput", "Remove-Item Env:GITHUB_OUTPUT"} {
 			if !strings.Contains(script, fragment) {
