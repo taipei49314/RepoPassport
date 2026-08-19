@@ -146,3 +146,24 @@ jobs:
           set -e
           echo "inspect3_exit=$inspect3"
           dump_git_state "after inspect 3"
+
+          echo "=== compile source-guard reproduction outside the worktree ==="
+          go test -c -o "$RUNNER_TEMP/sq-debug-guard.test" ./internal/sourcequalification
+          dump_git_state "after go test -c"
+          echo "=== source-guard reproduction ==="
+          mkdir -m 700 "$RUNNER_TEMP/sq-debug-guard-private" \
+            "$RUNNER_TEMP/sq-debug-guard-private/home" \
+            "$RUNNER_TEMP/sq-debug-guard-private/go-cache" \
+            "$RUNNER_TEMP/sq-debug-guard-private/go-mod-cache" \
+            "$RUNNER_TEMP/sq-debug-guard-private/tmp"
+          set +e
+          env SQ_DEBUG_SOURCE_GUARD=1 \
+            SQ_DEBUG_REPO_ROOT="$root" \
+            SQ_DEBUG_BASE="$base" \
+            SQ_DEBUG_TESTED="$tested" \
+            SQ_DEBUG_PRIVATE="$RUNNER_TEMP/sq-debug-guard-private" \
+            "$RUNNER_TEMP/sq-debug-guard.test" -test.run TestDebugSourceGuardReproduction -test.v
+          guard_exit=$?
+          set -e
+          echo "source_guard_exit=$guard_exit"
+          dump_git_state "after source-guard reproduction"
