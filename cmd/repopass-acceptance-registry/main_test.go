@@ -16,7 +16,7 @@ import (
 )
 
 func TestRunAcceptanceRegistryCommands(t *testing.T) {
-	registry := filepath.Join(acceptanceCLIRepositoryRoot(t), "acceptance-registry.json")
+	registry := acceptanceCLIRegistryFixture(t)
 	t.Run("validate", func(t *testing.T) {
 		stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)
 		if code := run([]string{"validate", "--registry", registry}, stdout, stderr); code != 0 {
@@ -57,7 +57,7 @@ func TestRunAcceptanceRegistryCommands(t *testing.T) {
 }
 
 func TestRunAcceptanceRegistryRejectsInvalidSyntaxWithoutDisclosure(t *testing.T) {
-	registry := filepath.Join(acceptanceCLIRepositoryRoot(t), "acceptance-registry.json")
+	registry := acceptanceCLIRegistryFixture(t)
 	marker := "private-path-marker"
 	tests := map[string][]string{
 		"missing command":           {},
@@ -83,7 +83,7 @@ func TestRunAcceptanceRegistryRejectsInvalidSyntaxWithoutDisclosure(t *testing.T
 }
 
 func TestRunAcceptanceRegistryDoesNotReplaceOutputOrIgnoreWriterFailure(t *testing.T) {
-	registry := filepath.Join(acceptanceCLIRepositoryRoot(t), "acceptance-registry.json")
+	registry := acceptanceCLIRegistryFixture(t)
 	output := filepath.Join(t.TempDir(), "acceptance-evaluation-v1.json")
 	if err := os.WriteFile(output, []byte("existing"), 0o600); err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestRunAcceptanceRegistryDoesNotReplaceOutputOrIgnoreWriterFailure(t *testi
 }
 
 func TestRunAcceptanceRegistryRejectsRedirectedOrHardLinkedInput(t *testing.T) {
-	registry := filepath.Join(acceptanceCLIRepositoryRoot(t), "acceptance-registry.json")
+	registry := acceptanceCLIRegistryFixture(t)
 	root := t.TempDir()
 	link := filepath.Join(root, "registry-link.json")
 	if err := os.Symlink(registry, link); err == nil {
@@ -184,6 +184,16 @@ func acceptanceCLIRepositoryRoot(t *testing.T) string {
 		t.Fatal("resolve test path")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(current), "..", ".."))
+}
+
+func acceptanceCLIRegistryFixture(t *testing.T) string {
+	t.Helper()
+	raw := acceptanceCLIRead(t, filepath.Join(acceptanceCLIRepositoryRoot(t), "acceptance-registry.json"))
+	path := filepath.Join(t.TempDir(), "acceptance-registry.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func acceptanceCLIRead(t *testing.T, path string) []byte {

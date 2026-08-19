@@ -365,9 +365,74 @@ func newGitRepositoryFixtureWithGoSum(t *testing.T) *gitRepositoryFixture {
 	return fixture
 }
 
-func TestIsModuleDownloadGateProcessMatchesRegistry(t *testing.T) {
+func TestQualificationLaneSourceGuardRestoresVetGoSum(t *testing.T) {
+	fixture := newGitRepositoryFixtureWithGoSum(t)
+	sumPath := filepath.Join(fixture.root, "go.sum")
+	original, err := os.ReadFile(sumPath)
+	if err != nil {
+		t.Fatalf("read tracked go.sum: %v", err)
+	}
+	guard := newQualificationLaneSourceGuard(t, fixture, worktreeMutatingExecutor{
+		mutate: func() error {
+			return os.WriteFile(sumPath, append(append([]byte(nil), original...), []byte("golang.org/x/sync v0.21.0 h1:deadbeef\n")...), 0o644)
+		},
+	})
+
+	result, execErr := guard.Execute(context.Background(), vetGateProcessRequest())
+	if execErr != nil {
+		t.Fatalf("VET source guard returned execution error: %v", execErr)
+	}
+	if result.SourceChanged {
+		t.Fatal("VET go.sum rewrite was treated as SOURCE_DIRTY")
+	}
+	restored, err := os.ReadFile(sumPath)
+	if err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("go.sum after VET = %q, want snapshot bytes %q (err=%v)", restored, original, err)
+	}
+}
+
+func TestQualificationLaneSourceGuardRejectsVetUntrackedFile(t *testing.T) {
+	fixture := newGitRepositoryFixture(t)
+	untracked := filepath.Join(fixture.root, "untracked.txt")
+	guard := newQualificationLaneSourceGuard(t, fixture, worktreeMutatingExecutor{
+		mutate: func() error {
+			return os.WriteFile(untracked, []byte("vet-created\n"), 0o644)
+		},
+	})
+
+	result, execErr := guard.Execute(context.Background(), vetGateProcessRequest())
+	if execErr != nil {
+		t.Fatalf("VET source guard returned execution error: %v", execErr)
+	}
+	if !result.SourceChanged {
+		t.Fatal("VET untracked file was accepted")
+	}
+	if _, err := os.Lstat(untracked); err != nil {
+		t.Fatalf("untracked VET file was removed: %v", err)
+	}
+}
+
+func TestIsTrackedRestoreGateProcessMatchesRegistry(t *testing.T) {
 	if !isModuleDownloadGateProcess(moduleDownloadGateProcessRequest()) {
 		t.Fatal("frozen MODULE-DOWNLOAD argv was not recognized for tracked restore")
+	}
+	if !isTrackedRestoreGateProcess(moduleDownloadGateProcessRequest()) {
+		t.Fatal("frozen MODULE-DOWNLOAD argv was not recognized for tracked restore")
+	}
+	if !isTrackedRestoreGateProcess(vetGateProcessRequest()) {
+		t.Fatal("frozen VET argv was not recognized for tracked restore")
+	}
+	if !isTrackedRestoreGateProcess(gateProcessRequest{
+		Application: "go",
+		Args:        []string{"test", "-count=1", "-timeout=30m", "./..."},
+	}) {
+		t.Fatal("frozen TEST argv was not recognized for tracked restore")
+	}
+	if isTrackedRestoreGateProcess(gateProcessRequest{Application: "go", Args: []string{"version"}}) {
+		t.Fatal("GO-VERSION argv was treated as tracked restore")
+	}
+	if isTrackedRestoreGateProcess(gateProcessRequest{Application: "gofmt", Args: []string{"-l", "."}}) {
+		t.Fatal("FORMAT argv was treated as tracked restore")
 	}
 	if isModuleDownloadGateProcess(gateProcessRequest{Application: "go", Args: []string{"version"}}) {
 		t.Fatal("GO-VERSION argv was treated as MODULE-DOWNLOAD restore")
@@ -378,6 +443,13 @@ func moduleDownloadGateProcessRequest() gateProcessRequest {
 	return gateProcessRequest{
 		Application: "go",
 		Args:        []string{"mod", "download", "-modcacherw", "all"},
+	}
+}
+
+func vetGateProcessRequest() gateProcessRequest {
+	return gateProcessRequest{
+		Application: "go",
+		Args:        []string{"vet", "./..."},
 	}
 }
 
