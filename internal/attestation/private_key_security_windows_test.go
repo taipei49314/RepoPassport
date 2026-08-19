@@ -13,7 +13,7 @@ import (
 )
 
 func TestWindowsPrivateKeyRejectsHardlinksAndPermissiveDACL(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	outputRoot := filepath.Join(base, "output")
 	keyRoot := filepath.Join(base, "keys")
@@ -50,7 +50,7 @@ func TestWindowsPrivateKeyRejectsHardlinksAndPermissiveDACL(t *testing.T) {
 }
 
 func TestWindowsCanonicalBoundaryAndFinalPathRejectDirectoryAliasWhenAvailable(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	realData := filepath.Join(base, "real-data")
 	otherData := filepath.Join(base, "other-data")
 	outputRoot := filepath.Join(base, "output")

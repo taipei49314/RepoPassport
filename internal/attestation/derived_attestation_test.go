@@ -425,7 +425,7 @@ func canonicalTarWithNamesForTest(t *testing.T, files map[string][]byte, names [
 
 func derivedAttestationInputs(t *testing.T) (spdx.DerivedArtifact, domain.VerificationResult) {
 	t.Helper()
-	directory := t.TempDir()
+	directory := unlinkedTempDir(t)
 	packageJSON := []byte(`{"dependencies":{"a":"1.0.0"},"name":"root","version":"1.0.0"}`)
 	integrity := "sha512-" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, 64))
 	lock := map[string]any{

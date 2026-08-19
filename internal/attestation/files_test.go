@@ -18,7 +18,7 @@ import (
 )
 
 func TestLoadPrivateKeyAndWriteNewBundleSafety(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	keyRoot := filepath.Join(base, "keys")
 	outputRoot := filepath.Join(base, "exports")
@@ -56,7 +56,7 @@ func TestLoadPrivateKeyAndWriteNewBundleSafety(t *testing.T) {
 }
 
 func TestSigningPathsRejectDataAndDetectedRepository(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	keyRoot := filepath.Join(base, "keys")
 	exportRoot := filepath.Join(base, "exports")
@@ -96,7 +96,7 @@ func TestSigningPathsRejectDataAndDetectedRepository(t *testing.T) {
 }
 
 func TestSigningArtifactPathsRejectCompanionCollisionsAndIsolationViolations(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	keyRoot := filepath.Join(base, "keys")
 	exportRoot := filepath.Join(base, "exports")
@@ -153,7 +153,7 @@ func TestSigningArtifactPathsRejectCompanionCollisionsAndIsolationViolations(t *
 }
 
 func TestDerivedSigningArtifactsAreIsolatedFromTargetRepository(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	keyRoot := filepath.Join(base, "keys")
 	exportRoot := filepath.Join(base, "exports")
@@ -197,7 +197,7 @@ func TestDerivedSigningArtifactsAreIsolatedFromTargetRepository(t *testing.T) {
 }
 
 func TestPrivateKeyPermissionAndLinkChecks(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	outputRoot := filepath.Join(base, "out")
 	if err := os.Mkdir(dataRoot, 0o700); err != nil {
@@ -248,7 +248,7 @@ func TestPrivateKeyPermissionAndLinkChecks(t *testing.T) {
 }
 
 func TestMalformedTrustIsEvaluatedAfterBundleCryptography(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	trustPath := filepath.Join(base, "malformed-public.pem")
 	if err := os.WriteFile(trustPath, []byte("not a public key\n"), 0o600); err != nil {
 		t.Fatalf("write malformed trust key: %v", err)
@@ -273,7 +273,7 @@ func TestMalformedTrustIsEvaluatedAfterBundleCryptography(t *testing.T) {
 }
 
 func TestBundleTrustKeyAndOfflinePolicyReadersRejectUnsafePathDirectoryLinksAndOversize(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	_, privateKey := generateKey(t)
 	built, err := Build(validResult(t, "verified"), privateKey)
 	if err != nil {
@@ -343,7 +343,7 @@ func TestBundleTrustKeyAndOfflinePolicyReadersRejectUnsafePathDirectoryLinksAndO
 }
 
 func TestPrivateMaterialAndPathNeverEnterBundleOrSerializedError(t *testing.T) {
-	base := t.TempDir()
+	base := unlinkedTempDir(t)
 	dataRoot := filepath.Join(base, "data")
 	if err := os.Mkdir(dataRoot, 0o700); err != nil {
 		t.Fatalf("create data root: %v", err)

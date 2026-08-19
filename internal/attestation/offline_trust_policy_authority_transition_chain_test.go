@@ -279,7 +279,7 @@ func TestOfflineTrustPolicyAuthorityTransitionChainRejectsRootTerminalBindingAnd
 
 func TestOfflineTrustPolicyAuthorityTransitionChainReaderIsStableAndBounded(t *testing.T) {
 	fixture := makeOfflineTrustPolicyAuthorityTransitionChain(t, []uint64{3, 7})
-	path := filepath.Join(t.TempDir(), "chain.json")
+	path := filepath.Join(unlinkedTempDir(t), "chain.json")
 	if err := os.WriteFile(path, fixture.raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestOfflineTrustPolicyAuthorityTransitionChainReaderIsStableAndBounded(t *t
 	if err != nil || !bytes.Equal(read, fixture.raw) {
 		t.Fatalf("stable chain reader mismatch: err=%v", err)
 	}
-	oversize := filepath.Join(t.TempDir(), "oversize.json")
+	oversize := filepath.Join(unlinkedTempDir(t), "oversize.json")
 	if err := os.WriteFile(oversize, bytes.Repeat([]byte{'x'}, MaxOfflineTrustPolicyAuthorityTransitionChainBytes+1), 0o600); err != nil {
 		t.Fatal(err)
 	}
