@@ -160,7 +160,9 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 	// every ancestor except the volume root. Grant path-only traverse on Dir's
 	// ancestors. Do not grant Application/GOROOT ancestors: SetNamedSecurityInfo
 	// on C:\hostedtoolcache hangs CI. Do not inherit or TreeReset.
-	windowsGrantAppContainerAncestorChain(request.Dir, sid)
+	if err := windowsGrantAppContainerAncestorChain(request.Dir, sid); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -180,13 +182,16 @@ func windowsAppContainerAncestorPaths(path string) []string {
 	}
 }
 
-func windowsGrantAppContainerAncestorChain(path string, sid *windows.SID) {
+func windowsGrantAppContainerAncestorChain(path string, sid *windows.SID) error {
 	for _, ancestor := range windowsAppContainerAncestorPaths(path) {
 		if windowsAppContainerAncestorGrantForbidden(ancestor) {
 			continue
 		}
-		_ = windowsGrantAppContainerAncestorPath(ancestor, sid)
+		if err := windowsGrantAppContainerAncestorPath(ancestor, sid); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func windowsAppContainerAncestorGrantForbidden(path string) bool {
@@ -239,7 +244,7 @@ func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writab
 			continue
 		}
 		switch strings.ToUpper(key) {
-		case "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "GOCACHE", "GOMODCACHE", "GOTMPDIR":
+		case "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "GOCACHE", "GOMODCACHE", "GOPATH", "GOBIN", "GOTMPDIR":
 			writePaths = append(writePaths, value)
 		case "GOROOT":
 			readPaths = append(readPaths, value)
