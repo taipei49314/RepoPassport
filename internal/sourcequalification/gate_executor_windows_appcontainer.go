@@ -28,25 +28,18 @@ type windowsSecurityCapabilities struct {
 }
 
 type windowsAppContainerSession struct {
-	name            string
-	sid             *windows.SID
-	capabilities    windowsSecurityCapabilities
-	loopbackGranted bool
+	name         string
+	sid          *windows.SID
+	capabilities windowsSecurityCapabilities
 }
 
 var (
 	windowsUserenv                                   = windows.NewLazySystemDLL("userenv.dll")
 	windowsAdvapi32                                  = windows.NewLazySystemDLL("advapi32.dll")
-	windowsFirewallAPI                               = windows.NewLazySystemDLL("FirewallAPI.dll")
-	windowsKernel32                                  = windows.NewLazySystemDLL("kernel32.dll")
 	windowsCreateAppContainerProfile                 = windowsUserenv.NewProc("CreateAppContainerProfile")
 	windowsDeleteAppContainerProfile                 = windowsUserenv.NewProc("DeleteAppContainerProfile")
 	windowsDeriveAppContainerSidFromAppContainerName = windowsUserenv.NewProc("DeriveAppContainerSidFromAppContainerName")
 	windowsTreeResetNamedSecurityInfo                = windowsAdvapi32.NewProc("TreeResetNamedSecurityInfoW")
-	windowsNetworkIsolationGetAppContainerConfig     = windowsFirewallAPI.NewProc("NetworkIsolationGetAppContainerConfig")
-	windowsNetworkIsolationSetAppContainerConfig     = windowsFirewallAPI.NewProc("NetworkIsolationSetAppContainerConfig")
-	windowsGetProcessHeap                            = windowsKernel32.NewProc("GetProcessHeap")
-	windowsHeapFree                                  = windowsKernel32.NewProc("HeapFree")
 )
 
 func windowsPrepareNetworkNoneAppContainer(request gateProcessRequest) (*windowsAppContainerSession, error) {
@@ -64,22 +57,11 @@ func windowsPrepareNetworkNoneAppContainer(request gateProcessRequest) (*windows
 		session.release()
 		return nil, err
 	}
-	// Linux NetworkNone brings loopback up in a netns. AppContainer blocks
-	// 127.0.0.1 unless this SID is on the loopback exemption list. That list
-	// is loopback-only; it is not an internet capability.
-	_ = windowsEnableAppContainerLoopback(session)
 	return session, nil
 }
 
 func (session *windowsAppContainerSession) release() {
-	if session == nil {
-		return
-	}
-	if session.loopbackGranted {
-		windowsDisableAppContainerLoopback(session.sid)
-		session.loopbackGranted = false
-	}
-	if session.name == "" {
+	if session == nil || session.name == "" {
 		return
 	}
 	name, err := windows.UTF16PtrFromString(session.name)
@@ -379,131 +361,6 @@ func windowsGrantAppContainerNullDeviceHandle(sid *windows.SID, access windows.A
 	)
 	runtime.KeepAlive(acl)
 	return err
-}
-
-func windowsEnableAppContainerLoopback(session *windowsAppContainerSession) error {
-	if session == nil || session.sid == nil {
-		return windows.ERROR_INVALID_SID
-	}
-	current, err := windowsAppContainerLoopbackSIDs()
-	if err != nil {
-		current = nil
-	}
-	sidString := session.sid.String()
-	for _, existing := range current {
-		if existing != nil && existing.String() == sidString {
-			session.loopbackGranted = true
-			return nil
-		}
-	}
-	if err := windowsSetAppContainerLoopbackSIDs(append(current, session.sid)); err != nil {
-		return err
-	}
-	session.loopbackGranted = true
-	return nil
-}
-
-func windowsDisableAppContainerLoopback(sid *windows.SID) {
-	if sid == nil {
-		return
-	}
-	current, err := windowsAppContainerLoopbackSIDs()
-	if err != nil {
-		return
-	}
-	sidString := sid.String()
-	filtered := make([]*windows.SID, 0, len(current))
-	for _, existing := range current {
-		if existing == nil || existing.String() == sidString {
-			continue
-		}
-		filtered = append(filtered, existing)
-	}
-	_ = windowsSetAppContainerLoopbackSIDs(filtered)
-}
-
-func windowsAppContainerLoopbackSIDs() ([]*windows.SID, error) {
-	if err := windowsNetworkIsolationGetAppContainerConfig.Find(); err != nil {
-		return nil, err
-	}
-	var count uint32
-	var raw *windows.SIDAndAttributes
-	hr, _, callErr := windowsNetworkIsolationGetAppContainerConfig.Call(
-		uintptr(unsafe.Pointer(&count)),
-		uintptr(unsafe.Pointer(&raw)),
-	)
-	if hr != 0 {
-		if callErr != windows.ERROR_SUCCESS {
-			return nil, callErr
-		}
-		return nil, windows.Errno(hr)
-	}
-	if raw == nil || count == 0 {
-		return nil, nil
-	}
-	defer windowsFreeHeapMemory(unsafe.Pointer(raw))
-	entries := unsafe.Slice(raw, int(count))
-	result := make([]*windows.SID, 0, len(entries))
-	for _, entry := range entries {
-		if entry.Sid == nil {
-			continue
-		}
-		copied, err := entry.Sid.Copy()
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, copied)
-	}
-	return result, nil
-}
-
-func windowsSetAppContainerLoopbackSIDs(sids []*windows.SID) error {
-	if err := windowsNetworkIsolationSetAppContainerConfig.Find(); err != nil {
-		return err
-	}
-	if len(sids) == 0 {
-		hr, _, callErr := windowsNetworkIsolationSetAppContainerConfig.Call(0, 0)
-		if hr != 0 {
-			if callErr != windows.ERROR_SUCCESS {
-				return callErr
-			}
-			return windows.Errno(hr)
-		}
-		return nil
-	}
-	entries := make([]windows.SIDAndAttributes, len(sids))
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-	for index, sid := range sids {
-		if sid == nil {
-			return windows.ERROR_INVALID_SID
-		}
-		pinner.Pin(sid)
-		entries[index] = windows.SIDAndAttributes{Sid: sid}
-	}
-	hr, _, callErr := windowsNetworkIsolationSetAppContainerConfig.Call(
-		uintptr(len(entries)),
-		uintptr(unsafe.Pointer(&entries[0])),
-	)
-	runtime.KeepAlive(entries)
-	if hr != 0 {
-		if callErr != windows.ERROR_SUCCESS {
-			return callErr
-		}
-		return windows.Errno(hr)
-	}
-	return nil
-}
-
-func windowsFreeHeapMemory(memory unsafe.Pointer) {
-	if memory == nil {
-		return
-	}
-	heap, _, _ := windowsGetProcessHeap.Call()
-	if heap == 0 {
-		return
-	}
-	_, _, _ = windowsHeapFree.Call(heap, 0, uintptr(memory))
 }
 
 func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writable, readable []string) {

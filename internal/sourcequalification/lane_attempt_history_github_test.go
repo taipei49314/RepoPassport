@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,9 +29,22 @@ func historyTestScope() laneAttemptHistoryScope {
 	}
 }
 
+func startLoopbackTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("loopback listen is unavailable: %v", err)
+	}
+	server := httptest.NewUnstartedServer(handler)
+	_ = server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	return server
+}
+
 func historyTestServer(t *testing.T, pages map[int][]historyTestRun) *httptest.Server {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	return startLoopbackTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer test-token" {
 			writer.WriteHeader(http.StatusUnauthorized)
 			return
@@ -161,7 +175,7 @@ func TestGitHubAttemptHistoryRejectsInconsistentCurrentRun(t *testing.T) {
 }
 
 func TestGitHubAttemptHistoryFailsClosedOnServerError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	server := startLoopbackTestServer(t, http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()

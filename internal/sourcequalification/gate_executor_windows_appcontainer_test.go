@@ -263,37 +263,6 @@ func TestOSGateExecutorIsolatesGoTestWithNetworkNone(t *testing.T) {
 	}
 }
 
-func TestOSGateExecutorIsolatesGoTestLoopbackWithNetworkNone(t *testing.T) {
-	dir := requireSchemaJSONAppContainerFixtureRoot(t)
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.invalid/loopprobe\n\ngo 1.26\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "loop_test.go"), []byte("package loopprobe\n\nimport (\n\t\"net\"\n\t\"testing\"\n)\n\nfunc TestLoopback(t *testing.T) {\n\tlistener, err := net.Listen(\"tcp\", \"127.0.0.1:0\")\n\tif err != nil {\n\t\tt.Fatal(err)\n\t}\n\t_ = listener.Close()\n}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	application := requireTrustedWindowsGoApplication(t)
-
-	started := time.Now()
-	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
-		Application: application,
-		Args:        []string{"test", "-count=1", "."},
-		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
-		Network:     NetworkNone,
-		Timeout:     60 * time.Second,
-		StdoutLimit: 8192,
-		StderrLimit: 8192,
-	})
-	if time.Since(started) > 50*time.Second {
-		t.Fatal("NetworkNone loopback go test AppContainer grant walked too long")
-	}
-	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
-		result.TimedOut || result.Cancelled || result.CleanupFailed {
-		t.Fatalf("NetworkNone loopback go test result = %#v err=%v stdout=%q stderr=%q",
-			result, err, result.Stdout, result.Stderr)
-	}
-}
-
 func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	modcache := filepath.Join(dir, "modcache")

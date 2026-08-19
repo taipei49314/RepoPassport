@@ -18,7 +18,7 @@ const (
 func TestOSGateExecutorEnforcesNetworkNoneOrBlocksBeforeInvocation(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("host loopback listen is unavailable: %v", err)
 	}
 	defer listener.Close()
 	accepted := make(chan struct{}, 1)
