@@ -2,6 +2,14 @@ package sourcequalification
 
 import "testing"
 
+func TestLinuxIsolationProcessEnvironmentMarksPidNamespace(t *testing.T) {
+	t.Parallel()
+	got := linuxIsolationProcessEnvironment([]string{"HOME=/", linuxPidNamespaceEnvironmentName + "=stale"})
+	if len(got) != 2 || got[0] != "HOME=/" || got[1] != linuxPidNamespaceEnvironment {
+		t.Fatalf("linuxIsolationProcessEnvironment = %q, want HOME=/ plus the pid-namespace marker", got)
+	}
+}
+
 func TestLinuxStatusNSpidCount(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

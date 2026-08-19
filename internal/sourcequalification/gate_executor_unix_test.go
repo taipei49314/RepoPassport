@@ -10,6 +10,29 @@ import (
 	"time"
 )
 
+func TestLinuxSelectGateIsolationRefusesInheritedPidNamespaceMarker(t *testing.T) {
+	t.Setenv(linuxPidNamespaceEnvironmentName, linuxPidNamespaceEnvironmentValue)
+	_, _, _, ok := linuxSelectGateIsolation(
+		context.Background(),
+		NetworkNone,
+		linuxRootlessProbeEnvironment(),
+		"/usr/bin/true",
+		nil,
+	)
+	if ok {
+		t.Fatal("isolation was selected after inheriting the pid-namespace marker")
+	}
+}
+
+func TestLinuxOSGateExecutorBlocksWhenPidNamespaceMarkerIsSet(t *testing.T) {
+	t.Setenv(linuxPidNamespaceEnvironmentName, linuxPidNamespaceEnvironmentValue)
+	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
+	result, err := newOSGateExecutor().Execute(context.Background(), request)
+	if !result.Blocked || result.CleanupFailed || !errors.Is(err, errGateIsolationUnavailable) {
+		t.Fatalf("marked nested isolation result = %#v, err=%v", result, err)
+	}
+}
+
 func TestLinuxSelectGateIsolationRefusesNonHostPidNamespace(t *testing.T) {
 	t.Parallel()
 	if !linuxInNonHostPidNamespace() {
@@ -77,7 +100,7 @@ func TestLinuxPrivilegedGateIsolationArgumentsUseReplayShapedNetns(t *testing.T)
 			"-n", "--pid", "--fork", "--kill-child=KILL", "--mount-proc",
 			"--reuid=1001", "--regid=1001", "--clear-groups",
 			"--inh-caps=-all", "--ambient-caps=-all", "--bounding-set=-all", "--no-new-privs",
-			"-i", "HOME=/", "/opt/hostedtoolcache/go/bin/go", "version",
+			"-i", "HOME=/", linuxPidNamespaceEnvironment, "/opt/hostedtoolcache/go/bin/go", "version",
 		} {
 			if !containsExactArg(args, want) {
 				t.Fatalf("privileged arguments %q missing %q", args, want)
