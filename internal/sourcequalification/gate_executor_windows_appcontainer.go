@@ -154,8 +154,9 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 }
 
 func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writable, readable []string) {
-	required = uniqueExistingWindowsPaths(append(windowsExecutableTree(request.Application), request.Dir))
+	required = uniqueExistingWindowsPaths([]string{request.Application, request.Dir})
 	var writePaths, readPaths []string
+	readPaths = append(readPaths, windowsExecutableTree(request.Application)...)
 	for _, entry := range request.Env {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok || value == "" {

@@ -12,7 +12,7 @@ import (
 
 const (
 	maximumQualificationWorkspaceCleanupDepth   = 64
-	maximumQualificationWorkspaceCleanupEntries = 100_000
+	maximumQualificationWorkspaceCleanupEntries = 2_000_000
 )
 
 var (
