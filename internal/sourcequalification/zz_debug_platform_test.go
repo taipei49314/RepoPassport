@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -45,8 +47,12 @@ func TestZZDebugPlatformConfigurationCI(t *testing.T) {
 			fmt.Printf("debug controllerFile path=%q lstatErr=%v mode=%v perm=%#o size=%d\n",
 				path, statErr, fileMode(info), filePerm(info), fileSize(info))
 			dumpResolved(absolute, "controller", path)
+			dumpInspectController(path)
 		}
 	}
+	dumpLookPath(absolute, "go", "gofmt", "pwsh", "git", "uname")
+	gitPath, gitErr := resolveTrustedGitExecutable(absolute)
+	fmt.Printf("debug trustedGit path=%q err=%v\n", gitPath, gitErr)
 
 	temp := os.Getenv("RUNNER_TEMP")
 	if temp == "" {
@@ -149,6 +155,30 @@ func dumpFact(t *testing.T, applications map[string]string, label string, args [
 	fmt.Printf("debug fact %s line=%q err=%v\n", label, line, err)
 }
 
+func dumpLookPath(repository string, names ...string) {
+	for _, name := range names {
+		if name == "uname" && runtime.GOOS == "windows" {
+			continue
+		}
+		path, err := exec.LookPath(name)
+		fmt.Printf("debug lookPath %s path=%q err=%v\n", name, path, err)
+		if err != nil {
+			continue
+		}
+		dumpResolved(repository, "lookpath-"+name, path)
+	}
+}
+
+func dumpInspectController(path string) {
+	revision, revErr := exec.Command("git", "rev-parse", "HEAD").Output()
+	if revErr != nil {
+		fmt.Printf("debug inspectController gitRev err=%v\n", revErr)
+		return
+	}
+	identity, _, err := inspectQualificationController(path, runtime.GOOS, strings.TrimSpace(string(revision)))
+	fmt.Printf("debug inspectController path=%q err=%v identity=%+v\n", path, err, identity)
+}
+
 func dumpResolved(repository, name, path string) {
 	info, statErr := os.Lstat(path)
 	resolved, evalErr := filepath.EvalSymlinks(path)
@@ -158,6 +188,8 @@ func dumpResolved(repository, name, path string) {
 		pathWithinRepository(repository, path),
 		availableGateApplication(path),
 		trustedErr == nil && validGateApplication(repository, trusted, []string{filepath.Dir(trusted)}))
+	contains, containErr := securePackagePathContains(repository, path)
+	fmt.Printf("debug contain %s contains=%v err=%v\n", name, contains, containErr)
 }
 
 func fileMode(info os.FileInfo) os.FileMode {

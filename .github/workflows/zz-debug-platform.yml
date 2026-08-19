@@ -56,6 +56,11 @@ jobs:
             ./internal/sourcequalification/cmd/repopass-source-qualify
           stat -c 'controller mode=%a uid=%u gid=%g nlink=%h path=%n' \
             "$RUNNER_TEMP/source-qualification-controller-debug/repopass-source-qualify-linux-amd64"
+          for path in /usr/bin/git /usr/bin/pwsh /usr/bin/uname \
+            /opt/hostedtoolcache/go/1.26.6/x64/bin/go \
+            /opt/hostedtoolcache/go/1.26.6/x64/bin/gofmt; do
+            stat -c 'tool mode=%a uid=%u gid=%g nlink=%h type=%F name=%N' "$path" || true
+          done
       - name: build-controller-windows
         if: runner.os == 'Windows'
         working-directory: ${{ github.workspace }}/qualification-source
@@ -71,7 +76,8 @@ jobs:
           go build -trimpath -buildvcs=true -o $controller ./internal/sourcequalification/cmd/repopass-source-qualify
           if ($LASTEXITCODE -ne 0) { throw 'controller build failed' }
           Get-Item $controller | Format-List FullName, Length, Mode, LinkType, Attributes
-      - name: dump-platform-configuration
+      - name: dump-platform-configuration-linux
+        if: runner.os == 'Linux'
         working-directory: ${{ github.workspace }}/qualification-source
         env:
           SQ_DEBUG_REPO_ROOT: ${{ github.workspace }}/qualification-source
@@ -85,3 +91,16 @@ jobs:
           command -v git
           command -v pwsh
           go test -count=1 -run TestZZDebugPlatformConfigurationCI -v ./internal/sourcequalification/
+      - name: dump-platform-configuration-windows
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}/qualification-source
+        env:
+          SQ_DEBUG_REPO_ROOT: ${{ github.workspace }}/qualification-source
+          SQ_DEBUG_CONTROLLER: ${{ runner.temp }}/source-qualification-controller-debug
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host "PATH=$env:PATH"
+          Get-Command go, git, pwsh, gofmt | Format-List Name, Source, CommandType, Path
+          go test -count=1 -run TestZZDebugPlatformConfigurationCI -v ./internal/sourcequalification/
+          if ($LASTEXITCODE -ne 0) { throw 'platform dump failed' }
