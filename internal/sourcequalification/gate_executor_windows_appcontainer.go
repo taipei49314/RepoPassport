@@ -173,7 +173,8 @@ func windowsAppContainerReadableTree(path string) bool {
 	if strings.EqualFold(base, "bin") || strings.EqualFold(base, "tool") {
 		return true
 	}
-	if !strings.EqualFold(base, "src") && !strings.EqualFold(base, "pkg") {
+	if !strings.EqualFold(base, "src") && !strings.EqualFold(base, "pkg") &&
+		!strings.EqualFold(base, "lib") {
 		return false
 	}
 	_, err := os.Lstat(filepath.Join(filepath.Dir(path), "bin", "go.exe"))
@@ -282,7 +283,8 @@ func windowsExecutableTree(application string) []string {
 		strings.EqualFold(filepath.Base(directory), "bin") {
 		root := filepath.Dir(directory)
 		paths = append(paths, root, filepath.Join(root, "pkg", "tool"),
-			filepath.Join(root, "pkg"), filepath.Join(root, "src"))
+			filepath.Join(root, "pkg"), filepath.Join(root, "src"),
+			filepath.Join(root, "lib"))
 	}
 	if strings.EqualFold(base, "git.exe") && strings.EqualFold(filepath.Base(directory), "cmd") {
 		paths = append(paths, filepath.Dir(directory))

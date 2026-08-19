@@ -28,6 +28,7 @@ func TestWindowsExecutableTreeIncludesGoRoot(t *testing.T) {
 		`C:\hostedtoolcache\windows\go\1.26.6\x64\pkg\tool`,
 		`C:\hostedtoolcache\windows\go\1.26.6\x64\pkg`,
 		`C:\hostedtoolcache\windows\go\1.26.6\x64\src`,
+		`C:\hostedtoolcache\windows\go\1.26.6\x64\lib`,
 	}
 	for _, path := range want {
 		found := false
@@ -300,6 +301,87 @@ func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
 		result.TimedOut || result.Cancelled || result.CleanupFailed {
 		t.Fatalf("module-cache go vet result = %#v err=%v stdout=%q stderr=%q",
+			result, err, result.Stdout, result.Stderr)
+	}
+}
+
+func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("caller path is unavailable")
+	}
+	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil ||
+		!schemaJSONAppContainerRootGrantable(moduleRoot) {
+		t.Skip("module root AppContainer ancestor chain crosses a host profile root")
+	}
+	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	modcache := filepath.Join(dir, "modcache")
+	gocache := filepath.Join(dir, "gocache")
+	gopath := filepath.Join(dir, "gopath")
+	tmpdir := filepath.Join(dir, "tmp")
+	for _, path := range []string{modcache, gocache, gopath, tmpdir} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	application := requireTrustedWindowsGoApplication(t)
+	download := exec.Command(application, "mod", "download", "-modcacherw", "all")
+	download.Dir = moduleRoot
+	download.Env = []string{
+		"PATH=" + filepath.Dir(application),
+		"HOME=" + dir,
+		"USERPROFILE=" + dir,
+		"GOTOOLCHAIN=local",
+		"GOWORK=off",
+		"GOENV=off",
+		"GOFLAGS=-mod=readonly",
+		"CGO_ENABLED=0",
+		"GOPROXY=https://proxy.golang.org,direct",
+		"GOSUMDB=sum.golang.org",
+		"GOMODCACHE=" + modcache,
+		"GOCACHE=" + gocache,
+		"GOPATH=" + gopath,
+		"GOTMPDIR=" + tmpdir,
+		"SYSTEMROOT=" + os.Getenv("SYSTEMROOT"),
+		"WINDIR=" + os.Getenv("WINDIR"),
+	}
+	if output, err := download.CombinedOutput(); err != nil {
+		t.Skipf("host readonly module download unavailable: %v\n%s", err, output)
+	}
+
+	env := windowsNetworkNoneGoVersionEnvironment(application, dir)
+	for index, item := range env {
+		name, _, _ := strings.Cut(item, "=")
+		switch strings.ToUpper(name) {
+		case "GOMODCACHE":
+			env[index] = "GOMODCACHE=" + modcache
+		case "GOCACHE":
+			env[index] = "GOCACHE=" + gocache
+		case "GOPATH":
+			env[index] = "GOPATH=" + gopath
+		case "GOTMPDIR", "TMPDIR", "TMP", "TEMP":
+			env[index] = name + "=" + tmpdir
+		}
+	}
+
+	started := time.Now()
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application: application,
+		Args:        []string{"vet", "./..."},
+		Dir:         moduleRoot,
+		Env:         env,
+		Network:     NetworkNone,
+		Timeout:     5 * time.Minute,
+		StdoutLimit: 1 << 16,
+		StderrLimit: 1 << 16,
+	})
+	if time.Since(started) > 4*time.Minute {
+		t.Fatal("module-root go vet AppContainer grant or vet walked too long")
+	}
+	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.TimedOut || result.Cancelled || result.CleanupFailed {
+		t.Fatalf("module-root go vet result = %#v err=%v stdout=%q stderr=%q",
 			result, err, result.Stdout, result.Stderr)
 	}
 }
