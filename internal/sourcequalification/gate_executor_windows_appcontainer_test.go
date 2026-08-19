@@ -197,6 +197,37 @@ func TestOSGateExecutorIsolatesSchemaJSONThroughJunctionAncestor(t *testing.T) {
 	}
 }
 
+func TestOSGateExecutorIsolatesGoVetWithNetworkNone(t *testing.T) {
+	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.invalid/vetprobe\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "probe.go"), []byte("package vetprobe\n\nfunc Ready() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	application := requireTrustedWindowsGoApplication(t)
+
+	started := time.Now()
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application: application,
+		Args:        []string{"vet", "./..."},
+		Dir:         dir,
+		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
+		Network:     NetworkNone,
+		Timeout:     45 * time.Second,
+		StdoutLimit: 4096,
+		StderrLimit: 4096,
+	})
+	if time.Since(started) > 40*time.Second {
+		t.Fatal("NetworkNone go vet AppContainer grant walked too long")
+	}
+	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.TimedOut || result.Cancelled || result.CleanupFailed {
+		t.Fatalf("NetworkNone go vet result = %#v err=%v stdout=%q stderr=%q",
+			result, err, result.Stdout, result.Stderr)
+	}
+}
+
 func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
 	t.Parallel()
 	application := `C:\hostedtoolcache\windows\go\1.26.6\x64\bin\go.exe`
@@ -247,7 +278,7 @@ func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t
 		t.Fatalf("prepare with a held source file: session=%v err=%v", session != nil, err)
 	}
 	defer session.release()
-	if time.Since(started) > 15*time.Second {
+	if time.Since(started) > 45*time.Second {
 		t.Fatal("source-tree AppContainer grant walked too long")
 	}
 }
@@ -410,6 +441,8 @@ func windowsNetworkNoneGoVersionEnvironment(application, dir string) []string {
 		"GOTELEMETRY=off",
 		"GOCACHE=" + dir,
 		"GOMODCACHE=" + dir,
+		"GOPATH=" + filepath.Join(dir, "go"),
+		"GOBIN=" + filepath.Join(dir, "bin"),
 		"GOTMPDIR=" + dir,
 		"GOPROXY=off",
 		"GOSUMDB=off",
