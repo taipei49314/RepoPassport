@@ -156,19 +156,11 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 			windowsGrantAppContainerExistingTree(path, sid)
 		}
 	}
-	// AppContainer tokens lack SeChangeNotifyPrivilege. ValidateSchemaJSON and
-	// package-directory identity walk every ancestor to the volume root, so
-	// path-only traverse/list ACEs are required. Do not inherit or TreeReset:
-	// inherited ACEs on C:\Users or %SystemRoot% hang and mutate the host.
-	for _, path := range required {
-		windowsGrantAppContainerAncestorChain(path, sid)
-	}
-	for _, path := range writable {
-		windowsGrantAppContainerAncestorChain(path, sid)
-	}
-	for _, path := range readable {
-		windowsGrantAppContainerAncestorChain(path, sid)
-	}
+	// AppContainer lacks SeChangeNotifyPrivilege. Schema JSON opens Dir and
+	// every ancestor except the volume root. Grant path-only traverse on Dir's
+	// ancestors. Do not grant Application/GOROOT ancestors: SetNamedSecurityInfo
+	// on C:\hostedtoolcache hangs CI. Do not inherit or TreeReset.
+	windowsGrantAppContainerAncestorChain(request.Dir, sid)
 	return nil
 }
 
@@ -209,11 +201,7 @@ func windowsAppContainerAncestorGrantForbidden(path string) bool {
 	relative := strings.TrimPrefix(path, volume)
 	relative = strings.Trim(relative, `\`)
 	if relative == "" {
-		systemDrive := os.Getenv("SystemDrive")
-		if systemDrive != "" && strings.EqualFold(filepath.VolumeName(path), systemDrive) {
-			return true
-		}
-		return false
+		return true
 	}
 	first, _, _ := strings.Cut(strings.ToLower(relative), `\`)
 	switch first {

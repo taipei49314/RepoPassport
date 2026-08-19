@@ -128,10 +128,10 @@ func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
 		t.Fatal("ancestor grant skip list must exclude Users/Program Files trees and keep CI volume paths")
 	}
 	if os.Getenv("SystemDrive") == "C:" && !windowsAppContainerAncestorGrantForbidden(`C:\`) {
-		t.Fatal("system-drive volume root must not receive inherited-style AppContainer grants")
+		t.Fatal("volume roots must not receive AppContainer ancestor grants")
 	}
-	if windowsAppContainerAncestorGrantForbidden(`D:\`) {
-		t.Fatal("non-system volume root D:\\ must remain grantable for GitHub-hosted SCHEMA-JSON")
+	if !windowsAppContainerAncestorGrantForbidden(`D:\`) {
+		t.Fatal("volume roots must not receive AppContainer ancestor grants")
 	}
 }
 
