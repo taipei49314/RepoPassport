@@ -148,6 +148,9 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.
 		if err := windowsGrantAppContainerPath(path, sid, true, true); err != nil {
 			return err
 		}
+		// TreeReset may skip existing children. MODULE-DOWNLOAD fills GOMODCACHE
+		// outside AppContainer; go vet must read those files under NetworkNone.
+		windowsGrantAppContainerExistingTree(path, sid)
 	}
 	for _, path := range readable {
 		_ = windowsGrantAppContainerPath(path, sid, false, false)
