@@ -128,6 +128,13 @@ jobs:
           sudo chmod go-w "$target"
           mode="$(stat -c '%a' "$target")"
           test "$((8#$mode & 8#022))" -eq 0
+      - id: drop-checkout-worktree-config
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .git/config.worktree
+          test ! -e .git/config.worktree
       - id: produce-lane
         working-directory: ${{ github.workspace }}/qualification-source
         shell: bash
@@ -235,6 +242,18 @@ jobs:
           $env:CGO_ENABLED = '0'
           go build -trimpath -buildvcs=true -o (Join-Path $controllerRoot 'repopass-source-qualify-windows-amd64.exe') ./internal/sourcequalification/cmd/repopass-source-qualify
           if ($LASTEXITCODE -ne 0) { throw 'controller build failed' }
+      - id: drop-checkout-worktree-config
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $worktree = Join-Path '.git' 'config.worktree'
+          if (Test-Path -LiteralPath $worktree) {
+            Remove-Item -LiteralPath $worktree -Force
+          }
+          if (Test-Path -LiteralPath $worktree) {
+            throw 'checkout leftover config.worktree remains'
+          }
       - id: produce-lane
         working-directory: ${{ github.workspace }}/qualification-source
         shell: pwsh
@@ -346,6 +365,13 @@ jobs:
           path: qualification-source
           persist-credentials: false
           ref: ${{ needs.context.outputs.tested-revision }}
+      - id: drop-checkout-worktree-config
+        working-directory: ${{ github.workspace }}/qualification-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .git/config.worktree
+          test ! -e .git/config.worktree
       - id: setup-go
         uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
         with:

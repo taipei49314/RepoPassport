@@ -591,6 +591,9 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 		binary = "repopass-source-qualify-windows-amd64.exe"
 	}
 	requireWorkflowControllerBuild(t, job, binary)
+	if workflowStepIndex(t, job, "drop-checkout-worktree-config")+1 != workflowStepIndex(t, job, "produce-lane") {
+		t.Error("must drop leftover checkout worktree config immediately before produce-lane")
+	}
 
 	outputs := workflowRequiredMapping(t, job, "outputs")
 	wantOutputs := map[string]string{
@@ -717,6 +720,7 @@ func requireWorkflowControllerBuild(t *testing.T, job *yaml.Node, binary string)
 			t.Errorf("checkout input %s = %q, want %q", key, got, want)
 		}
 	}
+	requireWorkflowDropCheckoutWorktreeConfig(t, job)
 	setup := workflowRequiredActionStep(t, job, "setup-go", "actions/setup-go")
 	if got, want := workflowScalarMap(t, workflowRequiredMapping(t, setup, "with")), map[string]string{
 		"cache": "false", "go-version": "1.26.6",
@@ -738,6 +742,23 @@ func requireWorkflowControllerBuild(t *testing.T, job *yaml.Node, binary string)
 	)
 	if !regexp.MustCompile(`(?m)^\s*(?:&\s+)?go\s+build(?:\s|$)`).MatchString(script) {
 		t.Error("build-controller must execute go build, not merely mention it")
+	}
+}
+
+func requireWorkflowDropCheckoutWorktreeConfig(t *testing.T, job *yaml.Node) {
+	t.Helper()
+	drop := workflowRequiredStep(t, job, "drop-checkout-worktree-config")
+	if got := workflowRequiredScalar(t, drop, "working-directory"); got != "${{ github.workspace }}/qualification-source" {
+		t.Errorf("drop-checkout-worktree-config working-directory = %q, want exact clean checkout", got)
+	}
+	script := requireWorkflowScriptFragments(t, drop, "config.worktree")
+	if !strings.Contains(script, "rm -f") && !strings.Contains(script, "Remove-Item") {
+		t.Error("drop-checkout-worktree-config must delete leftover .git/config.worktree")
+	}
+	checkoutIndex := workflowStepIndex(t, job, "checkout")
+	dropIndex := workflowStepIndex(t, job, "drop-checkout-worktree-config")
+	if checkoutIndex >= dropIndex {
+		t.Error("must drop leftover checkout worktree config after checkout")
 	}
 }
 
