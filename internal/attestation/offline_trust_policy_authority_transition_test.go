@@ -219,7 +219,7 @@ func TestOfflineTrustPolicyAuthorityTransitionReadersAreStableAndBounded(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	root := unlinkedTempDir(t)
 	transitionPath := filepath.Join(root, "transition.dsse.json")
 	previousPath := filepath.Join(root, "previous.pem")
 	nextPath := filepath.Join(root, "next.pem")
