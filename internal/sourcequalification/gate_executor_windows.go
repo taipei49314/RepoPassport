@@ -49,12 +49,6 @@ type windowsJobBasicAccounting struct {
 }
 
 func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {
-	// A Job Object contains descendants but does not constrain networking.
-	// Until a restricted-token/AppContainer or equivalent verified provider is
-	// available, a Windows network-none gate must fail closed before invocation.
-	if request.Network == NetworkNone {
-		return gateProcessResult{Blocked: true}, errGateProcessBlocked
-	}
 	stdin, err := os.Open(os.DevNull)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
@@ -89,7 +83,18 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		}
 	}
 
-	attributeList, err := windows.NewProcThreadAttributeList(1)
+	attributeSlots := uint32(1)
+	var appContainer *windowsAppContainerSession
+	if request.Network == NetworkNone {
+		session, err := windowsPrepareNetworkNoneAppContainer(request)
+		if err != nil || session == nil {
+			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		}
+		appContainer = session
+		defer appContainer.release()
+		attributeSlots = 2
+	}
+	attributeList, err := windows.NewProcThreadAttributeList(attributeSlots)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
@@ -100,6 +105,15 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		uintptr(len(childHandles))*unsafe.Sizeof(childHandles[0]),
 	); err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
+	if appContainer != nil {
+		if err := attributeList.Update(
+			windowsProcThreadAttributeSecurityCapabilities,
+			unsafe.Pointer(&appContainer.capabilities),
+			unsafe.Sizeof(appContainer.capabilities),
+		); err != nil {
+			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		}
 	}
 
 	job, err := windows.CreateJobObject(nil, nil)

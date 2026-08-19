@@ -3,11 +3,15 @@
 package sourcequalification
 
 import (
+	"errors"
 	"io"
 	"os"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+const unixWorkspaceHolderReapTimeout = 5 * time.Second
 
 type unixQualificationWorkspace struct {
 	parent         *os.File
@@ -210,36 +214,41 @@ func (workspace *unixQualificationWorkspace) cleanupInternal(verifyPaths bool) (
 		return errQualificationWorkspaceCleanup
 	}
 
-	reapUnixQualificationWorkspaceHolders(workspace.path)
+	reapUnixQualificationWorkspaceHolders(workspace.path, workspace.root)
 
 	budget := &qualificationWorkspaceCleanupBudget{}
-	if err := removeUnixQualificationWorkspaceContents(
-		workspace.root,
-		workspace.rootIdentity.first,
-		0,
-		budget,
-	); err != nil {
-		return errQualificationWorkspaceCleanup
+	deadline := time.Now().Add(unixWorkspaceHolderReapTimeout)
+	for {
+		budget.entries = 0
+		removeErr := removeUnixQualificationWorkspaceContents(
+			workspace.root,
+			workspace.rootIdentity.first,
+			0,
+			budget,
+		)
+		if removeErr == nil {
+			if err := unix.Fstat(int(workspace.root.Fd()), &rootMetadata); err == nil &&
+				validUnixQualificationWorkspaceMetadata(&rootMetadata, workspace.rootIdentity, true) {
+				var pathMetadata unix.Stat_t
+				if err := unix.Fstatat(
+					int(workspace.parent.Fd()),
+					workspace.name,
+					&pathMetadata,
+					unix.AT_SYMLINK_NOFOLLOW,
+				); err == nil && sameUnixQualificationWorkspaceIdentity(&pathMetadata, workspace.rootIdentity) &&
+					pathMetadata.Mode&unix.S_IFMT == unix.S_IFDIR {
+					if err := unix.Unlinkat(int(workspace.parent.Fd()), workspace.name, unix.AT_REMOVEDIR); err == nil {
+						return nil
+					}
+				}
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return errQualificationWorkspaceCleanup
+		}
+		reapUnixQualificationWorkspaceHolders(workspace.path, workspace.root)
+		time.Sleep(10 * time.Millisecond)
 	}
-	if err := unix.Fstat(int(workspace.root.Fd()), &rootMetadata); err != nil ||
-		!validUnixQualificationWorkspaceMetadata(&rootMetadata, workspace.rootIdentity, true) {
-		return errQualificationWorkspaceCleanup
-	}
-
-	var pathMetadata unix.Stat_t
-	if err := unix.Fstatat(
-		int(workspace.parent.Fd()),
-		workspace.name,
-		&pathMetadata,
-		unix.AT_SYMLINK_NOFOLLOW,
-	); err != nil || !sameUnixQualificationWorkspaceIdentity(&pathMetadata, workspace.rootIdentity) ||
-		pathMetadata.Mode&unix.S_IFMT != unix.S_IFDIR {
-		return errQualificationWorkspaceCleanup
-	}
-	if err := unix.Unlinkat(int(workspace.parent.Fd()), workspace.name, unix.AT_REMOVEDIR); err != nil {
-		return errQualificationWorkspaceCleanup
-	}
-	return nil
 }
 
 func removeUnixQualificationWorkspaceContents(
@@ -287,6 +296,9 @@ func removeUnixQualificationWorkspaceEntry(
 	parentDescriptor := int(parent.Fd())
 	var before unix.Stat_t
 	if err := unix.Fstatat(parentDescriptor, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
 		return errQualificationWorkspaceCleanup
 	}
 	identity := unixQualificationWorkspaceIdentity(&before)
@@ -297,7 +309,7 @@ func removeUnixQualificationWorkspaceEntry(
 			current.Mode&unix.S_IFMT == unix.S_IFDIR {
 			return errQualificationWorkspaceCleanup
 		}
-		if err := unix.Unlinkat(parentDescriptor, name, 0); err != nil {
+		if err := unix.Unlinkat(parentDescriptor, name, 0); err != nil && !errors.Is(err, unix.ENOENT) {
 			return errQualificationWorkspaceCleanup
 		}
 		return nil
@@ -341,12 +353,17 @@ func removeUnixQualificationWorkspaceEntry(
 	}
 
 	var current unix.Stat_t
-	if err := unix.Fstatat(parentDescriptor, name, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil ||
-		!sameUnixQualificationWorkspaceIdentity(&current, identity) ||
+	if err := unix.Fstatat(parentDescriptor, name, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		return errQualificationWorkspaceCleanup
+	}
+	if !sameUnixQualificationWorkspaceIdentity(&current, identity) ||
 		current.Mode&unix.S_IFMT != unix.S_IFDIR {
 		return errQualificationWorkspaceCleanup
 	}
-	if err := unix.Unlinkat(parentDescriptor, name, unix.AT_REMOVEDIR); err != nil {
+	if err := unix.Unlinkat(parentDescriptor, name, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {
 		return errQualificationWorkspaceCleanup
 	}
 	return nil

@@ -20,6 +20,7 @@ func TestUnixPathInsideWorkspace(t *testing.T) {
 	}{
 		{candidate: "/tmp/repopass-workspace", want: true},
 		{candidate: "/tmp/repopass-workspace/tmp", want: true},
+		{candidate: "/tmp/repopass-workspace/tmp (deleted)", want: true},
 		{candidate: "/tmp/repopass-workspace-evil", want: false},
 		{candidate: "/tmp", want: false},
 		{candidate: "/tmp/repopass-workspace/../secret", want: false},
@@ -40,7 +41,7 @@ func TestUnixReapWorkspaceHoldersKillsSetsidProcessWithCwdInside(t *testing.T) {
 	defer func() { _ = safe.Process.Kill(); _ = safe.Wait() }()
 	waitUntilWorkspaceHolder(t, held.Process.Pid, workspace)
 
-	reapUnixQualificationWorkspaceHolders(workspace)
+	reapUnixQualificationWorkspaceHolders(workspace, nil)
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- held.Wait() }()
 	select {
@@ -73,7 +74,7 @@ func TestUnixReapWorkspaceHoldersKillsProcessHoldingWorkspaceFile(t *testing.T) 
 	}
 	waitUntilWorkspaceHolder(t, command.Process.Pid, workspace)
 
-	reapUnixQualificationWorkspaceHolders(workspace)
+	reapUnixQualificationWorkspaceHolders(workspace, nil)
 	waitDone := make(chan error, 1)
 	go func() { waitDone <- command.Wait() }()
 	select {
@@ -106,11 +107,34 @@ func TestPrivateQualificationWorkspaceCleanupReapsSetsidCwdHolder(t *testing.T) 
 	}
 }
 
+func TestValidLinuxProcHolderPath(t *testing.T) {
+	t.Parallel()
+	if !validLinuxProcHolderPath("/proc/9562/cwd") ||
+		!validLinuxProcHolderPath("/proc/9562/root") ||
+		!validLinuxProcHolderPath("/proc/9562/fd") ||
+		!validLinuxProcHolderPath("/proc/9562/fd/3") {
+		t.Fatal("accepted proc holder paths were rejected")
+	}
+	for _, path := range []string{
+		"/etc/passwd",
+		"/proc/1/cwd",
+		"/proc/0/cwd",
+		"/proc/9562/exe",
+		"/proc/9562/fd/../../cwd",
+		"/proc/9562/fd/99999",
+		"/proc/9562/cwd/extra",
+	} {
+		if validLinuxProcHolderPath(path) {
+			t.Fatalf("invalid proc path accepted: %q", path)
+		}
+	}
+}
+
 func waitUntilWorkspaceHolder(t *testing.T, pid int, workspace string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if unixProcessHoldsWorkspace(pid, workspace) {
+		if unixProcessHoldsWorkspace(pid, workspace, nil) {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
