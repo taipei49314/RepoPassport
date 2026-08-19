@@ -411,18 +411,43 @@ func unixKillProcessGroup(processGroup int) error {
 	if processGroup <= 1 {
 		return syscall.EINVAL
 	}
-	err := syscall.Kill(-processGroup, syscall.SIGKILL)
+	return unixKillSignal(-processGroup)
+}
+
+func unixKillProcess(pid int) error {
+	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
+		return syscall.EINVAL
+	}
+	return unixKillSignal(pid)
+}
+
+func unixKillSignal(target int) error {
+	err := syscall.Kill(target, syscall.SIGKILL)
 	if err == nil || errors.Is(err, syscall.ESRCH) {
 		return err
 	}
 	if !errors.Is(err, syscall.EPERM) {
 		return err
 	}
-	return unixPrivilegedKillProcessGroup(processGroup)
+	return unixPrivilegedKillTarget(target)
 }
 
 func linuxPrivilegedKillProcessGroupCommand(processGroup int) (string, []string, bool) {
 	if processGroup <= 1 {
+		return "", nil, false
+	}
+	return linuxPrivilegedKillTargetCommand("-" + strconv.Itoa(processGroup))
+}
+
+func linuxPrivilegedKillProcessCommand(pid int) (string, []string, bool) {
+	if pid <= 1 {
+		return "", nil, false
+	}
+	return linuxPrivilegedKillTargetCommand(strconv.Itoa(pid))
+}
+
+func linuxPrivilegedKillTargetCommand(target string) (string, []string, bool) {
+	if target == "" || target == "-" || target == "0" || target == "1" || target == "-1" {
 		return "", nil, false
 	}
 	sudo, sudoOK := trustedLinuxSystemApplication("/usr/bin/sudo")
@@ -433,11 +458,18 @@ func linuxPrivilegedKillProcessGroupCommand(processGroup int) (string, []string,
 	if !sudoOK || !killOK {
 		return "", nil, false
 	}
-	return sudo, []string{"-n", "--", kill, "-s", "KILL", "--", "-" + strconv.Itoa(processGroup)}, true
+	return sudo, []string{"-n", "--", kill, "-s", "KILL", "--", target}, true
 }
 
-func unixPrivilegedKillProcessGroup(processGroup int) error {
-	sudo, arguments, ok := linuxPrivilegedKillProcessGroupCommand(processGroup)
+func unixPrivilegedKillTarget(target int) error {
+	var sudo string
+	var arguments []string
+	var ok bool
+	if target < 0 {
+		sudo, arguments, ok = linuxPrivilegedKillProcessGroupCommand(-target)
+	} else {
+		sudo, arguments, ok = linuxPrivilegedKillProcessCommand(target)
+	}
 	if !ok {
 		return syscall.EPERM
 	}

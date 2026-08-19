@@ -210,6 +210,8 @@ func (workspace *unixQualificationWorkspace) cleanupInternal(verifyPaths bool) (
 		return errQualificationWorkspaceCleanup
 	}
 
+	reapUnixQualificationWorkspaceHolders(workspace.path)
+
 	budget := &qualificationWorkspaceCleanupBudget{}
 	if err := removeUnixQualificationWorkspaceContents(
 		workspace.root,
