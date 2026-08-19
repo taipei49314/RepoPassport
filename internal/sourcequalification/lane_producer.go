@@ -384,10 +384,10 @@ func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error
 }
 
 func restoreQualificationLaneTrackedFileWritable(path string, info os.FileInfo) error {
-	if info.Mode().Perm()&0o200 != 0 {
+	if info.Mode().Perm()&0o200 != 0 && info.Mode().Perm()&0o400 != 0 {
 		return nil
 	}
-	return os.Chmod(path, info.Mode().Perm()|0o200)
+	return os.Chmod(path, 0o600)
 }
 
 func restoreQualificationLaneTrackedFileMode(path, gitMode string) error {

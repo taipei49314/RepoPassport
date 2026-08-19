@@ -47,11 +47,14 @@ func ValidateSchemaJSON(root string) error {
 	}
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return errors.New("schema JSON root is redirected")
-	}
-	resolved = filepath.Clean(resolved)
-	if !sameSchemaJSONPath(root, resolved) && !sameSchemaJSONRootIdentity(root, resolved) {
-		return errors.New("schema JSON root is redirected")
+		// AppContainer cannot always eval ancestor junctions. The root itself
+		// is already a real directory.
+		resolved = root
+	} else {
+		resolved = filepath.Clean(resolved)
+		if !sameSchemaJSONPath(root, resolved) && !sameSchemaJSONRootIdentity(root, resolved) {
+			return errors.New("schema JSON root is redirected")
+		}
 	}
 
 	schemaCount := 0
