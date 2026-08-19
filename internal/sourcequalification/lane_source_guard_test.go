@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -59,6 +60,71 @@ func TestQualificationLaneSourceGuardRestoresModuleDownloadGoSum(t *testing.T) {
 	restored, err := os.ReadFile(sumPath)
 	if err != nil || !bytes.Equal(restored, original) {
 		t.Fatalf("go.sum after MODULE-DOWNLOAD = %q, want snapshot bytes %q (err=%v)", restored, original, err)
+	}
+}
+
+func TestQualificationLaneSourceGuardRestoresReadOnlyModuleDownloadGoSum(t *testing.T) {
+	fixture := newGitRepositoryFixtureWithGoSum(t)
+	sumPath := filepath.Join(fixture.root, "go.sum")
+	original, err := os.ReadFile(sumPath)
+	if err != nil {
+		t.Fatalf("read tracked go.sum: %v", err)
+	}
+	guard := newQualificationLaneSourceGuard(t, fixture, worktreeMutatingExecutor{
+		mutate: func() error {
+			if err := os.WriteFile(sumPath, append(append([]byte(nil), original...), []byte("golang.org/x/sync v0.21.0 h1:deadbeef\n")...), 0o644); err != nil {
+				return err
+			}
+			return os.Chmod(sumPath, 0o444)
+		},
+	})
+
+	result, execErr := guard.Execute(context.Background(), moduleDownloadGateProcessRequest())
+	if execErr != nil {
+		t.Fatalf("MODULE-DOWNLOAD source guard returned execution error: %v", execErr)
+	}
+	if result.SourceChanged {
+		t.Fatal("read-only MODULE-DOWNLOAD go.sum rewrite was treated as SOURCE_DIRTY")
+	}
+	restored, err := os.ReadFile(sumPath)
+	if err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("read-only go.sum after MODULE-DOWNLOAD = %q, want snapshot bytes %q (err=%v)", restored, original, err)
+	}
+}
+
+func TestQualificationLaneSourceGuardRestoresModuleDownloadExecutableMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows worktree inspect does not bind the Git executable bit")
+	}
+	fixture := newGitRepositoryFixture(t)
+	readme := filepath.Join(fixture.root, "README.md")
+	original, err := os.ReadFile(readme)
+	if err != nil {
+		t.Fatalf("read tracked README.md: %v", err)
+	}
+	guard := newQualificationLaneSourceGuard(t, fixture, worktreeMutatingExecutor{
+		mutate: func() error {
+			return os.Chmod(readme, 0o755)
+		},
+	})
+
+	result, execErr := guard.Execute(context.Background(), moduleDownloadGateProcessRequest())
+	if execErr != nil {
+		t.Fatalf("MODULE-DOWNLOAD source guard returned execution error: %v", execErr)
+	}
+	if result.SourceChanged {
+		t.Fatal("MODULE-DOWNLOAD executable-bit side effect was treated as SOURCE_DIRTY")
+	}
+	info, err := os.Lstat(readme)
+	if err != nil {
+		t.Fatalf("stat restored README.md: %v", err)
+	}
+	if info.Mode().Perm()&0o111 != 0 {
+		t.Fatalf("README.md mode = %s, want non-executable after MODULE-DOWNLOAD restore", info.Mode())
+	}
+	restored, err := os.ReadFile(readme)
+	if err != nil || !bytes.Equal(restored, original) {
+		t.Fatalf("README.md after MODULE-DOWNLOAD = %q, want snapshot bytes %q (err=%v)", restored, original, err)
 	}
 }
 

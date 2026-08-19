@@ -5,6 +5,7 @@ package sourcequalification
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -92,6 +93,73 @@ func windowsDecodeEnvironmentBlock(block []uint16) map[string]string {
 		start = i + 1
 	}
 	return result
+}
+
+func TestWindowsAppContainerAncestorPathsIncludeVolumeRoot(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	leaf := filepath.Join(dir, "bin", "repopass-source-qualify.exe")
+	ancestors := windowsAppContainerAncestorPaths(leaf)
+	if len(ancestors) == 0 {
+		t.Fatal("AppContainer ancestor chain is empty")
+	}
+	foundVolume := false
+	foundParent := false
+	for _, ancestor := range ancestors {
+		if filepath.Dir(ancestor) == ancestor {
+			foundVolume = true
+		}
+		if filepath.Clean(ancestor) == filepath.Clean(dir) {
+			foundParent = true
+		}
+	}
+	if !foundVolume || !foundParent {
+		t.Fatalf("windowsAppContainerAncestorPaths(%q) = %q, want volume root and %q", leaf, ancestors, dir)
+	}
+}
+
+func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
+	t.Parallel()
+	if !windowsAppContainerAncestorGrantForbidden(`C:\Users`) ||
+		!windowsAppContainerAncestorGrantForbidden(`C:\Users\runner`) ||
+		!windowsAppContainerAncestorGrantForbidden(`C:\Program Files`) ||
+		windowsAppContainerAncestorGrantForbidden(`C:\hostedtoolcache`) ||
+		windowsAppContainerAncestorGrantForbidden(`D:\a`) {
+		t.Fatal("ancestor grant skip list must exclude Users/Program Files trees and keep CI volume paths")
+	}
+	if os.Getenv("SystemDrive") == "C:" && !windowsAppContainerAncestorGrantForbidden(`C:\`) {
+		t.Fatal("system-drive volume root must not receive inherited-style AppContainer grants")
+	}
+	if windowsAppContainerAncestorGrantForbidden(`D:\`) {
+		t.Fatal("non-system volume root D:\\ must remain grantable for GitHub-hosted SCHEMA-JSON")
+	}
+}
+
+func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
+	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	application := requireBuiltSourceQualifyApplication(t)
+	writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
+	writeSchemaJSONFixture(t, dir, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
+
+	started := time.Now()
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application: application,
+		Args:        []string{"validate-schema-json", "--root", "."},
+		Dir:         dir,
+		Env:         windowsNetworkNoneGoVersionEnvironment(requireTrustedWindowsGoApplication(t), dir),
+		Network:     NetworkNone,
+		Timeout:     30 * time.Second,
+		StdoutLimit: 4096,
+		StderrLimit: 4096,
+	})
+	if time.Since(started) > 20*time.Second {
+		t.Fatal("NetworkNone schema JSON AppContainer grant walked too long")
+	}
+	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.TimedOut || result.Cancelled || result.CleanupFailed {
+		t.Fatalf("NetworkNone validate-schema-json result = %#v err=%v stdout=%q stderr=%q",
+			result, err, result.Stdout, result.Stderr)
+	}
 }
 
 func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
@@ -332,4 +400,47 @@ func requireTrustedWindowsGoApplication(t *testing.T) string {
 		t.Fatalf("trusted go path: %v", err)
 	}
 	return resolved
+}
+
+func requireBuiltSourceQualifyApplication(t *testing.T) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "repopass-source-qualify.exe")
+	command := exec.Command("go", "build", "-trimpath", "-o", out,
+		"github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify")
+	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=local")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build source-qualify controller: %v\n%s", err, output)
+	}
+	resolved, err := trustedControllerRuntimePath(t.TempDir(), out)
+	if err != nil {
+		t.Fatalf("trusted source-qualify path: %v", err)
+	}
+	return resolved
+}
+
+func requireSchemaJSONAppContainerFixtureRoot(t *testing.T) string {
+	t.Helper()
+	candidates := []string{t.TempDir()}
+	if runnerTemp := os.Getenv("RUNNER_TEMP"); runnerTemp != "" {
+		candidates = append([]string{filepath.Join(runnerTemp, "sq-schema-json-"+filepath.Base(t.TempDir()))}, candidates...)
+	}
+	for _, dir := range candidates {
+		skip := false
+		for _, ancestor := range windowsAppContainerAncestorPaths(dir) {
+			if windowsAppContainerAncestorGrantForbidden(ancestor) {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			continue
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		return dir
+	}
+	t.Skip("schema JSON AppContainer ancestor chain crosses a host profile root")
+	return ""
 }
