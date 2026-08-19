@@ -165,6 +165,18 @@ func TestInspectRepositoryRejectsShallowAndInjectedGitState(t *testing.T) {
 				fixture.git(t, "update-index", "--skip-worktree", "README.md")
 			},
 		},
+		{
+			name: "checkout worktree config residue",
+			mutate: func(t *testing.T, fixture *gitRepositoryFixture) {
+				gitDirectory := strings.TrimSpace(fixture.git(t, "rev-parse", "--git-dir"))
+				if !filepath.IsAbs(gitDirectory) {
+					gitDirectory = filepath.Join(fixture.root, gitDirectory)
+				}
+				writeGitFixtureFile(t, filepath.Join(gitDirectory, "config.worktree"), []byte(
+					"\tsparseCheckout = false\n\tsparseCheckoutCone = false\n\tsparse = false\n",
+				))
+			},
+		},
 	}
 
 	for _, test := range tests {
