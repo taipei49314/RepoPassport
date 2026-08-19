@@ -76,10 +76,16 @@ func TestUnixKillProcessGroupReapsMembers(t *testing.T) {
 	if err := unixKillProcessGroup(processGroup); err != nil && !errors.Is(err, syscall.ESRCH) {
 		t.Fatalf("unixKillProcessGroup: %v", err)
 	}
-	if !waitUnixGateProcessGroup(processGroup, time.Now().Add(5*time.Second)) {
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- command.Wait() }()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sleep did not exit after SIGKILL")
+	}
+	if !waitUnixGateProcessGroup(processGroup, time.Now().Add(time.Second)) {
 		t.Fatal("process group survived SIGKILL")
 	}
-	_ = command.Wait()
 }
 
 func TestLinuxSelectGateIsolationRefusesInheritedPidNamespaceMarker(t *testing.T) {
