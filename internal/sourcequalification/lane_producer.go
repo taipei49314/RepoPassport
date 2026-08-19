@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -291,11 +292,108 @@ func (guard *qualificationLaneSourceGuard) Execute(
 	request gateProcessRequest,
 ) (gateProcessResult, error) {
 	result, executionErr := guard.inner.Execute(ctx, request)
+	if isModuleDownloadGateProcess(request) {
+		if restoreErr := restoreQualificationLaneTrackedFiles(guard.request.Root, guard.expected); restoreErr != nil {
+			result.SourceChanged = true
+		}
+	}
 	observed, inspectionErr := guard.inspector.InspectRepository(guard.request)
 	if inspectionErr != nil || !sameQualificationLaneSnapshot(guard.expected, observed) {
 		result.SourceChanged = true
 	}
 	return result, executionErr
+}
+
+func isModuleDownloadGateProcess(request gateProcessRequest) bool {
+	for _, spec := range commonGateRegistry {
+		if spec.ID != "RP-M0-QUAL-MODULE-DOWNLOAD" {
+			continue
+		}
+		if len(spec.Argv) < 2 || len(request.Args) != len(spec.Argv)-1 {
+			return false
+		}
+		for index, argument := range spec.Argv[1:] {
+			if request.Args[index] != argument {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// restoreQualificationLaneTrackedFiles overwrites snapshot-tracked worktree
+// files in place. Go 1.26 `go mod download -modcacherw all` rewrites go.sum
+// with modules that `go mod tidy` does not keep. The gate's job is to fill the
+// private module cache; the inspected Git tree remains the source of truth.
+// Untracked files are left in place so inspect still fails closed.
+func restoreQualificationLaneTrackedFiles(root string, snapshot RepositorySnapshot) error {
+	if root == "" {
+		return errors.New("tracked restore root is empty")
+	}
+	for _, file := range snapshot.Files {
+		if err := restoreQualificationLaneTrackedFile(root, file); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreQualificationLaneTrackedFile(root string, file RepositoryFile) error {
+	if err := validateRepositoryPath(file.Path); err != nil {
+		return err
+	}
+	path := filepath.Clean(filepath.Join(root, filepath.FromSlash(file.Path)))
+	if !filepath.IsAbs(path) {
+		return errors.New("tracked restore path is not absolute")
+	}
+	contains, err := securePackagePathContains(root, path)
+	if err != nil || !contains {
+		return errors.New("tracked restore path escaped the repository")
+	}
+
+	info, statErr := os.Lstat(path)
+	if errors.Is(statErr, os.ErrNotExist) {
+		mode := os.FileMode(0o644)
+		if file.GitMode == "100755" {
+			mode = 0o755
+		}
+		created, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if createErr != nil {
+			return createErr
+		}
+		return writeAndCloseExactBytes(created, file.Data)
+	}
+	if statErr != nil {
+		return statErr
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("tracked restore path is not a regular file")
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(current, file.Data) {
+		return nil
+	}
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	return writeAndCloseExactBytes(out, file.Data)
+}
+
+func writeAndCloseExactBytes(file *os.File, data []byte) error {
+	written, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if written != len(data) {
+		return io.ErrShortWrite
+	}
+	return closeErr
 }
 
 func cloneQualificationLaneSnapshot(snapshot RepositorySnapshot) RepositorySnapshot {
