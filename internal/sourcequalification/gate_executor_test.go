@@ -182,7 +182,7 @@ func gateExecutorBlockedByUnavailableIsolation(
 		result.CleanupFailed {
 		t.Fatalf("unavailable isolation result = %#v, err=%v", result, err)
 	}
-	t.Log("verified fail-closed BLOCKED result because rootless gate isolation is unavailable")
+	t.Log("verified fail-closed BLOCKED result because gate isolation is unavailable")
 	return true
 }
 
