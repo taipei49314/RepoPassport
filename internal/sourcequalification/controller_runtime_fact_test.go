@@ -23,10 +23,7 @@ import (
 
 func TestControllerRuntimeFactCollectsPinnedGoVersion(t *testing.T) {
 	repository := t.TempDir()
-	goPath, err := exec.LookPath("go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	goPath := requirePATHRuntimeTool(t, "go")
 	resolved, err := trustedControllerRuntimePath(repository, goPath)
 	if err != nil {
 		t.Fatalf("trusted go path: %v", err)
@@ -55,10 +52,7 @@ func TestControllerRuntimeFactCollectsPinnedGoVersion(t *testing.T) {
 
 func TestControllerRuntimeFactCollectsGitVersion(t *testing.T) {
 	repository := t.TempDir()
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
+	gitPath := requirePATHRuntimeTool(t, "git")
 	resolved, err := trustedControllerRuntimePath(repository, gitPath)
 	if err != nil {
 		t.Fatalf("trusted git path: %v", err)
@@ -90,6 +84,10 @@ func TestControllerRuntimeFactCollectsPowerShellVersion(t *testing.T) {
 	if err != nil {
 		t.Skip("pwsh is not on PATH")
 	}
+	pwshPath, err = restrictUnixRuntimeToolWriteBits(pwshPath)
+	if err != nil {
+		t.Skipf("pwsh write bits could not be restricted: %v", err)
+	}
 	resolved, err := trustedControllerRuntimePath(repository, pwshPath)
 	if err != nil {
 		t.Skipf("pwsh is not a trusted runtime file: %v", err)
@@ -120,10 +118,7 @@ func TestControllerRuntimeFactDoesNotUseNetworkNoneGateIsolation(t *testing.T) {
 		t.Skip("Windows is the platform whose NetworkNone gate executor must stay blocked")
 	}
 	repository := t.TempDir()
-	goPath, err := exec.LookPath("go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	goPath := requirePATHRuntimeTool(t, "go")
 	resolved, err := trustedControllerRuntimePath(repository, goPath)
 	if err != nil {
 		t.Fatalf("trusted go path: %v", err)
@@ -170,4 +165,42 @@ func windowsFactSystemRoot(t *testing.T) string {
 		t.Fatal("SystemRoot is required to execute Windows runtime facts")
 	}
 	return value
+}
+
+func requirePATHRuntimeTool(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err = restrictUnixRuntimeToolWriteBits(path)
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return path
+}
+
+// restrictUnixRuntimeToolWriteBits drops group/other write bits on a PATH tool
+// the test process owns. Ordinary CI on ubuntu-24.04/20260816 extracts setup-go
+// with those bits set; the 0o022 trust check itself is unchanged.
+func restrictUnixRuntimeToolWriteBits(path string) (string, error) {
+	if runtime.GOOS == "windows" {
+		return path, nil
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return "", err
+	}
+	perm := info.Mode().Perm()
+	if perm&0o022 == 0 {
+		return resolved, nil
+	}
+	if err := os.Chmod(resolved, perm&^0o022); err != nil {
+		return "", err
+	}
+	return resolved, nil
 }

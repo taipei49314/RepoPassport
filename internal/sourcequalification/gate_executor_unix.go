@@ -168,6 +168,9 @@ func linuxSelectGateIsolation(
 	application string,
 	arguments []string,
 ) (string, []string, []string, bool) {
+	if linuxInNonHostPidNamespace() {
+		return "", nil, nil, false
+	}
 	probeApplication, probeOK := trustedLinuxSystemApplication("/usr/bin/true")
 	if !probeOK {
 		return "", nil, nil, false
@@ -349,6 +352,17 @@ func trustedLinuxSystemApplication(application string) (string, bool) {
 		}
 	}
 	return application, true
+}
+
+func linuxInNonHostPidNamespace() bool {
+	// Nested unshare --pid from an existing pid namespace leaks the inner
+	// init onto the host when the outer pid-namespace init exits. Isolation
+	// selection therefore refuses to launch another unshare from inside one.
+	status, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return true
+	}
+	return linuxStatusNSpidCount(status) != 1
 }
 
 func linuxIsolationProbe(ctx context.Context, application string, arguments, environment []string) bool {

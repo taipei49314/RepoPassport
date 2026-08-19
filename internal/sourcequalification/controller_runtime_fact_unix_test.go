@@ -9,6 +9,27 @@ import (
 	"testing"
 )
 
+func TestRestrictUnixRuntimeToolWriteBitsClearsGroupAndOtherWrite(t *testing.T) {
+	path := writeTrustedRuntimeTestTool(t, t.TempDir(), "group-writable-go")
+	if err := os.Chmod(path, 0o775); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := restrictUnixRuntimeToolWriteBits(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(cleared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		t.Fatalf("restricted tool mode = %o, want no group/other write bits", info.Mode().Perm())
+	}
+	if _, err := trustedControllerRuntimePath(t.TempDir(), cleared); err != nil {
+		t.Fatalf("restricted 0775 tool remained untrusted: %v", err)
+	}
+}
+
 func TestControllerRuntimeFactRejectsGroupOrWorldWritableUnixTool(t *testing.T) {
 	repository := t.TempDir()
 	path := writeTrustedRuntimeTestTool(t, t.TempDir(), "writable-fact-tool")
