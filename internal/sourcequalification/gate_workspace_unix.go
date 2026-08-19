@@ -220,6 +220,7 @@ func (workspace *unixQualificationWorkspace) cleanupInternal(verifyPaths bool) (
 	deadline := time.Now().Add(unixWorkspaceHolderReapTimeout)
 	for {
 		budget.entries = 0
+		_, _ = unix.Seek(int(workspace.root.Fd()), 0, unix.SEEK_SET)
 		removeErr := removeUnixQualificationWorkspaceContents(
 			workspace.root,
 			workspace.rootIdentity.first,

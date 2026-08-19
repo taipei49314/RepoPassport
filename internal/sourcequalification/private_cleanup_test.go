@@ -97,6 +97,13 @@ func TestPrivateQualificationCleanupBudgetRejectsEntryAndDepthOverflow(t *testin
 			t.Fatalf("depth cap error = %v, want cleanup failure", err)
 		}
 	})
+
+	t.Run("cache-sized entry cap", func(t *testing.T) {
+		if maximumQualificationWorkspaceCleanupEntries < 1_000_000 {
+			t.Fatalf("cleanup entry cap = %d, want at least 1_000_000 for GOCACHE and GOMODCACHE",
+				maximumQualificationWorkspaceCleanupEntries)
+		}
+	})
 }
 
 func TestPrivateQualificationCleanupTraversalStopsAtDepthCap(t *testing.T) {
