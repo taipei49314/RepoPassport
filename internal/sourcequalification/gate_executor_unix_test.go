@@ -66,6 +66,44 @@ func TestLinuxPrivilegedKillProcessGroupCommand(t *testing.T) {
 	}
 }
 
+func TestLinuxPrivilegedKillProcessCommand(t *testing.T) {
+	t.Parallel()
+	if _, _, ok := linuxPrivilegedKillProcessCommand(1); ok {
+		t.Fatal("pid 1 was accepted")
+	}
+	if _, _, ok := linuxPrivilegedKillProcessCommand(0); ok {
+		t.Fatal("pid 0 was accepted")
+	}
+	if _, _, ok := linuxPrivilegedKillProcessCommand(-9); ok {
+		t.Fatal("negative pid was accepted")
+	}
+	sudo, args, ok := linuxPrivilegedKillProcessCommand(9562)
+	if !ok {
+		t.Skip("privileged kill helpers were not trusted")
+	}
+	if sudo != "/usr/bin/sudo" {
+		t.Fatalf("privileged kill launcher = %q, want /usr/bin/sudo", sudo)
+	}
+	if containsExactArg(args, "-9562") {
+		t.Fatalf("single-process kill used a process-group target: %q", args)
+	}
+	for _, want := range []string{"-n", "--", "-s", "KILL", "--", "9562"} {
+		if !containsExactArg(args, want) {
+			t.Fatalf("privileged kill arguments %q missing %q", args, want)
+		}
+	}
+}
+
+func TestUnixKillProcessRefusesProtectedPIDs(t *testing.T) {
+	t.Parallel()
+	if err := unixKillProcess(os.Getpid()); !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("unixKillProcess(self) = %v, want EINVAL", err)
+	}
+	if err := unixKillProcess(1); !errors.Is(err, syscall.EINVAL) {
+		t.Fatalf("unixKillProcess(1) = %v, want EINVAL", err)
+	}
+}
+
 func TestUnixKillProcessGroupReapsMembers(t *testing.T) {
 	command := exec.Command("sleep", "30")
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
