@@ -26,8 +26,8 @@ func TestGitInspectorScratchUsesPrivateWorkspaceAndBoundedCleanup(t *testing.T) 
 	createCalls := 0
 	creator := func(parent, name string) (string, func() error, error) {
 		createCalls++
-		if got, want := parent, filepath.Clean(os.TempDir()); got != want {
-			t.Fatalf("scratch parent = %q, want clean OS temporary directory %q", got, want)
+		if got, want := parent, wantIsolatedGitScratchParent(t, repositoryRoot); got != want {
+			t.Fatalf("scratch parent = %q, want canonical OS temporary directory %q", got, want)
 		}
 		wantName := repositoryScratchPrefix + strings.Repeat("a5", repositoryScratchEntropyBytes)
 		if name != wantName {
@@ -67,6 +67,50 @@ func TestGitInspectorScratchUsesPrivateWorkspaceAndBoundedCleanup(t *testing.T) 
 	if _, err := os.Lstat(scratchPath); !os.IsNotExist(err) {
 		t.Fatalf("repository scratch remains after cleanup: %v", err)
 	}
+}
+
+func TestCanonicalIsolatedGitScratchParentResolvesEvalSymlinksUnstableTemp(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	raw := filepath.Clean(os.TempDir())
+	parent, err := canonicalIsolatedGitScratchParent(repositoryRoot, os.TempDir())
+	if err != nil {
+		t.Fatalf("canonical isolated Git scratch parent: %v", err)
+	}
+	if !validGateExternalDirectory(repositoryRoot, parent) {
+		t.Fatalf("canonical scratch parent %q is not a valid external directory", parent)
+	}
+	if pathWithinRepository(repositoryRoot, parent) {
+		t.Fatal("canonical scratch parent is inside the repository")
+	}
+
+	rawValid := validGateDirectory(raw)
+	if rawValid && parent != filepath.Clean(raw) && !sameCanonicalPath(parent, raw) {
+		t.Fatalf("EvalSymlinks-stable temp dir %q canonicalized to a different path %q", raw, parent)
+	}
+	if !rawValid && (parent == raw || !validGateDirectory(parent)) {
+		t.Fatalf("EvalSymlinks-unstable temp dir %q was not resolved to a valid parent (got %q)", raw, parent)
+	}
+}
+
+func TestCanonicalIsolatedGitScratchParentRejectsRepositoryDirectory(t *testing.T) {
+	repositoryRoot := t.TempDir()
+	resolvedRepo, err := filepath.EvalSymlinks(repositoryRoot)
+	if err != nil {
+		t.Fatalf("repository EvalSymlinks: %v", err)
+	}
+	resolvedRepo = filepath.Clean(resolvedRepo)
+	if _, err := canonicalIsolatedGitScratchParent(resolvedRepo, resolvedRepo); err == nil {
+		t.Fatal("repository directory was accepted as an isolated Git scratch parent")
+	}
+}
+
+func wantIsolatedGitScratchParent(t *testing.T, repositoryRoot string) string {
+	t.Helper()
+	parent, err := canonicalIsolatedGitScratchParent(repositoryRoot, os.TempDir())
+	if err != nil {
+		t.Fatalf("canonical isolated Git scratch parent: %v", err)
+	}
+	return parent
 }
 
 func TestInspectRepositoryScratchCleanupFailureIsNeverMasked(t *testing.T) {
