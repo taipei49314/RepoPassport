@@ -177,6 +177,9 @@ func TestOSGateExecutorIsolatesSchemaJSONThroughJunctionAncestor(t *testing.T) {
 		t.Skip("directory junction fixture is unavailable")
 	}
 	dir := filepath.Join(alias, "real")
+	if !validGateProcessDirectory(dir) {
+		t.Skip("junction spelling is not a valid gate directory")
+	}
 	application := requireBuiltSourceQualifyApplication(t)
 
 	started := time.Now()

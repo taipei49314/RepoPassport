@@ -18,7 +18,7 @@ func TestQualificationLaneSourceGuardRestoresIsolatedModuleDownload(t *testing.T
 		t.Fatalf("trusted go path: %v", err)
 	}
 	fixture := newGitRepositoryFixture(t)
-	mod := []byte("module example.invalid/downloadrestore\n\ngo 1.26\n\nrequire golang.org/x/sys v0.47.0\n")
+	mod := []byte("module " + testCanonicalModule + "\n\ngo 1.26\n\nrequire golang.org/x/sys v0.47.0\n")
 	src := []byte("package downloadrestore\n\nimport _ \"golang.org/x/sys/cpu\"\n")
 	writeGitFixtureFile(t, filepath.Join(fixture.root, "go.mod"), mod)
 	writeGitFixtureFile(t, filepath.Join(fixture.root, "restore.go"), src)
