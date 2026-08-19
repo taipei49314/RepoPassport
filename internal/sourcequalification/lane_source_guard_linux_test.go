@@ -266,7 +266,7 @@ func replaceFixtureWithTrackedModuleTree(t *testing.T, fixture *gitRepositoryFix
 	fixture.git(t, "config", "gc.autoDetach", "false")
 	fixture.git(t, "config", "maintenance.auto", "false")
 
-	listed, err := exec.Command("git", "-C", moduleRoot, "ls-files", "-z").Output()
+	listed, err := exec.Command("git", "--no-optional-locks", "-C", moduleRoot, "ls-files", "-z").Output()
 	if err != nil {
 		t.Fatalf("git ls-files: %v", err)
 	}

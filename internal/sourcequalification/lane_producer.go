@@ -292,7 +292,7 @@ func (guard *qualificationLaneSourceGuard) Execute(
 	request gateProcessRequest,
 ) (gateProcessResult, error) {
 	result, executionErr := guard.inner.Execute(ctx, request)
-	if isModuleDownloadGateProcess(request) {
+	if isTrackedRestoreGateProcess(request) {
 		if restoreErr := restoreQualificationLaneTrackedFiles(guard.request.Root, guard.expected); restoreErr != nil {
 			result.SourceChanged = true
 		}
@@ -304,20 +304,44 @@ func (guard *qualificationLaneSourceGuard) Execute(
 	return result, executionErr
 }
 
-func isModuleDownloadGateProcess(request gateProcessRequest) bool {
-	for _, spec := range commonGateRegistry {
-		if spec.ID != "RP-M0-QUAL-MODULE-DOWNLOAD" {
+func isTrackedRestoreGateProcess(request gateProcessRequest) bool {
+	seen := make(map[string]struct{})
+	for _, spec := range append(append([]GateSpec{}, linuxGateRegistry...), windowsGateRegistry...) {
+		if _, duplicate := seen[spec.ID]; duplicate {
 			continue
 		}
-		if len(spec.Argv) < 2 || len(request.Args) != len(spec.Argv)-1 {
+		seen[spec.ID] = struct{}{}
+		if !isGoModuleSideEffectGate(spec) {
+			continue
+		}
+		if gateProcessMatchesSpecArgv(request, spec) {
+			return true
+		}
+	}
+	return false
+}
+
+func isGoModuleSideEffectGate(spec GateSpec) bool {
+	return len(spec.Argv) >= 2 && spec.Argv[0] == "go" && spec.Argv[1] != "version"
+}
+
+func gateProcessMatchesSpecArgv(request gateProcessRequest, spec GateSpec) bool {
+	if len(spec.Argv) < 2 || len(request.Args) != len(spec.Argv)-1 {
+		return false
+	}
+	for index, argument := range spec.Argv[1:] {
+		if request.Args[index] != argument {
 			return false
 		}
-		for index, argument := range spec.Argv[1:] {
-			if request.Args[index] != argument {
-				return false
-			}
+	}
+	return true
+}
+
+func isModuleDownloadGateProcess(request gateProcessRequest) bool {
+	for _, spec := range commonGateRegistry {
+		if spec.ID == "RP-M0-QUAL-MODULE-DOWNLOAD" {
+			return gateProcessMatchesSpecArgv(request, spec)
 		}
-		return true
 	}
 	return false
 }
@@ -325,9 +349,11 @@ func isModuleDownloadGateProcess(request gateProcessRequest) bool {
 // restoreQualificationLaneTrackedFiles overwrites snapshot-tracked worktree
 // files that no longer match the inspected Git tree. Go 1.26
 // `go mod download -modcacherw all` rewrites go.sum with modules that
-// `go mod tidy` does not keep. Matching files are left untouched so a
-// single unrestorable path cannot block restoring go.sum. Untracked files
-// are left in place so inspect still fails closed.
+// `go mod tidy` does not keep. Later frozen `go` gates (verify, vet, test,
+// govulncheck) can recreate the same checksum file or a GOMODCACHE hard-link
+// alias. Matching files are left untouched so a single unrestorable path
+// cannot block restoring go.sum. Untracked files are left in place so
+// inspect still fails closed.
 func restoreQualificationLaneTrackedFiles(root string, snapshot RepositorySnapshot) error {
 	if root == "" {
 		return errors.New("tracked restore root is empty")
