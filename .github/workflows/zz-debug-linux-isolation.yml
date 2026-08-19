@@ -73,4 +73,45 @@ jobs:
           echo "=== privileged replay-shaped probe ==="
           sudo /usr/bin/unshare --net --pid --mount-proc --fork --kill-child -- /usr/bin/true
           echo "sudo_unshare_exit=$?"
+          echo "=== unmapped userns identity and filesystem ==="
+          /usr/bin/unshare --user -- /usr/bin/id
+          echo "unmapped_id_exit=$?"
+          /usr/bin/unshare --user -- /usr/bin/ls /home/runner >/tmp/unmapped-ls.out
+          echo "unmapped_ls_home_exit=$?"
+          /usr/bin/unshare --user --net -- /usr/bin/id
+          echo "unmapped_user_net_id_exit=$?"
+          /usr/bin/unshare --user --pid --fork --kill-child=KILL --net -- /usr/bin/true
+          echo "unmapped_user_pid_net_exit=$?"
+          echo "=== host listener vs unmapped --user --net ==="
+          python3 -c '
+          import socket, subprocess
+          listener = socket.socket()
+          listener.bind(("127.0.0.1", 0))
+          listener.listen(1)
+          port = listener.getsockname()[1]
+          child = subprocess.run(
+              ["/usr/bin/unshare", "--user", "--net", "--", "/usr/bin/python3", "-c",
+               "import socket,sys; s=socket.socket(); s.settimeout(1)\n"
+               "try:\n s.connect((\"127.0.0.1\", %d))\n sys.exit(51)\n"
+               "except Exception as e:\n print(type(e).__name__, e)\n sys.exit(0)" % port],
+              capture_output=True, text=True, timeout=5)
+          print("unmapped_net_child_exit=%s stdout=%r stderr=%r" % (child.returncode, child.stdout, child.stderr))
+          listener.close()
+          '
+          echo "=== privileged setpriv inner id ==="
+          runner_uid="$(id -u)"
+          runner_gid="$(id -g)"
+          sudo -n /usr/bin/unshare --net --pid --mount-proc --fork --kill-child -- \
+            /usr/bin/setpriv --reuid="$runner_uid" --regid="$runner_gid" --clear-groups \
+              --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs \
+              /usr/bin/id
+          echo "sudo_setpriv_id_exit=$?"
+          echo "=== trusted helpers ==="
+          for path in /usr/bin/sudo /usr/bin/setpriv /usr/bin/env /usr/sbin/setpriv; do
+            if [ -e "$path" ]; then
+              stat -c 'mode=%a uid=%u gid=%g nlink=%h type=%F name=%N' "$path"
+            else
+              echo "MISSING $path"
+            fi
+          done
           echo "=== done ==="
