@@ -5,10 +5,23 @@ package sourcequalification
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLinuxPid1IsHostInitMatchesProcComm(t *testing.T) {
+	t.Parallel()
+	comm, err := os.ReadFile("/proc/1/comm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.TrimSpace(string(comm)) == "init" || strings.TrimSpace(string(comm)) == "systemd"
+	if got := linuxPid1IsHostInit(); got != want {
+		t.Fatalf("linuxPid1IsHostInit() = %v, /proc/1/comm = %q", got, comm)
+	}
+}
 
 func TestLinuxSelectGateIsolationRefusesInheritedPidNamespaceMarker(t *testing.T) {
 	t.Setenv(linuxPidNamespaceEnvironmentName, linuxPidNamespaceEnvironmentValue)
