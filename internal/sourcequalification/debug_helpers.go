@@ -24,7 +24,7 @@ func DebugNetworkNoneGoTest(
 	if err != nil {
 		return "", fmt.Errorf("trusted go: %w", err)
 	}
-	home, err := os.MkdirTemp("", "zz-debug-gotest-")
+	home, err := debugPrivateHome(repositoryRoot, "zz-debug-gotest-")
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +36,7 @@ func DebugNetworkNoneGoTest(
 	}
 	download := exec.Command(goPath, "mod", "download", "-modcacherw", "all")
 	download.Dir = repositoryRoot
-	download.Env = debugGateEnvironment(goPath, home, true)
+	download.Env = debugGateEnvironment(repositoryRoot, goPath, home, true)
 	if output, err := download.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("host module download: %w\n%s", err, output)
 	}
@@ -51,7 +51,7 @@ func DebugNetworkNoneGoTest(
 		Application: goPath,
 		Args:        testArgs,
 		Dir:         repositoryRoot,
-		Env:         debugGateEnvironment(goPath, home, false),
+		Env:         debugGateEnvironment(repositoryRoot, goPath, home, false),
 		Network:     NetworkNone,
 		Timeout:     timeout,
 		StdoutLimit: 1 << 20,
@@ -90,7 +90,7 @@ func DebugIsolatedModuleDownload(
 	if err != nil {
 		return "", fmt.Errorf("trusted go: %w", err)
 	}
-	home, err := os.MkdirTemp("", "zz-debug-download-")
+	home, err := debugPrivateHome(repositoryRoot, "zz-debug-download-")
 	if err != nil {
 		return "", err
 	}
@@ -113,7 +113,7 @@ func DebugIsolatedModuleDownload(
 		Application: goPath,
 		Args:        []string{"mod", "download", "-modcacherw", "all"},
 		Dir:         repositoryRoot,
-		Env:         debugGateEnvironment(goPath, home, true),
+		Env:         debugGateEnvironment(repositoryRoot, goPath, home, true),
 		Network:     NetworkGoModules,
 		Timeout:     4 * time.Minute,
 		StdoutLimit: 1 << 16,
@@ -159,7 +159,7 @@ func DebugIsolatedRemainingGates(
 	if err != nil {
 		return "", fmt.Errorf("trusted gofmt: %w", err)
 	}
-	home, err := os.MkdirTemp("", "zz-debug-remaining-")
+	home, err := debugPrivateHome(repositoryRoot, "zz-debug-remaining-")
 	if err != nil {
 		return "", err
 	}
@@ -192,7 +192,7 @@ func DebugIsolatedRemainingGates(
 		{"TIDY-DIFF", goPath, []string{"mod", "tidy", "-diff"}, NetworkNone, false, 3 * time.Minute},
 		{"FORMAT", gofmtPath, []string{"-l", "."}, NetworkNone, false, 2 * time.Minute},
 		{"VET", goPath, []string{"vet", "./..."}, NetworkNone, false, 4 * time.Minute},
-		{"TEST", goPath, []string{"test", "-count=1", "-timeout=8m", "-failfast", "./..."}, NetworkNone, false, 10 * time.Minute},
+		{"TEST", goPath, []string{"test", "-count=1", "-timeout=30m", "./..."}, NetworkNone, false, 12 * time.Minute},
 	}
 	var report strings.Builder
 	for _, gate := range gates {
@@ -200,7 +200,7 @@ func DebugIsolatedRemainingGates(
 			Application: gate.app,
 			Args:        gate.args,
 			Dir:         repositoryRoot,
-			Env:         debugGateEnvironment(goPath, home, gate.envNet),
+			Env:         debugGateEnvironment(repositoryRoot, goPath, home, gate.envNet),
 			Network:     gate.network,
 			Timeout:     gate.limit,
 			StdoutLimit: 1 << 16,
@@ -228,9 +228,35 @@ func DebugIsolatedRemainingGates(
 	return report.String(), nil
 }
 
-func debugGateEnvironment(goPath, home string, network bool) []string {
+func debugPrivateHome(repositoryRoot, prefix string) (string, error) {
+	parent := filepath.Dir(repositoryRoot)
+	if parent == "" || parent == repositoryRoot {
+		parent = os.TempDir()
+	}
+	return os.MkdirTemp(parent, prefix)
+}
+
+func debugToolPATH(repositoryRoot, goPath string) string {
+	seen := map[string]struct{}{filepath.Dir(goPath): {}}
+	parts := []string{filepath.Dir(goPath)}
+	for _, name := range []string{"git", "gofmt", "pwsh"} {
+		resolved, err := resolveControllerRuntimeApplication(repositoryRoot, name)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Dir(resolved)
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		parts = append(parts, dir)
+	}
+	return strings.Join(parts, string(os.PathListSeparator))
+}
+
+func debugGateEnvironment(repositoryRoot, goPath, home string, network bool) []string {
 	env := []string{
-		"PATH=" + filepath.Dir(goPath),
+		"PATH=" + debugToolPATH(repositoryRoot, goPath),
 		"HOME=" + home,
 		"USERPROFILE=" + home,
 		"XDG_CONFIG_HOME=" + home,
@@ -257,6 +283,17 @@ func debugGateEnvironment(goPath, home string, network bool) []string {
 		"GOPRIVATE=",
 		"GONOSUMDB=",
 		"GOINSECURE=",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_SYSTEM=" + os.DevNull,
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_ATTR_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_OPTIONAL_LOCKS=0",
+		"GIT_NO_REPLACE_OBJECTS=1",
+		"GIT_LITERAL_PATHSPECS=1",
+		"GIT_PAGER=",
+		"PAGER=",
+		"GCM_INTERACTIVE=Never",
 	}
 	if network {
 		env = append(env, "GOPROXY=https://proxy.golang.org,direct", "GOSUMDB=sum.golang.org", "GOVULNDB=off")
