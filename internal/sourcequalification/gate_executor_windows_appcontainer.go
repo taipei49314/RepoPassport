@@ -5,6 +5,7 @@ package sourcequalification
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -138,17 +139,22 @@ func windowsCreateOrDeriveAppContainerSID(name string) (*windows.SID, error) {
 func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.SID) error {
 	required, writable, readable := windowsNetworkNoneAccessPaths(request)
 	for _, path := range required {
-		if err := windowsGrantAppContainerPath(path, sid, false); err != nil {
+		if err := windowsGrantAppContainerPath(path, sid, false, false); err != nil {
 			return err
 		}
+		windowsGrantAppContainerExistingTree(path, sid)
 	}
 	for _, path := range writable {
-		if err := windowsGrantAppContainerPath(path, sid, true); err != nil {
+		if err := windowsGrantAppContainerPath(path, sid, true, true); err != nil {
 			return err
 		}
 	}
 	for _, path := range readable {
-		_ = windowsGrantAppContainerPath(path, sid, false)
+		_ = windowsGrantAppContainerPath(path, sid, false, false)
+		base := filepath.Base(path)
+		if strings.EqualFold(base, "bin") || strings.EqualFold(base, "tool") {
+			windowsGrantAppContainerExistingTree(path, sid)
+		}
 	}
 	return nil
 }
@@ -165,7 +171,7 @@ func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writab
 		switch strings.ToUpper(key) {
 		case "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "GOCACHE", "GOMODCACHE", "GOTMPDIR":
 			writePaths = append(writePaths, value)
-		case "SYSTEMROOT", "WINDIR", "GOROOT":
+		case "GOROOT":
 			readPaths = append(readPaths, value)
 		case "PATH":
 			readPaths = append(readPaths, filepath.SplitList(value)...)
@@ -185,7 +191,8 @@ func windowsExecutableTree(application string) []string {
 	base := filepath.Base(application)
 	if (strings.EqualFold(base, "go.exe") || strings.EqualFold(base, "gofmt.exe")) &&
 		strings.EqualFold(filepath.Base(directory), "bin") {
-		paths = append(paths, filepath.Dir(directory))
+		root := filepath.Dir(directory)
+		paths = append(paths, root, filepath.Join(root, "pkg", "tool"))
 	}
 	if strings.EqualFold(base, "git.exe") && strings.EqualFold(filepath.Base(directory), "cmd") {
 		paths = append(paths, filepath.Dir(directory))
@@ -214,26 +221,164 @@ func uniqueExistingWindowsPaths(paths []string) []string {
 	return result
 }
 
-func windowsGrantAppContainerPath(path string, sid *windows.SID, writable bool) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
+func windowsCreateGatePipe(session *windowsAppContainerSession) (*os.File, *os.File, error) {
+	if session == nil || session.sid == nil {
+		return os.Pipe()
 	}
-	access := windows.GENERIC_READ | windows.GENERIC_EXECUTE
-	if writable {
-		access = windows.GENERIC_ALL
-	}
-	inheritance := windows.NO_INHERITANCE
-	if info.IsDir() {
-		inheritance = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	return windowsCreateAppContainerPipe(session.sid)
+}
+
+func windowsCreateAppContainerPipe(sid *windows.SID) (*os.File, *os.File, error) {
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || current == nil || current.User.Sid == nil {
+		return nil, nil, err
 	}
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
 	pinner.Pin(sid)
+	pinner.Pin(current.User.Sid)
+	entries := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       uint32(windows.NO_INHERITANCE),
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(current.User.Sid),
+			},
+		},
+		{
+			AccessPermissions: windows.GENERIC_READ | windows.GENERIC_WRITE | windows.SYNCHRONIZE,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       uint32(windows.NO_INHERITANCE),
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(sid),
+			},
+		},
+	}
+	acl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	descriptor, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := descriptor.SetDACL(acl, true, false); err != nil {
+		return nil, nil, err
+	}
+	attributes := windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: descriptor,
+		InheritHandle:      1,
+	}
+	var readerHandle, writerHandle windows.Handle
+	if err := windows.CreatePipe(&readerHandle, &writerHandle, &attributes, 0); err != nil {
+		return nil, nil, err
+	}
+	runtime.KeepAlive(descriptor)
+	runtime.KeepAlive(acl)
+	reader := os.NewFile(uintptr(readerHandle), "appcontainer-pipe-reader")
+	writer := os.NewFile(uintptr(writerHandle), "appcontainer-pipe-writer")
+	if reader == nil || writer == nil {
+		_ = windows.CloseHandle(readerHandle)
+		_ = windows.CloseHandle(writerHandle)
+		return nil, nil, windows.ERROR_INVALID_HANDLE
+	}
+	return reader, writer, nil
+}
+
+func windowsGrantAppContainerPath(path string, sid *windows.SID, writable, propagate bool) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	access := windows.ACCESS_MASK(windows.GENERIC_READ | windows.GENERIC_EXECUTE)
+	if writable {
+		access = windows.GENERIC_ALL
+	}
+	inheritance := uint32(windows.NO_INHERITANCE)
+	if info.IsDir() {
+		inheritance = uint32(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	}
+	acl, err := windowsSetAppContainerPathAccess(path, sid, access, inheritance)
+	if err != nil {
+		return err
+	}
+	if !propagate || !info.IsDir() || windowsAppContainerTreeMutationForbidden(path) {
+		return nil
+	}
+	if err := windowsPropagateAppContainerDACL(path, acl); err != nil && writable {
+		return err
+	}
+	return nil
+}
+
+func windowsGrantAppContainerExistingTree(root string, sid *windows.SID) {
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
+		windowsAppContainerTreeMutationForbidden(root) {
+		return
+	}
+	budget := 500_000
+	windowsGrantAppContainerExistingTreeLimited(root, sid, 0, &budget)
+}
+
+func windowsGrantAppContainerExistingTreeLimited(root string, sid *windows.SID, depth int, budget *int) {
+	if depth > maximumQualificationWorkspaceCleanupDepth || budget == nil || *budget <= 0 {
+		return
+	}
+	directory, err := os.Open(root)
+	if err != nil {
+		return
+	}
+	defer directory.Close()
+	for {
+		entries, err := directory.ReadDir(128)
+		if err != nil && (err != io.EOF || len(entries) == 0) {
+			return
+		}
+		for _, entry := range entries {
+			*budget--
+			if *budget <= 0 {
+				return
+			}
+			name := entry.Name()
+			if name == "" || name == "." || name == ".." {
+				continue
+			}
+			child := filepath.Join(root, name)
+			info, err := os.Lstat(child)
+			if err != nil || info.Mode()&os.ModeSymlink != 0 {
+				continue
+			}
+			_ = windowsGrantAppContainerPath(child, sid, false, false)
+			if info.IsDir() {
+				windowsGrantAppContainerExistingTreeLimited(child, sid, depth+1, budget)
+			}
+		}
+		if err == io.EOF || len(entries) < 128 {
+			return
+		}
+	}
+}
+
+func windowsSetAppContainerPathAccess(
+	path string,
+	sid *windows.SID,
+	access windows.ACCESS_MASK,
+	inheritance uint32,
+) (*windows.ACL, error) {
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(sid)
 	entries := []windows.EXPLICIT_ACCESS{{
-		AccessPermissions: windows.ACCESS_MASK(access),
+		AccessPermissions: access,
 		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       uint32(inheritance),
+		Inheritance:       inheritance,
 		Trustee: windows.TRUSTEE{
 			TrusteeForm:  windows.TRUSTEE_IS_SID,
 			TrusteeType:  windows.TRUSTEE_IS_USER,
@@ -242,7 +387,7 @@ func windowsGrantAppContainerPath(path string, sid *windows.SID, writable bool) 
 	}}
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var merged *windows.ACL
 	if descriptor != nil {
@@ -253,7 +398,7 @@ func windowsGrantAppContainerPath(path string, sid *windows.SID, writable bool) 
 	}
 	acl, err := windows.ACLFromEntries(entries, merged)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := windows.SetNamedSecurityInfo(
 		path,
@@ -264,15 +409,54 @@ func windowsGrantAppContainerPath(path string, sid *windows.SID, writable bool) 
 		acl,
 		nil,
 	); err != nil {
-		return err
+		return nil, err
 	}
-	if !info.IsDir() {
-		return nil
+	return acl, nil
+}
+
+func windowsAppContainerTreeMutationForbidden(path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range windowsSystemRootCandidates() {
+		if root == "" {
+			continue
+		}
+		if strings.EqualFold(path, root) {
+			return true
+		}
+		prefix := root
+		if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+			prefix += string(os.PathSeparator)
+		}
+		if len(path) > len(prefix) && strings.EqualFold(path[:len(prefix)], prefix) {
+			return true
+		}
 	}
-	return windowsPropagateAppContainerDACL(path, acl)
+	return false
+}
+
+func windowsSystemRootCandidates() []string {
+	seen := make(map[string]struct{}, 2)
+	var roots []string
+	for _, key := range []string{"SYSTEMROOT", "WINDIR"} {
+		value := os.Getenv(key)
+		if value == "" || !filepath.IsAbs(value) {
+			continue
+		}
+		clean := filepath.Clean(value)
+		key = strings.ToLower(clean)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		roots = append(roots, clean)
+	}
+	return roots
 }
 
 func windowsPropagateAppContainerDACL(path string, acl *windows.ACL) error {
+	if windowsAppContainerTreeMutationForbidden(path) {
+		return nil
+	}
 	if err := windowsTreeResetNamedSecurityInfo.Find(); err != nil {
 		return nil
 	}
