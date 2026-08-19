@@ -46,7 +46,11 @@ func ValidateSchemaJSON(root string) error {
 		return errors.New("schema JSON root is unavailable")
 	}
 	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil || !sameSchemaJSONPath(root, resolved) {
+	if err != nil {
+		return errors.New("schema JSON root is redirected")
+	}
+	resolved = filepath.Clean(resolved)
+	if !sameSchemaJSONPath(root, resolved) && !sameSchemaJSONRootIdentity(root, resolved) {
 		return errors.New("schema JSON root is redirected")
 	}
 
@@ -175,9 +179,17 @@ func walkSchemaJSONDirectory(
 }
 
 func openSchemaJSONDirectory(path string) (schemaJSONDirectory, error) {
-	directory, _, err := openValidatedPackageDirectory(path)
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("schema JSON inventory contains a redirected entry")
+	}
+	directory, err := openPackageDirectory(path)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("schema JSON inventory contains a redirected entry")
+	}
+	if _, err := snapshotPackageHandle(directory, true); err != nil {
+		_ = directory.Close()
+		return nil, errors.New("schema JSON inventory contains a redirected entry")
 	}
 	return directory, nil
 }
@@ -192,7 +204,7 @@ func inspectSchemaJSONEntry(
 		return false, errors.New("schema JSON inventory contains a redirected entry")
 	}
 	if info.IsDir() {
-		directory, _, err := openValidatedPackageDirectory(path)
+		directory, err := openSchemaJSONDirectory(path)
 		if err != nil {
 			return false, errors.New("schema JSON inventory contains a redirected entry")
 		}
@@ -250,4 +262,10 @@ func sameSchemaJSONPath(left, right string) bool {
 		return strings.EqualFold(left, right)
 	}
 	return left == right
+}
+
+func sameSchemaJSONRootIdentity(left, right string) bool {
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }
