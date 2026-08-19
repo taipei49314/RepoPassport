@@ -6,10 +6,10 @@ import (
 	"context"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -49,18 +49,30 @@ type windowsJobBasicAccounting struct {
 }
 
 func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {
+	attributeSlots := uint32(1)
+	var appContainer *windowsAppContainerSession
+	if request.Network == NetworkNone {
+		session, err := windowsPrepareNetworkNoneAppContainer(request)
+		if err != nil || session == nil {
+			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		}
+		appContainer = session
+		defer appContainer.release()
+		attributeSlots = 2
+	}
+
 	stdin, err := os.Open(os.DevNull)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
 	defer stdin.Close()
-	stdoutReader, stdoutWriter, err := os.Pipe()
+	stdoutReader, stdoutWriter, err := windowsCreateGatePipe(appContainer)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
 	defer stdoutReader.Close()
 	defer stdoutWriter.Close()
-	stderrReader, stderrWriter, err := os.Pipe()
+	stderrReader, stderrWriter, err := windowsCreateGatePipe(appContainer)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
@@ -83,17 +95,6 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		}
 	}
 
-	attributeSlots := uint32(1)
-	var appContainer *windowsAppContainerSession
-	if request.Network == NetworkNone {
-		session, err := windowsPrepareNetworkNoneAppContainer(request)
-		if err != nil || session == nil {
-			return gateProcessResult{Blocked: true}, errGateProcessBlocked
-		}
-		appContainer = session
-		defer appContainer.release()
-		attributeSlots = 2
-	}
 	attributeList, err := windows.NewProcThreadAttributeList(attributeSlots)
 	if err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
@@ -106,7 +107,13 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	); err != nil {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
+	var capabilityPinner runtime.Pinner
+	defer capabilityPinner.Unpin()
 	if appContainer != nil {
+		if appContainer.sid != nil {
+			capabilityPinner.Pin(appContainer.sid)
+		}
+		capabilityPinner.Pin(&appContainer.capabilities)
 		if err := attributeList.Update(
 			windowsProcThreadAttributeSecurityCapabilities,
 			unsafe.Pointer(&appContainer.capabilities),
@@ -327,12 +334,81 @@ func releaseWindowsGateHandle(
 }
 
 func windowsGateEnvironmentBlock(environment []string) []uint16 {
-	ordered := append([]string(nil), environment...)
+	ordered := windowsCompleteAppContainerEnvironment(environment)
 	sort.Slice(ordered, func(left, right int) bool {
 		return strings.ToUpper(ordered[left]) < strings.ToUpper(ordered[right])
 	})
-	block := strings.Join(ordered, "\x00") + "\x00\x00"
-	return utf16.Encode([]rune(block))
+	var block []uint16
+	for _, item := range ordered {
+		encoded, err := windows.UTF16FromString(item)
+		if err != nil || len(encoded) == 0 {
+			continue
+		}
+		block = append(block, encoded...)
+	}
+	block = append(block, 0)
+	return block
+}
+
+func windowsCompleteAppContainerEnvironment(environment []string) []string {
+	ordered := append([]string(nil), environment...)
+	if systemRoot := windowsEnvironmentLookup(ordered, "SYSTEMROOT"); systemRoot != "" {
+		if !windowsEnvironmentHasExactKey(ordered, "SystemRoot") {
+			ordered = append(ordered, "SystemRoot="+systemRoot)
+		}
+		if len(systemRoot) >= 2 && systemRoot[1] == ':' &&
+			!windowsEnvironmentHasExactKey(ordered, "SystemDrive") {
+			ordered = append(ordered, "SystemDrive="+systemRoot[:2])
+		}
+		if !windowsEnvironmentHasExactKey(ordered, "windir") {
+			ordered = append(ordered, "windir="+systemRoot)
+		}
+	}
+	for _, name := range windowsAppContainerHostEnvironment {
+		if windowsEnvironmentLookup(ordered, name) != "" {
+			continue
+		}
+		if value := os.Getenv(name); value != "" {
+			ordered = append(ordered, name+"="+value)
+		}
+	}
+	return ordered
+}
+
+var windowsAppContainerHostEnvironment = []string{
+	"ALLUSERSPROFILE",
+	"APPDATA",
+	"LOCALAPPDATA",
+	"ProgramData",
+	"PUBLIC",
+	"COMPUTERNAME",
+	"COMSPEC",
+	"PATHEXT",
+	"USERNAME",
+	"USERDOMAIN",
+	"OS",
+	"NUMBER_OF_PROCESSORS",
+	"PROCESSOR_ARCHITECTURE",
+}
+
+func windowsEnvironmentHasExactKey(environment []string, name string) bool {
+	for _, item := range environment {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && key == name {
+			return true
+		}
+	}
+	return false
+}
+
+func windowsEnvironmentLookup(environment []string, name string) string {
+	for _, item := range environment {
+		key, value, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return ""
 }
 
 func drainWindowsGatePipe(reader *os.File, destination io.Writer) <-chan error {

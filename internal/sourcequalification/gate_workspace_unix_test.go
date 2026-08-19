@@ -97,3 +97,32 @@ func TestPrivateQualificationWorkspaceCleanupDoesNotFollowUnixSymlink(t *testing
 		t.Fatalf("cleanup followed symlink outside workspace: %q, %v", got, err)
 	}
 }
+
+func TestPrivateQualificationWorkspaceCleanupRemovesReadOnlyUnixTree(t *testing.T) {
+	parent := t.TempDir()
+	path, cleanup, err := createPrivateQualificationWorkspace(parent, "private-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(path, "module-cache")
+	if err := os.Mkdir(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	moduleFile := filepath.Join(nested, "module.go")
+	if err := os.WriteFile(moduleFile, []byte("package module\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(moduleFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(nested, 0o500); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup read-only module cache tree: %v", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("read-only workspace remains after cleanup: %v", err)
+	}
+}

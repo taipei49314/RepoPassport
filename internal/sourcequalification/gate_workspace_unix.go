@@ -340,6 +340,20 @@ func removeUnixQualificationWorkspaceEntry(
 		_ = child.Close()
 		return errQualificationWorkspaceCleanup
 	}
+	if opened.Mode&unix.S_IWUSR == 0 {
+		if err := unix.Fchmod(descriptor, 0o700); err != nil {
+			_ = child.Close()
+			return errQualificationWorkspaceCleanup
+		}
+		var writable unix.Stat_t
+		if err := unix.Fstat(descriptor, &writable); err != nil ||
+			!sameUnixQualificationWorkspaceIdentity(&writable, identity) ||
+			writable.Mode&unix.S_IFMT != unix.S_IFDIR ||
+			writable.Mode&unix.S_IWUSR == 0 {
+			_ = child.Close()
+			return errQualificationWorkspaceCleanup
+		}
+	}
 	if err := removeUnixQualificationWorkspaceContents(
 		child,
 		rootDevice,
