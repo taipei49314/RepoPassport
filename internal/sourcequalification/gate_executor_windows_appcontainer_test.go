@@ -122,7 +122,7 @@ func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
 }
 
 func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t *testing.T) {
-	application := requirePATHRuntimeTool(t, "go")
+	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
 	locked := filepath.Join(dir, "locked-pack")
 	file, err := os.OpenFile(locked, os.O_CREATE|os.O_RDWR, 0o600)
@@ -150,7 +150,7 @@ func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t
 }
 
 func TestOSGateExecutorIsolatesGoVersionWithNetworkNone(t *testing.T) {
-	application := requirePATHRuntimeTool(t, "go")
+	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
 		Application: application,
@@ -174,7 +174,7 @@ func TestOSGateExecutorIsolatesGoVersionWithNetworkNone(t *testing.T) {
 }
 
 func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
-	application := requirePATHRuntimeTool(t, "go")
+	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
 	request := gateProcessRequest{
 		Application: application,
@@ -322,4 +322,14 @@ func concatWindowsPaths(sets ...[]string) []string {
 		result = append(result, set...)
 	}
 	return result
+}
+
+func requireTrustedWindowsGoApplication(t *testing.T) string {
+	t.Helper()
+	path := requirePATHRuntimeTool(t, "go")
+	resolved, err := trustedControllerRuntimePath(t.TempDir(), path)
+	if err != nil {
+		t.Fatalf("trusted go path: %v", err)
+	}
+	return resolved
 }
