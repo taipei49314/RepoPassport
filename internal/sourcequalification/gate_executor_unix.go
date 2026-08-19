@@ -446,6 +446,53 @@ func linuxPrivilegedKillProcessCommand(pid int) (string, []string, bool) {
 	return linuxPrivilegedKillTargetCommand(strconv.Itoa(pid))
 }
 
+func linuxPrivilegedReadlinkCommand(path string) (string, []string, bool) {
+	if !validLinuxProcHolderPath(path) {
+		return "", nil, false
+	}
+	sudo, sudoOK := trustedLinuxSystemApplication("/usr/bin/sudo")
+	readlink, readlinkOK := trustedLinuxSystemApplication("/usr/bin/readlink")
+	if !readlinkOK {
+		readlink, readlinkOK = trustedLinuxSystemApplication("/bin/readlink")
+	}
+	if !sudoOK || !readlinkOK {
+		return "", nil, false
+	}
+	return sudo, []string{"-n", "--", readlink, "--", path}, true
+}
+
+func linuxPrivilegedListDirectoryCommand(path string) (string, []string, bool) {
+	if !validLinuxProcHolderPath(path) || !strings.HasSuffix(path, "/fd") {
+		return "", nil, false
+	}
+	sudo, sudoOK := trustedLinuxSystemApplication("/usr/bin/sudo")
+	ls, lsOK := trustedLinuxSystemApplication("/usr/bin/ls")
+	if !lsOK {
+		ls, lsOK = trustedLinuxSystemApplication("/bin/ls")
+	}
+	if !sudoOK || !lsOK {
+		return "", nil, false
+	}
+	return sudo, []string{"-n", "--", ls, "-1", "--", path}, true
+}
+
+func linuxPrivilegedHelperOutput(sudo string, arguments []string) ([]byte, error) {
+	if sudo == "" || len(arguments) == 0 {
+		return nil, syscall.EPERM
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, sudo, arguments...)
+	command.Dir = "/"
+	command.Env = linuxPrivilegedLauncherEnvironment()
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	output, err := command.Output()
+	if command.Process != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	return output, err
+}
+
 func linuxPrivilegedKillTargetCommand(target string) (string, []string, bool) {
 	if target == "" || target == "-" || target == "0" || target == "1" || target == "-1" {
 		return "", nil, false

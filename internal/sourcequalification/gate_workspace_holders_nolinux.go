@@ -2,4 +2,6 @@
 
 package sourcequalification
 
-func reapUnixQualificationWorkspaceHolders(string) {}
+import "os"
+
+func reapUnixQualificationWorkspaceHolders(string, *os.File) {}

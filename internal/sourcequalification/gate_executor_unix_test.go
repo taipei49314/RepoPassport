@@ -94,6 +94,31 @@ func TestLinuxPrivilegedKillProcessCommand(t *testing.T) {
 	}
 }
 
+func TestLinuxPrivilegedReadlinkCommand(t *testing.T) {
+	t.Parallel()
+	if _, _, ok := linuxPrivilegedReadlinkCommand("/etc/passwd"); ok {
+		t.Fatal("non-proc path was accepted")
+	}
+	if _, _, ok := linuxPrivilegedReadlinkCommand("/proc/1/cwd"); ok {
+		t.Fatal("pid 1 cwd was accepted")
+	}
+	sudo, args, ok := linuxPrivilegedReadlinkCommand("/proc/9562/cwd")
+	if !ok {
+		t.Skip("privileged readlink helpers were not trusted")
+	}
+	if sudo != "/usr/bin/sudo" {
+		t.Fatalf("privileged readlink launcher = %q, want /usr/bin/sudo", sudo)
+	}
+	for _, want := range []string{"-n", "--", "/proc/9562/cwd"} {
+		if !containsExactArg(args, want) {
+			t.Fatalf("privileged readlink arguments %q missing %q", args, want)
+		}
+	}
+	if !containsExactArg(args, "/usr/bin/readlink") && !containsExactArg(args, "/bin/readlink") {
+		t.Fatalf("privileged readlink arguments %q omitted readlink", args)
+	}
+}
+
 func TestUnixKillProcessRefusesProtectedPIDs(t *testing.T) {
 	t.Parallel()
 	if err := unixKillProcess(os.Getpid()); !errors.Is(err, syscall.EINVAL) {

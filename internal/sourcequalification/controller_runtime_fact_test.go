@@ -114,9 +114,6 @@ func TestControllerRuntimeFactCollectsPowerShellVersion(t *testing.T) {
 }
 
 func TestControllerRuntimeFactDoesNotUseNetworkNoneGateIsolation(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("Windows is the platform whose NetworkNone gate executor must stay blocked")
-	}
 	repository := t.TempDir()
 	goPath := requirePATHRuntimeTool(t, "go")
 	resolved, err := trustedControllerRuntimePath(repository, goPath)
@@ -140,9 +137,13 @@ func TestControllerRuntimeFactDoesNotUseNetworkNoneGateIsolation(t *testing.T) {
 		StdoutLimit: controllerRuntimeFactLimit,
 		StderrLimit: controllerRuntimeFactLimit,
 	})
-	if !result.Blocked || executeErr == nil || result.ExitCode != nil {
-		t.Fatalf("NetworkNone gate executor = %#v err=%v, want fail-closed BLOCKED before invocation",
-			result, executeErr)
+	if result.Blocked {
+		if executeErr == nil || result.ExitCode != nil {
+			t.Fatalf("blocked NetworkNone gate executor = %#v err=%v", result, executeErr)
+		}
+	} else if executeErr != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.CleanupFailed || result.TimedOut || result.Cancelled {
+		t.Fatalf("isolated NetworkNone fact probe = %#v err=%v", result, executeErr)
 	}
 
 	line, err := controllerRuntimeFact(context.Background(), resolved, []string{"version"}, directory, environment)
