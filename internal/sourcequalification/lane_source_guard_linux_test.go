@@ -23,7 +23,14 @@ func TestQualificationLaneSourceGuardRestoresIsolatedModuleDownload(t *testing.T
 	writeGitFixtureFile(t, filepath.Join(fixture.root, "go.mod"), mod)
 	writeGitFixtureFile(t, filepath.Join(fixture.root, "restore.go"), src)
 
-	home := t.TempDir()
+	home, err := os.MkdirTemp("", "repopass-isolated-download-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("sudo", "-n", "chmod", "-R", "u+w", home).Run()
+		_ = os.RemoveAll(home)
+	})
 	modcache := filepath.Join(home, "modcache")
 	gocache := filepath.Join(home, "gocache")
 	tmpdir := filepath.Join(home, "tmp")

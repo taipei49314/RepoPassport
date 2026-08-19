@@ -313,6 +313,9 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 	if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil ||
 		!schemaJSONAppContainerRootGrantable(moduleRoot) {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("module root %q must be AppContainer-grantable on GitHub Actions", moduleRoot)
+		}
 		t.Skip("module root AppContainer ancestor chain crosses a host profile root")
 	}
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
@@ -652,14 +655,7 @@ func requireSchemaJSONAppContainerFixtureRoot(t *testing.T) string {
 		candidates = append([]string{filepath.Join(runnerTemp, "sq-schema-json-"+filepath.Base(t.TempDir()))}, candidates...)
 	}
 	for _, dir := range candidates {
-		skip := false
-		for _, ancestor := range windowsAppContainerAncestorPaths(dir) {
-			if windowsAppContainerAncestorGrantForbidden(ancestor) {
-				skip = true
-				break
-			}
-		}
-		if skip {
+		if !schemaJSONAppContainerRootGrantable(dir) {
 			continue
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -686,10 +682,19 @@ func requireSchemaJSONAppContainerRoot(t *testing.T) string {
 }
 
 func schemaJSONAppContainerRootGrantable(dir string) bool {
-	for _, ancestor := range windowsAppContainerAncestorPaths(dir) {
-		if windowsAppContainerAncestorGrantForbidden(ancestor) {
-			return false
-		}
+	if dir == "" {
+		return false
 	}
-	return dir != ""
+	for _, ancestor := range windowsAppContainerAncestorPaths(dir) {
+		if !windowsAppContainerAncestorGrantForbidden(ancestor) {
+			continue
+		}
+		volume := filepath.VolumeName(ancestor)
+		relative := strings.Trim(strings.TrimPrefix(filepath.Clean(ancestor), volume), `\`)
+		if relative == "" {
+			continue
+		}
+		return false
+	}
+	return true
 }
