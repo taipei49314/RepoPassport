@@ -232,6 +232,37 @@ func TestOSGateExecutorIsolatesGoVetWithNetworkNone(t *testing.T) {
 	}
 }
 
+func TestOSGateExecutorIsolatesGoTestWithNetworkNone(t *testing.T) {
+	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.invalid/testprobe\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "probe_test.go"), []byte("package testprobe\n\nimport \"testing\"\n\nfunc TestReady(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	application := requireTrustedWindowsGoApplication(t)
+
+	started := time.Now()
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application: application,
+		Args:        []string{"test", "-count=1", "."},
+		Dir:         dir,
+		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
+		Network:     NetworkNone,
+		Timeout:     60 * time.Second,
+		StdoutLimit: 8192,
+		StderrLimit: 8192,
+	})
+	if time.Since(started) > 50*time.Second {
+		t.Fatal("NetworkNone go test AppContainer grant walked too long")
+	}
+	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.TimedOut || result.Cancelled || result.CleanupFailed {
+		t.Fatalf("NetworkNone go test result = %#v err=%v stdout=%q stderr=%q",
+			result, err, result.Stdout, result.Stderr)
+	}
+}
+
 func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
 	modcache := filepath.Join(dir, "modcache")

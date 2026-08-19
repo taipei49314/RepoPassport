@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,6 +45,9 @@ func TestQualificationLaneSourceGuardRestoresIsolatedModuleDownload(t *testing.T
 	tidy.Dir = fixture.root
 	tidy.Env = hostEnv
 	if output, err := tidy.CombinedOutput(); err != nil {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("host go mod tidy unavailable: %v\n%s", err, output)
+		}
 		t.Skipf("host go mod tidy unavailable: %v\n%s", err, output)
 	}
 	fixture.git(t, "add", "go.mod", "go.sum", "restore.go")
@@ -70,17 +74,102 @@ func TestQualificationLaneSourceGuardRestoresIsolatedModuleDownload(t *testing.T
 		StderrLimit: 1 << 16,
 	})
 	if result.Blocked {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("gate isolation is unavailable")
+		}
 		t.Skip("gate isolation is unavailable")
 	}
 	if execErr != nil {
 		t.Fatalf("isolated MODULE-DOWNLOAD execution error: %v stderr=%q", execErr, result.Stderr)
 	}
 	if result.SourceChanged {
-		t.Fatalf("isolated MODULE-DOWNLOAD was treated as SOURCE_DIRTY; exit=%v stderr=%q", result.ExitCode, result.Stderr)
+		_, inspectErr := InspectRepository(fixture.request())
+		t.Fatalf("isolated MODULE-DOWNLOAD was treated as SOURCE_DIRTY; exit=%v stderr=%q inspect=%v", result.ExitCode, result.Stderr, inspectErr)
 	}
 	restored, err := os.ReadFile(sumPath)
 	if err != nil || string(restored) != string(original) {
 		t.Fatalf("go.sum after isolated MODULE-DOWNLOAD = %q, want %q (err=%v)", restored, original, err)
+	}
+}
+
+func TestQualificationLaneSourceGuardRestoresIsolatedCanonicalModuleDownload(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("caller path is unavailable")
+	}
+	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+	mod, err := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum, err := os.ReadFile(filepath.Join(moduleRoot, "go.sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	goPath, err := trustedControllerRuntimePath(t.TempDir(), requirePATHRuntimeTool(t, "go"))
+	if err != nil {
+		t.Fatalf("trusted go path: %v", err)
+	}
+	fixture := newGitRepositoryFixture(t)
+	writeGitFixtureFile(t, filepath.Join(fixture.root, "go.mod"), mod)
+	writeGitFixtureFile(t, filepath.Join(fixture.root, "go.sum"), sum)
+	writeGitFixtureFile(t, filepath.Join(fixture.root, "restore.go"), []byte("package downloadrestore\n"))
+
+	home, err := os.MkdirTemp("", "repopass-isolated-canonical-download-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("sudo", "-n", "chmod", "-R", "u+w", home).Run()
+		_ = os.RemoveAll(home)
+	})
+	modcache := filepath.Join(home, "modcache")
+	gocache := filepath.Join(home, "gocache")
+	tmpdir := filepath.Join(home, "tmp")
+	for _, path := range []string{modcache, gocache, tmpdir} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixture.git(t, "add", "go.mod", "go.sum", "restore.go")
+	parent := fixture.tested
+	fixture.commit(t, "canonical download restore fixture", "2000-01-05T00:00:00Z")
+	fixture.base = parent
+	fixture.tested = strings.TrimSpace(fixture.git(t, "rev-parse", "HEAD"))
+	fixture.tree = strings.TrimSpace(fixture.git(t, "rev-parse", "HEAD^{tree}"))
+
+	sumPath := filepath.Join(fixture.root, "go.sum")
+	original, err := os.ReadFile(sumPath)
+	if err != nil {
+		t.Fatalf("read fixture go.sum: %v", err)
+	}
+	guard := newQualificationLaneSourceGuard(t, fixture, newOSGateExecutor())
+	result, execErr := guard.Execute(context.Background(), gateProcessRequest{
+		Application: goPath,
+		Args:        []string{"mod", "download", "-modcacherw", "all"},
+		Dir:         fixture.root,
+		Env:         isolatedGoModuleEnvironment(goPath, home, modcache, gocache, tmpdir, true),
+		Network:     NetworkGoModules,
+		Timeout:     2 * time.Minute,
+		StdoutLimit: 1 << 16,
+		StderrLimit: 1 << 16,
+	})
+	if result.Blocked {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("gate isolation is unavailable")
+		}
+		t.Skip("gate isolation is unavailable")
+	}
+	if execErr != nil {
+		t.Fatalf("isolated canonical MODULE-DOWNLOAD execution error: %v stderr=%q", execErr, result.Stderr)
+	}
+	if result.SourceChanged {
+		_, inspectErr := InspectRepository(fixture.request())
+		t.Fatalf("isolated canonical MODULE-DOWNLOAD was treated as SOURCE_DIRTY; exit=%v stderr=%q inspect=%v", result.ExitCode, result.Stderr, inspectErr)
+	}
+	restored, err := os.ReadFile(sumPath)
+	if err != nil || string(restored) != string(original) {
+		t.Fatalf("canonical go.sum after isolated MODULE-DOWNLOAD = %q, want %q (err=%v)", restored, original, err)
 	}
 }
 
