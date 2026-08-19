@@ -181,7 +181,7 @@ func linuxSelectGateIsolation(
 		if probeOK && linuxIsolationProbe(ctx, unshare, rootlessProbe, linuxRootlessProbeEnvironment()) {
 			rootlessArguments, argsOK := linuxRootlessGateIsolationArguments(network, application, arguments)
 			if argsOK {
-				return unshare, rootlessArguments, append([]string(nil), environment...), true
+				return unshare, rootlessArguments, linuxIsolationProcessEnvironment(environment), true
 			}
 		}
 	}
@@ -272,7 +272,7 @@ func linuxPrivilegedGateIsolationCommand(
 		"-i",
 		"--",
 	}
-	inner = append(inner, environment...)
+	inner = append(inner, linuxIsolationProcessEnvironment(environment)...)
 	inner = append(inner, application)
 	inner = append(inner, arguments...)
 	result = append(result, "--")
@@ -358,6 +358,12 @@ func linuxInNonHostPidNamespace() bool {
 	// Nested unshare --pid from an existing pid namespace leaks the inner
 	// init onto the host when the outer pid-namespace init exits. Isolation
 	// selection therefore refuses to launch another unshare from inside one.
+	// The isolation wrapper also plants REPOPASS_LINUX_PID_NAMESPACE=1 because
+	// /proc/self/status NSpid can still look like the host from inside the
+	// privileged exec chain.
+	if os.Getenv(linuxPidNamespaceEnvironmentName) == linuxPidNamespaceEnvironmentValue {
+		return true
+	}
 	status, err := os.ReadFile("/proc/self/status")
 	if err != nil {
 		return true
@@ -374,7 +380,12 @@ func linuxIsolationProbe(ctx context.Context, application string, arguments, env
 	command := exec.CommandContext(probeContext, application, arguments...)
 	command.Dir = "/"
 	command.Env = append([]string(nil), environment...)
-	return command.Run() == nil && probeContext.Err() == nil
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	err := command.Run()
+	if command.Process != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	return err == nil && probeContext.Err() == nil
 }
 
 func linuxRootlessProbeEnvironment() []string {
