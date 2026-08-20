@@ -544,7 +544,9 @@ try {
     try {
 		Remove-ScopedDirectory -Parent $temporaryBase -Path $controllerRoot `
 			-LeafPrefix "repopass-release-controller-"
-        $published = $true
+        if ($env:REPOPASS_RELEASE_QUALIFICATION_CLEANUP -cne "1") {
+            $published = $true
+        }
     }
     catch {
         throw "post-publication cleanup failed; dist was withdrawn."

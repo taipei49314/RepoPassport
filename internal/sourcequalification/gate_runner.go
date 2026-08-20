@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const maximumGateOutputBytes int64 = 4 << 20
+const (
+	maximumGateOutputBytes                         int64 = 4 << 20
+	releaseQualificationCleanupEnvironmentVariable       = "REPOPASS_RELEASE_QUALIFICATION_CLEANUP=1"
+)
 
 var (
 	errGateInvalidInput  = errors.New("SOURCE_QUAL_INVALID_INPUT")
@@ -158,7 +161,10 @@ func runRequiredGates(
 			Application: applications[specification.Argv[0]],
 			Args:        append([]string(nil), records[index].Argv[1:]...),
 			Dir:         request.RepositoryRoot,
-			Env:         gateEnvironment(request.Environment, specification.Network),
+			Env: gateProcessEnvironment(
+				request.Environment,
+				specification,
+			),
 			Network:     specification.Network,
 			Timeout:     time.Duration(specification.TimeoutSeconds) * time.Second,
 			StdoutLimit: maximumGateOutputBytes,
@@ -385,6 +391,14 @@ func substituteGateArgv(argv []string, testedRevision string) []string {
 		}
 	}
 	return result
+}
+
+func gateProcessEnvironment(configuration gateRunEnvironment, specification GateSpec) []string {
+	environment := gateEnvironment(configuration, specification.Network)
+	if specification.ID == releaseBuildGate.ID {
+		environment = append(environment, releaseQualificationCleanupEnvironmentVariable)
+	}
+	return environment
 }
 
 func gateEnvironment(configuration gateRunEnvironment, network NetworkMode) []string {

@@ -388,6 +388,11 @@ func testReleaseBuilder(t *testing.T, root string) {
 		!strings.Contains(script, ".release-withdrawn-") {
 		t.Fatalf("%s must atomically withdraw dist before reporting any post-publication cleanup failure", relativePath(root, path))
 	}
+	cleanupMarker := strings.Index(script, `$env:REPOPASS_RELEASE_QUALIFICATION_CLEANUP -cne "1"`)
+	retainPublication := strings.Index(script, "$published = $true")
+	if cleanupMarker < atomicPublish || retainPublication < cleanupMarker {
+		t.Fatalf("%s must retain dist unless the fixed source-qualification cleanup marker is present", relativePath(root, path))
+	}
 	for _, phase := range []string{"pre-helper", "pre-publish"} {
 		pattern := regexp.MustCompile(`(?s)-phase\s+` + regexp.QuoteMeta(phase) + `\b.*?-tested-revision\s+\$TestedRevision\s+-tree\s+\$testedTree`)
 		if !pattern.MatchString(script) {

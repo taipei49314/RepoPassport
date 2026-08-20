@@ -114,7 +114,7 @@ func TestRunRequiredGatesUsesExactArgvEnvironmentAndPrivateApplications(t *testi
 		if request.StdoutLimit != gateTestOutputLimit || request.StderrLimit != gateTestOutputLimit {
 			t.Fatalf("gate %s output limits = %d/%d, want independent 4 MiB limits", specification.ID, request.StdoutLimit, request.StderrLimit)
 		}
-		requireGateEnvironment(t, request.Env, fixture.request.Environment, specification.Network)
+		requireGateEnvironment(t, request.Env, fixture.request.Environment, specification)
 	}
 	if executor.binding == nil || executor.binding.verifyCalls != 2*len(registry) || executor.binding.releaseCalls != 1 {
 		t.Fatalf("application binding verify/release calls = %#v, want %d/1", executor.binding, 2*len(registry))
@@ -130,6 +130,35 @@ func TestRunRequiredGatesUsesExactArgvEnvironmentAndPrivateApplications(t *testi
 	for _, private := range []string{fixture.privateRoot, fixture.request.Applications["go"], fixture.request.Environment.GoProxy} {
 		if bytes.Contains(encoded, []byte(private)) {
 			t.Fatalf("public gate record disclosed private value %q", private)
+		}
+	}
+}
+
+func TestGateProcessEnvironmentAddsCleanupOnlyToReleaseGate(t *testing.T) {
+	for _, lane := range []Lane{LaneLinuxAMD64, LaneWindowsAMD64} {
+		markedGates := 0
+		for _, specification := range RequiredGates(lane) {
+			markerCount := 0
+			for _, entry := range gateProcessEnvironment(gateRunEnvironment{}, specification) {
+				if strings.HasPrefix(entry, "REPOPASS_RELEASE_QUALIFICATION_CLEANUP=") {
+					markerCount++
+					if entry != releaseQualificationCleanupEnvironmentVariable {
+						t.Fatalf("lane %s gate %s cleanup marker = %q, want fixed value", lane, specification.ID, entry)
+					}
+				}
+			}
+
+			want := 0
+			if specification.ID == releaseBuildGate.ID {
+				want = 1
+				markedGates++
+			}
+			if markerCount != want {
+				t.Fatalf("lane %s gate %s cleanup marker count = %d, want %d", lane, specification.ID, markerCount, want)
+			}
+		}
+		if markedGates != 1 {
+			t.Fatalf("lane %s release cleanup gate count = %d, want 1", lane, markedGates)
 		}
 	}
 }
@@ -626,7 +655,7 @@ func requireGateRunError(t *testing.T, err error, want string) {
 	}
 }
 
-func requireGateEnvironment(t *testing.T, environment []string, configuration gateRunEnvironment, network NetworkMode) {
+func requireGateEnvironment(t *testing.T, environment []string, configuration gateRunEnvironment, specification GateSpec) {
 	t.Helper()
 	got := make(map[string]string, len(environment))
 	for _, item := range environment {
@@ -654,7 +683,7 @@ func requireGateEnvironment(t *testing.T, environment []string, configuration ga
 		"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0", "GIT_NO_REPLACE_OBJECTS": "1", "GIT_LITERAL_PATHSPECS": "1",
 		"GIT_PAGER": "", "PAGER": "", "GCM_INTERACTIVE": "Never",
 	}
-	switch network {
+	switch specification.Network {
 	case NetworkNone:
 		want["GOPROXY"], want["GOSUMDB"], want["GOVULNDB"] = "off", "off", "off"
 	case NetworkGoModules:
@@ -664,7 +693,10 @@ func requireGateEnvironment(t *testing.T, environment []string, configuration ga
 	case NetworkGoModulesAndVulnerabilityDatabase:
 		want["GOPROXY"], want["GOSUMDB"], want["GOVULNDB"] = configuration.GoProxy, configuration.GoSumDB, configuration.VulnerabilityDatabaseURL
 	default:
-		t.Fatalf("unknown network mode %q", network)
+		t.Fatalf("unknown network mode %q", specification.Network)
+	}
+	if specification.ID == releaseBuildGate.ID {
+		want["REPOPASS_RELEASE_QUALIFICATION_CLEANUP"] = "1"
 	}
 	if configuration.SystemRoot != "" {
 		want["SYSTEMROOT"] = configuration.SystemRoot
