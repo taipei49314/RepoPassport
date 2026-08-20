@@ -481,6 +481,10 @@ and proxy-auth injection. Network is enabled only for the registry rows that
 declare it; after dependency acquisition all other Go commands use
 `GOPROXY=off`, `GONOPROXY=none`, and no credentials. The runner carries no
 repository secrets and its GitHub token is read-only.
+`RP-M0-QUAL-RELEASE-BUILD` alone additionally receives the fixed
+`REPOPASS_RELEASE_QUALIFICATION_CLEANUP=1` marker. The builder must validate,
+atomically withdraw, and safely remove its exact `dist` publication before the
+controller's unchanged clean-worktree guard can accept that gate.
 
 Stdout and stderr are separately drained into private bounded logs, each at
 most 4 MiB. Overflow fails the gate. Timeout or cancellation terminates the
