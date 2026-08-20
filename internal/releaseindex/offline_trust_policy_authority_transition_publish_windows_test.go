@@ -8,6 +8,7 @@ import (
 )
 
 func TestPublishSignedOfflineTrustPolicyAuthorityTransitionSidecarsRetainsPrivateWindowsDACL(t *testing.T) {
+	requireHostFilesystem(t)
 	_, previousSPKI, nextSPKI, envelopeRaw := makeOfflineTrustPolicyAuthorityTransitionPublication(t)
 	output := filepath.Join(t.TempDir(), "private-transition-sidecars")
 	if err := PublishSignedOfflineTrustPolicyAuthorityTransitionSidecars(output, nextSPKI, envelopeRaw, previousSPKI); err != nil {

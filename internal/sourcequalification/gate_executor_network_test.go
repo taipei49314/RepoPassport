@@ -17,6 +17,9 @@ const (
 
 func skipIfHostLoopbackUnavailable(t *testing.T) {
 	t.Helper()
+	if inAppContainer(t) {
+		t.Skip("nested Windows AppContainer isolation is unavailable")
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("host loopback listen is unavailable: %v", err)

@@ -44,6 +44,7 @@ func stateFileForTest(t *testing.T, dataRoot string) string {
 }
 
 func TestObserveInitializesMatchesAndAdvancesChainAndPolicyAxes(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	stateDirectory, err := stateRoot(context.Background(), root)
 	if err != nil {
@@ -93,6 +94,7 @@ func TestObserveInitializesMatchesAndAdvancesChainAndPolicyAxes(t *testing.T) {
 }
 
 func TestObserveRejectsChainRollbackAndEquivocationWithoutChangingState(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	current := testObservation(5, 7)
 	if _, err := Observe(context.Background(), root, current); err != nil {
@@ -127,6 +129,7 @@ func TestObserveRejectsChainRollbackAndEquivocationWithoutChangingState(t *testi
 }
 
 func TestObserveRejectsInvalidCorruptAndUnsafeChainStateWithoutRepair(t *testing.T) {
+	requireHostFilesystem(t)
 	t.Run("invalid observation does not create state", func(t *testing.T) {
 		cases := []func(*Observation){
 			func(value *Observation) { value.TrustRootKeyID = "sha256:not-a-key" },
@@ -199,6 +202,7 @@ func TestObserveRejectsInvalidCorruptAndUnsafeChainStateWithoutRepair(t *testing
 }
 
 func TestObserveChainStateConcurrencyCancellationAndProcessContention(t *testing.T) {
+	requireHostFilesystem(t)
 	if testProcessLockHelper(t) {
 		return
 	}
@@ -232,6 +236,7 @@ func TestObserveChainStateConcurrencyCancellationAndProcessContention(t *testing
 }
 
 func TestObserveChainStatePlatformSecurityAndAtomicity(t *testing.T) {
+	requireHostFilesystem(t)
 	testPlatformSecurityAndAtomicity(t)
 }
 

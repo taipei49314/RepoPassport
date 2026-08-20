@@ -114,6 +114,7 @@ func wantIsolatedGitScratchParent(t *testing.T, repositoryRoot string) string {
 }
 
 func TestInspectRepositoryScratchCleanupFailureIsNeverMasked(t *testing.T) {
+	requireHostFilesystem(t)
 	tests := []struct {
 		name       string
 		inspectErr error
@@ -159,6 +160,7 @@ func TestInspectRepositoryScratchCleanupFailureIsNeverMasked(t *testing.T) {
 
 func newGitScratchRepositoryFixture(t *testing.T) string {
 	t.Helper()
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	repositoryRoot := filepath.Join(parent, "repository")
 	if err := os.MkdirAll(filepath.Join(repositoryRoot, ".git"), 0o700); err != nil {

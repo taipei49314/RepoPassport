@@ -17,6 +17,7 @@ import (
 )
 
 func TestWindowsPrivateObjectsAreCreatedAtomically(t *testing.T) {
+	requireHostFilesystem(t)
 	for _, stage := range []string{"data-root", "state-parent", "version", "kind", "lock"} {
 		t.Run(stage, func(t *testing.T) {
 			dataRoot := filepath.Join(t.TempDir(), "controller-data")
@@ -81,6 +82,7 @@ func TestWindowsPrivateObjectsAreCreatedAtomically(t *testing.T) {
 }
 
 func TestWindowsRejectsUnsafeExistingObjectsWithoutMutation(t *testing.T) {
+	requireHostFilesystem(t)
 	t.Run("directory", func(t *testing.T) {
 		root := filepath.Join(t.TempDir(), "controller-data")
 		if err := os.Mkdir(root, 0o700); err != nil {
@@ -117,6 +119,7 @@ func TestWindowsRejectsUnsafeExistingObjectsWithoutMutation(t *testing.T) {
 }
 
 func TestWindowsAtomicCreateSecurityDescriptors(t *testing.T) {
+	requireHostFilesystem(t)
 	directory := filepath.Join(t.TempDir(), "private-directory")
 	created, err := createPrivateDirectory(directory)
 	if err != nil || !created {
@@ -202,6 +205,7 @@ func assertWindowsPrivateDescriptor(t *testing.T, path string) {
 }
 
 func TestWindowsUnsafeDACLReturnsTypedUnavailable(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := ObserveIndex(context.Background(), root, testAuthorityA, "repopass", "alpha", 1, testDigestA); err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestCreatePrivateQualificationWorkspaceAppliesExactWindowsMetadata(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	workspaceSetPermissiveWindowsDACL(t, parent)
 	path, cleanup, err := createPrivateQualificationWorkspace(parent, "private-run")
@@ -25,6 +26,7 @@ func TestCreatePrivateQualificationWorkspaceAppliesExactWindowsMetadata(t *testi
 }
 
 func TestCreatePrivateQualificationWorkspaceWindowsCollisionDoesNotRepairDACL(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	path := filepath.Join(parent, "collision")
 	if err := os.Mkdir(path, 0o700); err != nil {
@@ -38,6 +40,7 @@ func TestCreatePrivateQualificationWorkspaceWindowsCollisionDoesNotRepairDACL(t 
 }
 
 func TestPrivateQualificationWorkspaceCleanupRemovesReadOnlyWindowsTree(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	path, cleanup, err := createPrivateQualificationWorkspace(parent, "private-run")
 	if err != nil {

@@ -7,11 +7,13 @@ import (
 	"os"
 	"testing"
 
+	"github.com/taipei49314/RepoPassport/internal/testsupport"
 	"golang.org/x/sys/windows"
 )
 
 func secureCLIPrivateKeyForTest(t *testing.T, path string) {
 	t.Helper()
+	testsupport.RequireHostFilesystem(t)
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || user == nil || user.User.Sid == nil {
 		t.Fatalf("resolve current user SID: %v", err)

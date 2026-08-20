@@ -12,6 +12,7 @@ import (
 )
 
 func TestSecurePrivatePackagePathAppliesExactProtectedOwnerAndSystemDACL(t *testing.T) {
+	requireHostFilesystem(t)
 	root := t.TempDir()
 	packageFilesSetPermissiveWindowsDACL(t, root)
 	directory := filepath.Join(root, "staging")
@@ -34,6 +35,7 @@ func TestSecurePrivatePackagePathAppliesExactProtectedOwnerAndSystemDACL(t *test
 }
 
 func TestAssembleQualificationPackagePublishesExactPrivateWindowsDACL(t *testing.T) {
+	requireHostFilesystem(t)
 	fixture := newPackageFilesFixture(t)
 	packageFilesSetPermissiveWindowsDACL(t, fixture.root)
 	if _, err := assembleQualificationPackage(fixture.linuxDir, fixture.windowsDir, fixture.outputDir); err != nil {

@@ -239,6 +239,7 @@ func makeInvalidGenerationChain(t *testing.T, generations []uint64) {
 }
 
 func TestAuthorityTransitionChainStableReadAndAtomicExactThreePublication(t *testing.T) {
+	requireHostFilesystem(t)
 	fixture := makeAuthorityChain(t, []uint64{1, 4})
 	root := t.TempDir()
 	chainPath := filepath.Join(root, "chain.json")

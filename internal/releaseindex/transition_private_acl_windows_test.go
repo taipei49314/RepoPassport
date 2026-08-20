@@ -11,6 +11,7 @@ import (
 
 func secureTransitionPrivateKeyForTest(t *testing.T, path string) {
 	t.Helper()
+	requireHostFilesystem(t)
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || user == nil || user.User.Sid == nil {
 		t.Fatalf("resolve current user SID: %v", err)

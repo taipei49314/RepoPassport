@@ -36,6 +36,7 @@ type packageFilesFixture struct {
 }
 
 func TestAssembleQualificationPackagePublishesExactBoundFourFileSet(t *testing.T) {
+	requireHostFilesystem(t)
 	fixture := newPackageFilesFixture(t)
 
 	digest, err := assembleQualificationPackage(fixture.linuxDir, fixture.windowsDir, fixture.outputDir)
@@ -353,6 +354,7 @@ func TestAssembleQualificationPackageNeverReplacesPreexistingOutput(t *testing.T
 }
 
 func TestAssembleQualificationPackageRollsBackAfterPublicationSyncFailure(t *testing.T) {
+	requireHostFilesystem(t)
 	fixture := newPackageFilesFixture(t)
 	original := syncPublishedPackageParent
 	syncPublishedPackageParent = func(*os.File) error {

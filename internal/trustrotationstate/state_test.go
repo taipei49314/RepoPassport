@@ -43,6 +43,7 @@ func stateFileForTest(t *testing.T, dataRoot string) string {
 }
 
 func TestObserveInitializesMatchesAndAdvancesBothAxes(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	observe := func(transition, policy uint64) (Result, error) {
 		return Observe(context.Background(), root, testObservation(transition, policy))
@@ -67,6 +68,7 @@ func TestObserveInitializesMatchesAndAdvancesBothAxes(t *testing.T) {
 }
 
 func TestObserveRejectsRollbackAndEquivocationWithoutChangingState(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	current := testObservation(5, 7)
 	if _, err := Observe(context.Background(), root, current); err != nil {
@@ -111,6 +113,7 @@ func TestObserveRejectsRollbackAndEquivocationWithoutChangingState(t *testing.T)
 }
 
 func TestObserveTreatsResignedTransitionPayloadAsMatch(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	first := testObservation(3, 4)
 	if result, err := Observe(context.Background(), root, first); err != nil || result.Evaluation != EvaluationInitialized {
@@ -161,6 +164,7 @@ func TestObserveRejectsInvalidObservationWithoutCreatingState(t *testing.T) {
 }
 
 func TestObserveRejectsCorruptionWithoutRepair(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testObservation(1, 1)); err != nil {
 		t.Fatal(err)
@@ -187,6 +191,7 @@ func TestObserveRejectsCorruptionWithoutRepair(t *testing.T) {
 }
 
 func TestObserveRejectsNonRegularStateWithoutOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testObservation(1, 1)); err != nil {
 		t.Fatal(err)
@@ -208,6 +213,7 @@ func TestObserveRejectsNonRegularStateWithoutOverwrite(t *testing.T) {
 }
 
 func TestObserveCancelledContextLeavesExistingStateUnchanged(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testObservation(1, 1)); err != nil {
 		t.Fatal(err)
@@ -229,6 +235,7 @@ func TestObserveCancelledContextLeavesExistingStateUnchanged(t *testing.T) {
 }
 
 func TestObserveConcurrentAdvancesConvergeAtTwoDimensionalMaximum(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	const maximum = 24
 	errorsByGeneration := make(chan error, maximum)

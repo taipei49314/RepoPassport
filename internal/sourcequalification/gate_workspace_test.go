@@ -21,6 +21,7 @@ import (
 )
 
 func TestCreatePrivateQualificationWorkspaceCreatesAndCleansExactChild(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	sibling := filepath.Join(parent, "keep.txt")
 	if err := os.WriteFile(sibling, []byte("keep\n"), 0o600); err != nil {

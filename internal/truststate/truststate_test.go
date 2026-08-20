@@ -24,6 +24,7 @@ const (
 )
 
 func TestObserveTransitionContract(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	observe := func(generation uint64, digest string) (Result, error) {
 		return Observe(context.Background(), root, testAuthority, generation, digest)
@@ -56,6 +57,7 @@ func TestObserveTransitionContract(t *testing.T) {
 }
 
 func TestObserveWritesExactCanonicalState(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	result, err := Observe(context.Background(), root, testAuthority, 13, testDigestA)
 	if err != nil || result.Evaluation != EvaluationInitialized {
@@ -73,6 +75,7 @@ func TestObserveWritesExactCanonicalState(t *testing.T) {
 }
 
 func TestObserveRejectsCorruptStateWithoutRepair(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testAuthority, 3, testDigestA); err != nil {
 		t.Fatal(err)
@@ -93,6 +96,7 @@ func TestObserveRejectsCorruptStateWithoutRepair(t *testing.T) {
 }
 
 func TestObserveRejectsNonRegularStateWithoutOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testAuthority, 3, testDigestA); err != nil {
 		t.Fatal(err)
@@ -114,6 +118,7 @@ func TestObserveRejectsNonRegularStateWithoutOverwrite(t *testing.T) {
 }
 
 func TestObserveRejectsOversizeStateWithoutOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testAuthority, 3, testDigestA); err != nil {
 		t.Fatal(err)
@@ -134,6 +139,7 @@ func TestObserveRejectsOversizeStateWithoutOverwrite(t *testing.T) {
 }
 
 func TestObserveRejectsHardLinkedState(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testAuthority, 3, testDigestA); err != nil {
 		t.Fatal(err)
@@ -149,6 +155,7 @@ func TestObserveRejectsHardLinkedState(t *testing.T) {
 }
 
 func TestObserveRejectsSymlinkState(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testAuthority, 3, testDigestA); err != nil {
 		t.Fatal(err)
@@ -179,6 +186,7 @@ func TestObserveRejectsInvalidInputsBeforeCreatingState(t *testing.T) {
 }
 
 func TestObserveAcceptsRelativeDataRoot(t *testing.T) {
+	requireHostFilesystem(t)
 	workingDirectory := t.TempDir()
 	t.Chdir(workingDirectory)
 	result, err := Observe(context.Background(), "relative-controller-data", testAuthority, 1, testDigestA)
@@ -210,6 +218,7 @@ func TestObserveRejectsRepositoryLocalDataRoot(t *testing.T) {
 }
 
 func TestObserveConcurrentGenerationsConvergeAtMaximum(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	var group sync.WaitGroup
 	errorsByGeneration := make(chan error, 20)
@@ -236,6 +245,7 @@ func TestObserveConcurrentGenerationsConvergeAtMaximum(t *testing.T) {
 }
 
 func TestObserveConcurrentEqualGenerationEstablishesOneDigest(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	type outcome struct {
 		digest string
@@ -270,6 +280,7 @@ func TestObserveConcurrentEqualGenerationEstablishesOneDigest(t *testing.T) {
 }
 
 func TestObserveCrossProcessEqualGenerationEstablishesOneDigest(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	outputs := make(chan helperOutput, 2)
 	for _, digest := range []string{testDigestA, testDigestB} {
@@ -301,6 +312,7 @@ func TestObserveCrossProcessEqualGenerationEstablishesOneDigest(t *testing.T) {
 }
 
 func TestObserveCrossProcessHigherGenerationsConvergeAtMaximum(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if result, err := Observe(context.Background(), root, testAuthority, 7, testDigestA); err != nil || result != (Result{Evaluation: EvaluationInitialized, Generation: 7}) {
 		t.Fatalf("initial state = %#v, %v", result, err)
@@ -352,6 +364,7 @@ func TestObserveCrossProcessHigherGenerationsConvergeAtMaximum(t *testing.T) {
 }
 
 func TestObserveCrossProcessLockTimeoutAndExitRelease(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testAuthority, 1, testDigestA); err != nil {
 		t.Fatal(err)

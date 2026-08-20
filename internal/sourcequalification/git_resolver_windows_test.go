@@ -9,6 +9,7 @@ import (
 )
 
 func TestWindowsTrustedGitResolverAcceptsOnlyMachineProtectedInstall(t *testing.T) {
+	requireHostFilesystem(t)
 	repositoryRoot := filepath.Join(t.TempDir(), "repository")
 	if err := os.Mkdir(repositoryRoot, 0o700); err != nil {
 		t.Fatal(err)

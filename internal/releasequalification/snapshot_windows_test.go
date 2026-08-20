@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/taipei49314/RepoPassport/internal/testsupport"
+
 	"golang.org/x/sys/windows"
 )
 
 func TestSealedSnapshotPathsConvergeToCurrentOwnerProtectedACL(t *testing.T) {
+	testsupport.RequireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "sealed")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
