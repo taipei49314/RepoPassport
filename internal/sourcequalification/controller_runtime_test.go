@@ -95,6 +95,7 @@ func TestProduceLaneRejectsInvalidExpectedTreeBeforeRuntimeAdapters(t *testing.T
 }
 
 func TestProduceLanePublishesExactPreconstructionTombstoneWhenAuthenticatedHistoryIsUnavailable(t *testing.T) {
+	requireHostFilesystem(t)
 	request := controllerRuntimeRequest(t)
 	request.Lane = controllerRuntimeHostLane(t)
 	controllerRuntimeSetExpectedTreeSHA(t, &request, strings.Repeat("3", 40))

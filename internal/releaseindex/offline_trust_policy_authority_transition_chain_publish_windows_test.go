@@ -8,6 +8,7 @@ import (
 )
 
 func TestPublishSignedOfflineTrustPolicyAuthorityTransitionChainSidecarsRetainsPrivateWindowsDACL(t *testing.T) {
+	requireHostFilesystem(t)
 	rootSPKI, terminalSPKI, chainRaw := makeOfflineTrustPolicyAuthorityTransitionChainPublication(t)
 	output := filepath.Join(t.TempDir(), "private-chain-sidecars")
 	if err := PublishSignedOfflineTrustPolicyAuthorityTransitionChainSidecars(output, terminalSPKI, chainRaw, rootSPKI); err != nil {

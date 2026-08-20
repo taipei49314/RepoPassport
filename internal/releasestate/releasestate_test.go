@@ -26,6 +26,7 @@ const (
 type observer func(context.Context, string, string, string, string, uint64, string) (Result, error)
 
 func TestObserveTransitionContract(t *testing.T) {
+	requireHostFilesystem(t)
 	for name, observe := range map[string]observer{"authority": ObserveAuthority, "policy": ObservePolicy, "index": ObserveIndex} {
 		t.Run(name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "controller-data")
@@ -43,6 +44,7 @@ func TestObserveTransitionContract(t *testing.T) {
 }
 
 func TestObserveAuthorityChainReusesRootAnchoredAuthorityNamespace(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	assertOutcome(t, capture(ObserveAuthority(context.Background(), root, testAuthorityA, "repopass", "alpha", 7, testDigestA)), Result{EvaluationInitialized, 7}, nil)
 	// A complete chain is deliberately observed only once at its terminal
@@ -54,6 +56,7 @@ func TestObserveAuthorityChainReusesRootAnchoredAuthorityNamespace(t *testing.T)
 }
 
 func TestReleaseIndexGenerationFloorRollbackEquivocationAndStateFailure(t *testing.T) {
+	requireHostFilesystem(t)
 	for name, item := range map[string]struct {
 		observe observer
 		kind    stateKind
@@ -81,6 +84,7 @@ func TestReleaseIndexGenerationFloorRollbackEquivocationAndStateFailure(t *testi
 }
 
 func TestPolicyAndIndexAreDistinctNamespaces(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	assertOutcome(t, capture(ObservePolicy(context.Background(), root, testAuthorityA, "repopass", "alpha", 5, testDigestA)), Result{EvaluationInitialized, 5}, nil)
 	assertOutcome(t, capture(ObserveIndex(context.Background(), root, testAuthorityA, "repopass", "alpha", 2, testDigestB)), Result{EvaluationInitialized, 2}, nil)
@@ -114,6 +118,7 @@ func TestPolicyAndIndexAreDistinctNamespaces(t *testing.T) {
 }
 
 func TestAuthorityPolicyAndIndexAreDistinctNamespaces(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	for name, item := range map[string]struct {
 		observe    observer
@@ -137,6 +142,7 @@ func TestAuthorityPolicyAndIndexAreDistinctNamespaces(t *testing.T) {
 }
 
 func TestTupleComponentsAreDistinctKeys(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	cases := []struct {
 		authority string
@@ -162,6 +168,7 @@ func TestTupleComponentsAreDistinctKeys(t *testing.T) {
 }
 
 func TestObserveWritesExactCanonicalState(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	assertOutcome(t, capture(ObserveIndex(context.Background(), root, testAuthorityA, "repopass", "alpha", 13, testDigestA)), Result{EvaluationInitialized, 13}, nil)
 	path := stateFileForTest(t, root, indexState, testAuthorityA, "repopass", "alpha")
@@ -228,6 +235,7 @@ func TestObserveRejectsRepositoryLocalRoot(t *testing.T) {
 }
 
 func TestObserveRejectsCorruptOversizeAndNonRegularStateWithoutRepair(t *testing.T) {
+	requireHostFilesystem(t)
 	cases := []struct {
 		name    string
 		mutate  func(*testing.T, string)
@@ -292,6 +300,7 @@ func TestObserveRejectsCorruptOversizeAndNonRegularStateWithoutRepair(t *testing
 }
 
 func TestObserveRejectsStateLinks(t *testing.T) {
+	requireHostFilesystem(t)
 	for _, kind := range []string{"hardlink", "symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), "controller-data")
@@ -338,6 +347,7 @@ func TestDecodeRecordStrictCanonicalContract(t *testing.T) {
 }
 
 func TestObserveConcurrentGenerationsConvergeAtMaximum(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	var group sync.WaitGroup
 	errorsByGeneration := make(chan error, 24)
@@ -361,6 +371,7 @@ func TestObserveConcurrentGenerationsConvergeAtMaximum(t *testing.T) {
 }
 
 func TestObserveConcurrentEqualGenerationEstablishesOneDigest(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	type outcome struct {
 		result Result
@@ -392,6 +403,7 @@ func TestObserveConcurrentEqualGenerationEstablishesOneDigest(t *testing.T) {
 }
 
 func TestObserveCrossProcessEqualGeneration(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	outputs := make(chan helperOutput, 2)
 	for _, digest := range []string{testDigestA, testDigestB} {
@@ -422,6 +434,7 @@ func TestObserveCrossProcessEqualGeneration(t *testing.T) {
 }
 
 func TestObserveContextAndTimeoutBoundLockContention(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	assertOutcome(t, capture(ObservePolicy(context.Background(), root, testAuthorityA, "repopass", "alpha", 1, testDigestA)), Result{EvaluationInitialized, 1}, nil)
 	command := exec.Command(os.Args[0], "-test.run=^TestReleaseStateProcessHelper$")

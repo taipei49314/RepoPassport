@@ -46,6 +46,7 @@ func makeOfflineTrustPolicyPublication(t *testing.T, authority ed25519.PrivateKe
 }
 
 func TestPublishSignedOfflineTrustPolicySidecarsIsExactAtomicAndNoOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	authority, authoritySPKI := keyPair(t)
 	_, signerSPKI := keyPair(t)
 	envelopeRaw, authoritySPKI := makeOfflineTrustPolicyPublication(t, authority, authoritySPKI, []offlineTrustPolicyPublicationKey{{KeyID: keyIDFromSPKI(t, signerSPKI), Status: "trusted"}})

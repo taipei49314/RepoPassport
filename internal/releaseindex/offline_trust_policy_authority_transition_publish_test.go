@@ -23,6 +23,7 @@ func makeOfflineTrustPolicyAuthorityTransitionPublication(t *testing.T) (ed25519
 }
 
 func TestPublishSignedOfflineTrustPolicyAuthorityTransitionSidecarsExactAtomicNoOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	_, previousSPKI, nextSPKI, envelopeRaw := makeOfflineTrustPolicyAuthorityTransitionPublication(t)
 	output := filepath.Join(t.TempDir(), "published")
 	if err := PublishSignedOfflineTrustPolicyAuthorityTransitionSidecars(output, nextSPKI, envelopeRaw, previousSPKI); err != nil {

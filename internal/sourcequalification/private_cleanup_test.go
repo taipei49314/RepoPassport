@@ -43,6 +43,7 @@ func TestSourceQualificationPublishersUseIdentityBoundCleanup(t *testing.T) {
 }
 
 func TestPrivateQualificationCleanupRejectsReplacementPath(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	path, cleanup, err := createPrivateQualificationWorkspace(parent, "private-cleanup")
 	if err != nil {
@@ -107,6 +108,7 @@ func TestPrivateQualificationCleanupBudgetRejectsEntryAndDepthOverflow(t *testin
 }
 
 func TestPrivateQualificationCleanupTraversalStopsAtDepthCap(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	path, cleanup, err := createPrivateQualificationWorkspace(parent, "deep-cleanup")
 	if err != nil {

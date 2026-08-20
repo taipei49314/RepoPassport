@@ -596,6 +596,7 @@ func toolAssemblyCopyPrivateFile(t *testing.T, source, destination string) {
 
 func toolAssemblyMkdirPrivate(t *testing.T, path string) {
 	t.Helper()
+	requireHostFilesystem(t)
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatalf("create private tool assembly directory: %v", err)
 	}

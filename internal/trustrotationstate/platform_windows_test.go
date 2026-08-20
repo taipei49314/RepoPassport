@@ -30,6 +30,7 @@ func TestWindowsObserveRejectsReparseDataRootWithoutWritingTarget(t *testing.T) 
 }
 
 func TestWindowsCreatedStateObjectsArePrivateAndNotReparsePoints(t *testing.T) {
+	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	if _, err := Observe(context.Background(), root, testObservation(1, 1)); err != nil {
 		t.Fatal(err)

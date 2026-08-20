@@ -34,6 +34,7 @@ func TestStableFileRejectsPostReadAlternateDataStreamRace(t *testing.T) {
 }
 
 func TestPublishedSidecarsRetainPrivateWindowsDACL(t *testing.T) {
+	requireHostFilesystem(t)
 	root := artifactFixture(t)
 	index := mustIndex(t, root, 1)
 	private, spki := keyPair(t)

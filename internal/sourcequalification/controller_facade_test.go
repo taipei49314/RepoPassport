@@ -364,6 +364,7 @@ type controllerFacadeToolFixture struct {
 
 func newControllerFacadeToolFixture(t *testing.T) *controllerFacadeToolFixture {
 	t.Helper()
+	requireHostFilesystem(t)
 	if runtime.Version() != toolManifestGoVersion {
 		t.Fatalf("controller facade fixtures require %s, running %s", toolManifestGoVersion, runtime.Version())
 	}

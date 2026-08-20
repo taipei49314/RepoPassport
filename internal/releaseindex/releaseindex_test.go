@@ -327,6 +327,7 @@ func TestReleaseFloorIsEnforcedOnlyAfterPolicyAuthorization(t *testing.T) {
 }
 
 func TestPublishSignedSidecarsIsExactAtomicAndNoOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	root := artifactFixture(t)
 	index := mustIndex(t, root, 1)
 	private, spki := keyPair(t)

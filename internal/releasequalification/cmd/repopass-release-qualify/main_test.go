@@ -10,9 +10,12 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/taipei49314/RepoPassport/internal/testsupport"
 )
 
 func TestRunEmitsExactFailureCodesAndExecutionOrderWithoutPrivatePaths(t *testing.T) {
+	testsupport.RequireHostFilesystem(t)
 	root := t.TempDir()
 	for _, name := range []string{
 		"repopass-linux-amd64",
@@ -110,6 +113,7 @@ func TestRunPreservesStructuralNotRunAlongsideIdentityFailures(t *testing.T) {
 }
 
 func TestPublishQualifiedDirectoryAllowsOnlySameParentAtomicDistRename(t *testing.T) {
+	testsupport.RequireHostFilesystem(t)
 	parent := t.TempDir()
 	source := filepath.Join(parent, ".release-sealed-0123456789abcdef")
 	destination := filepath.Join(parent, "dist")
@@ -147,6 +151,7 @@ func TestWriteQualificationBeforePublicationFailureLeavesNoDist(t *testing.T) {
 }
 
 func TestWriteQualificationThenAtomicPublicationHasNoPostRenameWrite(t *testing.T) {
+	testsupport.RequireHostFilesystem(t)
 	parent := t.TempDir()
 	source := filepath.Join(parent, ".release-sealed-write-success")
 	destination := filepath.Join(parent, "dist")

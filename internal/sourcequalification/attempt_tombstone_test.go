@@ -368,6 +368,7 @@ func TestAttemptTombstoneContainsNoFreeTextOrPrivatePathChannel(t *testing.T) {
 }
 
 func TestPublishAttemptTombstoneCreatesPrivateExactSingleFileArtifact(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	output := filepath.Join(parent, "attempt-artifact")
 	document := attemptTombstoneFixture()

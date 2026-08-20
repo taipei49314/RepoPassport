@@ -166,6 +166,7 @@ func TestAuthorityTransitionRejectsAuthenticatedInvalidPayloadMatrix(t *testing.
 }
 
 func TestPublishAuthorityTransitionSidecarsIsExactAtomicAndNoOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	previousPrivate, previousSPKI := keyPair(t)
 	_, nextSPKI := keyPair(t)
 	envelopeRaw, _, err := SignAuthorityTransition(nextSPKI, 1, previousPrivate, DefaultAuthorityTransitionScope())

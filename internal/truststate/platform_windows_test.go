@@ -17,6 +17,7 @@ import (
 )
 
 func TestWindowsAtomicPrivateCreateBarrierAllowsPausedPeer(t *testing.T) {
+	requireHostFilesystem(t)
 	for _, stage := range []string{"data-root", "state-parent", "state-root", "lock"} {
 		t.Run(stage, func(t *testing.T) {
 			dataRoot := filepath.Join(t.TempDir(), "controller-data")
@@ -82,6 +83,7 @@ func TestWindowsAtomicPrivateCreateBarrierAllowsPausedPeer(t *testing.T) {
 }
 
 func TestWindowsAtomicCreateSecurityDescriptorIndependentInspection(t *testing.T) {
+	requireHostFilesystem(t)
 	directory := filepath.Join(t.TempDir(), "private-directory")
 	created, err := createPrivateDirectory(directory)
 	if err != nil || !created {
@@ -101,6 +103,7 @@ func TestWindowsAtomicCreateSecurityDescriptorIndependentInspection(t *testing.T
 }
 
 func TestUnsafeExistingWindowsObjectsRemainUnchanged(t *testing.T) {
+	requireHostFilesystem(t)
 	t.Run("directory", func(t *testing.T) {
 		dataRoot := filepath.Join(t.TempDir(), "controller-data")
 		if err := os.Mkdir(dataRoot, 0o700); err != nil {
@@ -233,6 +236,7 @@ func assertWindowsAtomicSecurityDescriptor(t *testing.T, path string) {
 }
 
 func TestWindowsLegacyProtectedOwnerRightsDACLCompatible(t *testing.T) {
+	requireHostFilesystem(t)
 	dataRoot := filepath.Join(t.TempDir(), "controller-data")
 	stateParent := filepath.Join(dataRoot, "trust-policy-state")
 	stateDirectory := filepath.Join(stateParent, "v1")

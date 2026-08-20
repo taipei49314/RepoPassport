@@ -33,6 +33,7 @@ func makeOfflineTrustPolicyAuthorityTransitionChainPublication(t *testing.T) (ro
 }
 
 func TestPublishSignedOfflineTrustPolicyAuthorityTransitionChainSidecarsExactAtomicNoOverwrite(t *testing.T) {
+	requireHostFilesystem(t)
 	rootSPKI, terminalSPKI, chainRaw := makeOfflineTrustPolicyAuthorityTransitionChainPublication(t)
 	output := filepath.Join(t.TempDir(), "published")
 	if err := PublishSignedOfflineTrustPolicyAuthorityTransitionChainSidecars(output, terminalSPKI, chainRaw, rootSPKI); err != nil {
