@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"unsafe"
 
 	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
@@ -24,6 +25,15 @@ func writePrivateFileForTest(path string, content []byte, _ os.FileMode) error {
 }
 
 func createPrivateFileWithDACLForTest(path string, content []byte, sddl string) error {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		return fmt.Errorf("resolve current user SID: %w", err)
+	}
+	if !strings.HasPrefix(sddl, "D:") {
+		return fmt.Errorf("test DACL is not canonical")
+	}
+	sddl = "O:" + user.User.Sid.String() + sddl
+
 	appContainerPrincipal, err := windowssecurity.CurrentAppContainerPrincipal()
 	if err != nil {
 		return fmt.Errorf("resolve test AppContainer SID: %w", err)

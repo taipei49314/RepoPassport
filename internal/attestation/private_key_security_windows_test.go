@@ -50,6 +50,36 @@ func TestWindowsPrivateKeyRejectsHardlinksAndPermissiveDACL(t *testing.T) {
 	}
 }
 
+func TestWindowsPrivateKeyFixtureBindsExplicitCurrentOwner(t *testing.T) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		t.Fatalf("resolve current user SID: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "private.pem")
+	if err := createPrivateFileWithDACLForTest(path, []byte("private fixture\n"), fmt.Sprintf(
+		"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;%s)",
+		user.User.Sid.String(),
+	)); err != nil {
+		t.Fatalf("create private fixture: %v", err)
+	}
+	descriptor, err := windows.GetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil || descriptor == nil || !descriptor.IsValid() {
+		t.Fatalf("read private fixture security descriptor: %v", err)
+	}
+	owner, defaulted, err := descriptor.Owner()
+	if err != nil || owner == nil || defaulted || !owner.Equals(user.User.Sid) {
+		t.Fatalf("private fixture owner is not explicit TokenUser: defaulted=%v err=%v", defaulted, err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatalf("private fixture DACL is not protected: control=%#x err=%v", control, err)
+	}
+}
+
 func TestWindowsCanonicalBoundaryAndFinalPathRejectDirectoryAliasWhenAvailable(t *testing.T) {
 	base := unlinkedTempDir(t)
 	realData := filepath.Join(base, "real-data")

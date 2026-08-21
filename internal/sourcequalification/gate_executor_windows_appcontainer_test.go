@@ -253,13 +253,13 @@ func TestWindowsAppContainerBootstrapRestoresTempAndKeepsContainment(t *testing.
 	if got, err := os.ReadFile(moduleSentinel); err != nil || string(got) != "module\n" {
 		t.Fatalf("module cache sentinel changed: bytes=%q err=%v", got, err)
 	}
-	if got := windowsPathDACLState(t, dir); got != repositoryDACL {
+	if got := windowsPathDACLState(t, dir); !sameWindowsTestDACLState(got, repositoryDACL) {
 		t.Fatal("repository DACL/control was not restored exactly")
 	}
-	if got := windowsPathDACLState(t, gomodcache); got != moduleCacheDACL {
+	if got := windowsPathDACLState(t, gomodcache); !sameWindowsTestDACLState(got, moduleCacheDACL) {
 		t.Fatal("module cache DACL/control was not restored exactly")
 	}
-	if got := windowsPathDACLState(t, moduleSentinel); got != moduleSentinelDACL {
+	if got := windowsPathDACLState(t, moduleSentinel); !sameWindowsTestDACLState(got, moduleSentinelDACL) {
 		t.Fatal("module cache entry DACL/control was not restored exactly")
 	}
 	entries, err := os.ReadDir(privateRoot)
@@ -804,7 +804,7 @@ func TestWindowsAppContainerGrantRejectsJunctionBeforeMutation(t *testing.T) {
 	if after := windowsPathDACLString(t, target); after != before {
 		t.Fatalf("junction target DACL changed: got %q, want %q", after, before)
 	}
-	if after := windowsPathDACLState(t, parent); after != parentBefore {
+	if after := windowsPathDACLState(t, parent); !sameWindowsTestDACLState(after, parentBefore) {
 		t.Fatal("junction rejection changed its parent DACL")
 	}
 }
@@ -856,13 +856,13 @@ func TestWindowsAppContainerDACLJournalRestoresTreeByHandleIdentity(t *testing.T
 	if err := os.Rename(originalFile, renamedFile); err != nil {
 		t.Fatalf("rename after journal release: %v", err)
 	}
-	if got := windowsPathDACLState(t, root); got != baselines[root] {
+	if got := windowsPathDACLState(t, root); !sameWindowsTestDACLState(got, baselines[root]) {
 		t.Fatal("root DACL/control was not restored exactly")
 	}
-	if got := windowsPathDACLState(t, directory); got != baselines[directory] {
+	if got := windowsPathDACLState(t, directory); !sameWindowsTestDACLState(got, baselines[directory]) {
 		t.Fatal("directory DACL/control was not restored exactly")
 	}
-	if got := windowsPathDACLState(t, renamedFile); got != baselines[originalFile] {
+	if got := windowsPathDACLState(t, renamedFile); !sameWindowsTestDACLState(got, baselines[originalFile]) {
 		t.Fatal("renamed file DACL/control was not restored through its retained identity")
 	}
 	for _, path := range []string{root, directory, renamedFile, newChild} {
@@ -1157,7 +1157,7 @@ func TestWindowsAppContainerRepeatedGrantDoesNotDuplicateACE(t *testing.T) {
 		t.Fatalf("release repeated grant session: %v", err)
 	}
 	released = true
-	if got := windowsPathDACLState(t, root); got != baseline {
+	if got := windowsPathDACLState(t, root); !sameWindowsTestDACLState(got, baseline) {
 		t.Fatal("repeated grant release did not restore the exact baseline DACL/control")
 	}
 	if profiles := windowsPathACEProfilesForSID(t, root, sid); len(profiles) != 0 {
@@ -1329,7 +1329,7 @@ func TestWindowsAppContainerWritableWorkspaceACLAndCleanup(t *testing.T) {
 	if err := session.restoreDACLs(); err != nil {
 		t.Fatalf("restore writable workspace: %v", err)
 	}
-	if got := windowsPathDACLState(t, workspace); got != workspaceBefore {
+	if got := windowsPathDACLState(t, workspace); !sameWindowsTestDACLState(got, workspaceBefore) {
 		t.Fatal("writable workspace DACL/control was not restored exactly")
 	}
 	if err := cleanup(); err != nil {
@@ -1339,7 +1339,7 @@ func TestWindowsAppContainerWritableWorkspaceACLAndCleanup(t *testing.T) {
 	if _, err := os.Lstat(workspace); !os.IsNotExist(err) {
 		t.Fatalf("writable workspace survived release: %v", err)
 	}
-	if got := windowsPathDACLState(t, parent); got != parentBefore {
+	if got := windowsPathDACLState(t, parent); !sameWindowsTestDACLState(got, parentBefore) {
 		t.Fatal("writable workspace changed its parent DACL/control")
 	}
 }
@@ -1428,7 +1428,7 @@ func TestWindowsAppContainerNullDeviceLeaseWaitIsBounded(t *testing.T) {
 type windowsTestDACLState struct {
 	control  windows.SECURITY_DESCRIPTOR_CONTROL
 	revision uint32
-	dacl     string
+	dacl     windowsACLSemanticIdentity
 }
 
 func windowsPathDACLState(t *testing.T, path string) windowsTestDACLState {
@@ -1447,14 +1447,76 @@ func windowsPathDACLState(t *testing.T, path string) windowsTestDACLState {
 	if err != nil || defaulted || dacl == nil {
 		t.Fatalf("read Windows path DACL: defaulted=%v err=%v", defaulted, err)
 	}
-	daclBytes, ok := windowsACLBytes(dacl)
+	daclIdentity, ok := windowsACLSemantic(dacl)
 	if !ok {
-		t.Fatal("copy Windows path DACL")
+		t.Fatal("read Windows path DACL semantics")
 	}
 	return windowsTestDACLState{
 		control:  control,
 		revision: revision,
-		dacl:     string(daclBytes),
+		dacl:     daclIdentity,
+	}
+}
+
+func sameWindowsTestDACLState(left, right windowsTestDACLState) bool {
+	return left.control == right.control && left.revision == right.revision &&
+		sameWindowsACLSemantic(left.dacl, right.dacl)
+}
+
+func TestWindowsTestDACLStateComparisonUsesOrderedACESemantics(t *testing.T) {
+	baseline := windowsTestDACLState{
+		control:  windows.SE_DACL_PRESENT | windows.SE_DACL_PROTECTED,
+		revision: 1,
+		dacl: windowsACLSemanticIdentity{
+			revision: 2,
+			aces:     [][]byte{{0, 1, 2}, {3, 4, 5}},
+		},
+	}
+	equivalent := windowsTestDACLState{
+		control:  baseline.control,
+		revision: baseline.revision,
+		dacl: windowsACLSemanticIdentity{
+			revision: baseline.dacl.revision,
+			aces:     [][]byte{{0, 1, 2}, {3, 4, 5}},
+		},
+	}
+	if !sameWindowsTestDACLState(baseline, equivalent) {
+		t.Fatal("identical ordered ACE semantics were rejected")
+	}
+
+	changed := equivalent
+	changed.dacl = windowsACLSemanticIdentity{
+		revision: equivalent.dacl.revision,
+		aces:     [][]byte{{3, 4, 5}, {0, 1, 2}},
+	}
+	if sameWindowsTestDACLState(baseline, changed) {
+		t.Fatal("reordered ACE semantics were accepted")
+	}
+	changed = equivalent
+	changed.dacl = windowsACLSemanticIdentity{
+		revision: equivalent.dacl.revision + 1,
+		aces:     [][]byte{{0, 1, 2}, {3, 4, 5}},
+	}
+	if sameWindowsTestDACLState(baseline, changed) {
+		t.Fatal("changed ACL revision was accepted")
+	}
+	changed = equivalent
+	changed.dacl = windowsACLSemanticIdentity{
+		revision: equivalent.dacl.revision,
+		aces:     [][]byte{{0, 1, 9}, {3, 4, 5}},
+	}
+	if sameWindowsTestDACLState(baseline, changed) {
+		t.Fatal("changed ACE bytes were accepted")
+	}
+	changed = equivalent
+	changed.control ^= windows.SE_DACL_PROTECTED
+	if sameWindowsTestDACLState(baseline, changed) {
+		t.Fatal("changed security-descriptor control was accepted")
+	}
+	changed = equivalent
+	changed.revision++
+	if sameWindowsTestDACLState(baseline, changed) {
+		t.Fatal("changed security-descriptor revision was accepted")
 	}
 }
 
