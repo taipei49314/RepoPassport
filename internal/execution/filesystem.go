@@ -15,6 +15,7 @@ import (
 	"github.com/taipei49314/RepoPassport/internal/acquisition"
 	"github.com/taipei49314/RepoPassport/internal/controllerfs"
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 type preparedPaths struct {
@@ -252,7 +253,7 @@ func copyInventory(
 				"Inventory entry escaped its source or destination root.",
 			)
 		}
-		resolvedSource, err := filepath.EvalSymlinks(sourcePath)
+		resolvedSource, err := pathsecurity.Resolve(sourcePath)
 		if err != nil || !samePath(sourcePath, resolvedSource) ||
 			!pathWithin(sourceRoot, resolvedSource) {
 			return domain.WrapError(
@@ -455,7 +456,7 @@ func resolveExistingDirectory(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil {
 		return "", err
 	}

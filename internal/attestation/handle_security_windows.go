@@ -5,13 +5,27 @@ package attestation
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
+	"sync"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 )
+
+var (
+	privateKeyAppContainerPrincipal = func() (string, error) { return "", nil }
+	privateKeyTestAdapterOnce       sync.Once
+)
+
+func installPrivateKeyAppContainerTestAdapter(principal func() (string, error)) {
+	if principal == nil {
+		return
+	}
+	privateKeyTestAdapterOnce.Do(func() {
+		privateKeyAppContainerPrincipal = principal
+	})
+}
 
 func validatePrivateKeyHandle(file *os.File, expectedPath string) error {
 	handle := windows.Handle(file.Fd())
@@ -49,25 +63,7 @@ func validateStableInputHandle(file *os.File, expectedPath string) error {
 }
 
 func validateWindowsFinalHandlePath(handle windows.Handle, expectedPath string) error {
-	buffer := make([]uint16, windows.MAX_LONG_PATH)
-	length, err := windows.GetFinalPathNameByHandle(
-		handle,
-		&buffer[0],
-		uint32(len(buffer)),
-		0,
-	)
-	if err != nil || length == 0 || length >= uint32(len(buffer)) {
-		return fmt.Errorf("final handle path is unavailable")
-	}
-	finalPath := windows.UTF16ToString(buffer[:length])
-	if strings.HasPrefix(strings.ToUpper(finalPath), `\\?\UNC\`) {
-		return fmt.Errorf("UNC final handle path is unsupported")
-	}
-	if strings.HasPrefix(strings.ToUpper(finalPath), `\\?\`) {
-		finalPath = finalPath[len(`\\?\`):]
-	}
-	expectedAbsolute, err := filepath.Abs(expectedPath)
-	if err != nil || !strings.EqualFold(filepath.Clean(finalPath), filepath.Clean(expectedAbsolute)) {
+	if pathsecurity.ValidateFinalPath(handle, expectedPath) != nil {
 		return fmt.Errorf("final handle path does not match requested path")
 	}
 	return nil
@@ -104,6 +100,17 @@ func validateWindowsPrivateDACL(handle windows.Handle) error {
 	if err != nil {
 		return err
 	}
+	appContainerPrincipal, err := privateKeyAppContainerPrincipal()
+	if err != nil {
+		return fmt.Errorf("private key AppContainer identity is unavailable")
+	}
+	var appContainerSID *windows.SID
+	if appContainerPrincipal != "" {
+		appContainerSID, err = windows.StringToSid(appContainerPrincipal)
+		if err != nil || appContainerSID == nil || !appContainerSID.IsValid() {
+			return fmt.Errorf("private key AppContainer identity is invalid")
+		}
+	}
 	ownerAllowed := false
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -130,6 +137,12 @@ func validateWindowsPrivateDACL(handle windows.Handle) error {
 			continue
 		}
 		if sid.Equals(systemSID) || sid.Equals(administratorsSID) {
+			continue
+		}
+		if appContainerSID != nil && sid.Equals(appContainerSID) {
+			if ace.Mask&(windows.FILE_READ_DATA|windows.GENERIC_READ|windows.GENERIC_ALL) == 0 {
+				return fmt.Errorf("private key AppContainer ACE does not grant read access")
+			}
 			continue
 		}
 		return fmt.Errorf("private key DACL grants access to another identity")

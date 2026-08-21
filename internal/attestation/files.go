@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const MaxPrivateKeyBytes = 16 << 10
@@ -298,7 +300,7 @@ func readStableRegularFile(path string, maximum int) ([]byte, error) {
 		isReparsePoint(absolute) || before.Size() < 0 || before.Size() > int64(maximum) {
 		return nil, os.ErrInvalid
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !sameFilesystemPath(absolute, resolved) {
 		return nil, os.ErrInvalid
 	}
@@ -389,7 +391,7 @@ func readRegularFileValidated(
 		info.Size() < 0 || info.Size() > int64(maximum) {
 		return nil, os.ErrInvalid
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !sameFilesystemPath(absolute, resolved) {
 		return nil, os.ErrInvalid
 	}
@@ -433,7 +435,7 @@ func requireUnlinkedDirectory(path string) error {
 		isReparsePoint(absolute) {
 		return os.ErrInvalid
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !sameFilesystemPath(absolute, resolved) {
 		return os.ErrInvalid
 	}
@@ -460,7 +462,7 @@ func canonicalExistingDirectory(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil {
 		return "", err
 	}

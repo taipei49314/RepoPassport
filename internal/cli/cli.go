@@ -23,6 +23,7 @@ import (
 	"github.com/taipei49314/RepoPassport/internal/discovery"
 	"github.com/taipei49314/RepoPassport/internal/domain"
 	"github.com/taipei49314/RepoPassport/internal/manifest"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/planner"
 	"github.com/taipei49314/RepoPassport/internal/privacy"
 	"github.com/taipei49314/RepoPassport/internal/rendering"
@@ -453,7 +454,7 @@ func (a App) runVerify(ctx context.Context, global globalOptions, args []string)
 	if err := os.MkdirAll(absoluteDataRoot, 0o700); err != nil {
 		return a.fail("verify", global, err)
 	}
-	resolvedDataRoot, err := filepath.EvalSymlinks(absoluteDataRoot)
+	resolvedDataRoot, err := pathsecurity.Resolve(absoluteDataRoot)
 	if err != nil {
 		return a.fail("verify", global, err)
 	}

@@ -3,12 +3,77 @@
 package sourcequalification
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 )
+
+func TestWindowsGateExecutorRejectsReservedQualificationDescriptor(t *testing.T) {
+	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
+	request.Env = append(request.Env, pathsecurity.QualificationRootsEnvironment+"=caller-controlled")
+	result, err := newOSGateExecutor().Execute(context.Background(), request)
+	if !errors.Is(err, errGateProcessBlocked) || !result.Blocked || result.ExitCode != nil ||
+		result.CleanupFailed {
+		t.Fatalf("reserved descriptor result = %#v err=%v", result, err)
+	}
+}
+
+func TestWindowsGateExecutorRevalidatesEnvironmentAfterDescriptor(t *testing.T) {
+	application, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := t.TempDir()
+	privateRoot := t.TempDir()
+	environment := windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot)
+	for len(environment) < maximumGateEnvironment {
+		environment = append(environment, fmt.Sprintf("REPOPASS_PADDING_%03d=x", len(environment)))
+	}
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application:            application,
+		ContainmentApplication: application,
+		Args:                   []string{"-test.run=^TestOSGateExecutorHelperProcess$"},
+		Dir:                    repository,
+		Env:                    environment,
+		Network:                NetworkNone,
+		Timeout:                time.Second,
+		StdoutLimit:            1024,
+		StderrLimit:            1024,
+	})
+	if !errors.Is(err, errGateProcessBlocked) || !result.Blocked || result.ExitCode != nil ||
+		result.CleanupFailed {
+		t.Fatalf("descriptor-expanded environment result = %#v err=%v", result, err)
+	}
+}
+
+func TestWindowsGateEnvironmentBlockRejectsUTF16Overflow(t *testing.T) {
+	if block, ok := windowsGateEnvironmentBlock([]string{
+		"SYSTEMROOT=" + os.Getenv("SYSTEMROOT"),
+		"WINDOWS_OVERSIZE=" + strings.Repeat("x", 32767),
+	}); ok || block != nil {
+		t.Fatal("oversize UTF-16 environment block was accepted")
+	}
+}
+
+func TestWindowsAppContainerProfileDeletionError(t *testing.T) {
+	if err := windowsAppContainerProfileDeletionError(0, windows.ERROR_ACCESS_DENIED); err != nil {
+		t.Fatalf("successful profile deletion rejected: %v", err)
+	}
+	for _, callErr := range []error{nil, windows.ERROR_SUCCESS, windows.ERROR_INVALID_PARAMETER} {
+		err := windowsAppContainerProfileDeletionError(1, callErr)
+		if !errors.Is(err, errWindowsAppContainerProfileCleanup) {
+			t.Fatalf("failed profile deletion accepted for %v: %v", callErr, err)
+		}
+	}
+}
 
 func TestWaitWindowsGateProcessesAllowsRootAccountingToSettle(t *testing.T) {
 	observations := []uint32{1, 1, 0}

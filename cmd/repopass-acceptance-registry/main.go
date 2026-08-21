@@ -12,6 +12,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/acceptanceregistry"
 	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const notApplicable = "NOT_APPLICABLE"
@@ -197,7 +198,7 @@ func canonicalAcceptanceInputPath(path string) (string, error) {
 		return "", err
 	}
 	absolute = filepath.Clean(absolute)
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil {
 		return "", err
 	}
@@ -229,7 +230,7 @@ func publishNoReplace(path string, raw []byte) error {
 	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
 		return errors.New("output directory unavailable")
 	}
-	resolvedDirectory, err := filepath.EvalSymlinks(directory)
+	resolvedDirectory, err := pathsecurity.Resolve(directory)
 	if err != nil {
 		return errors.New("output directory unavailable")
 	}

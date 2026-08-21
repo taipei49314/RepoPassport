@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
@@ -208,7 +209,7 @@ func readSnapshotSchema(
 	); err != nil {
 		return nil, err
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(absoluteRoot)
+	resolvedRoot, err := pathsecurity.Resolve(absoluteRoot)
 	if err != nil {
 		return nil, schemaSourceError(
 			domain.CodeSourceNotFound,
@@ -216,7 +217,7 @@ func readSnapshotSchema(
 			portablePath,
 		)
 	}
-	resolvedCandidate, err := filepath.EvalSymlinks(candidate)
+	resolvedCandidate, err := pathsecurity.Resolve(candidate)
 	if err != nil {
 		return nil, schemaSourceError(
 			domain.CodeSourceNotFound,

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 func TestTrustedControllerRuntimePathAcceptsToolBehindWindowsJunction(t *testing.T) {
@@ -34,7 +36,7 @@ func TestTrustedControllerRuntimePathAcceptsToolBehindWindowsJunction(t *testing
 	if pathWithinRepository(repository, resolved) {
 		t.Fatal("junction target was classified as inside the repository")
 	}
-	if _, evalErr := filepath.EvalSymlinks(resolved); evalErr != nil {
+	if _, evalErr := pathsecurity.Resolve(resolved); evalErr != nil {
 		t.Fatalf("resolved path %q is still not EvalSymlinks-stable: %v", resolved, evalErr)
 	}
 	if !validGateApplication(repository, resolved, []string{filepath.Dir(resolved)}) {

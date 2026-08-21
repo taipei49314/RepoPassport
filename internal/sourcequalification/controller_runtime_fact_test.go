@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 func TestControllerRuntimeFactCollectsPinnedGoVersion(t *testing.T) {
@@ -188,7 +190,7 @@ func restrictUnixRuntimeToolWriteBits(path string) (string, error) {
 	if runtime.GOOS == "windows" {
 		return path, nil
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := pathsecurity.Resolve(path)
 	if err != nil {
 		return "", err
 	}

@@ -6,12 +6,22 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 // qualificationPathHasReparsePoint is fail-closed: an unreadable path is not
 // eligible for release qualification, and every Windows reparse point is
 // rejected rather than relying on tag-specific symlink interpretation.
 func qualificationPathHasReparsePoint(path string) bool {
+	if _, active := pathsecurity.QualificationTestDescriptor(); active {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return true
+		}
+		resolved, err := pathsecurity.Resolve(filepath.Clean(absolute))
+		return err != nil || !strings.EqualFold(filepath.Clean(absolute), filepath.Clean(resolved))
+	}
 	return qualificationPathHasReparsePointWith(path, func(component string) (uint32, error) {
 		name, err := syscall.UTF16PtrFromString(component)
 		if err != nil {

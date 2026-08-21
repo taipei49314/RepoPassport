@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
 	"golang.org/x/sys/windows"
 )
 
@@ -19,10 +21,30 @@ const (
 )
 
 var (
-	kernel32           = syscall.NewLazyDLL("kernel32.dll")
-	moveFileExProc     = kernel32.NewProc("MoveFileExW")
-	afterPrivateCreate = func(string) {}
+	kernel32                         = syscall.NewLazyDLL("kernel32.dll")
+	moveFileExProc                   = kernel32.NewProc("MoveFileExW")
+	afterPrivateCreate               = func(string) {}
+	privateDACLAppContainerPrincipal = func() (string, error) { return "", nil }
+	privateAppContainerFinalPath     func(windows.Handle, string) error
+	installPrivateTestAdapterOnce    sync.Once
 )
+
+func installPrivateAppContainerTestAdapter(
+	principal func() (string, error),
+	resolver func(string) (string, error),
+	boundary func(string) (string, error),
+	finalPath func(windows.Handle, string) error,
+) {
+	if principal == nil || resolver == nil || boundary == nil || finalPath == nil {
+		return
+	}
+	installPrivateTestAdapterOnce.Do(func() {
+		privateDACLAppContainerPrincipal = principal
+		privateStatePathResolver = resolver
+		privateStatePathBoundaryResolver = boundary
+		privateAppContainerFinalPath = finalPath
+	})
+}
 
 func safeNativePath(value string) bool {
 	if !safeNativeInput(value) {
@@ -170,7 +192,11 @@ func privateSecurityAttributes() (*windows.SecurityAttributes, *windows.SECURITY
 	if owner == "" {
 		return nil, nil, ErrUnavailable
 	}
-	descriptor, err := windows.SecurityDescriptorFromString(privateDACLSDDL(owner))
+	sddl, err := currentPrivateDACLSDDL(owner)
+	if err != nil {
+		return nil, nil, ErrUnavailable
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil || descriptor == nil {
 		return nil, nil, ErrUnavailable
 	}
@@ -178,14 +204,20 @@ func privateSecurityAttributes() (*windows.SecurityAttributes, *windows.SECURITY
 }
 
 func privateDACLSDDL(owner string) string {
-	entries := []string{"(A;;FA;;;" + owner + ")"}
-	if owner != "S-1-5-18" {
-		entries = append(entries, "(A;;FA;;;SY)")
+	sddl, _ := windowssecurity.PrivateDACLSDDL(owner, "")
+	return sddl
+}
+
+func currentPrivateDACLSDDL(owner string) (string, error) {
+	principal, err := privateDACLAppContainerPrincipal()
+	if err != nil {
+		return "", err
 	}
-	if owner != "S-1-5-32-544" {
-		entries = append(entries, "(A;;FA;;;BA)")
+	sddl, ok := windowssecurity.PrivateDACLSDDL(owner, principal)
+	if !ok {
+		return "", ErrUnavailable
 	}
-	return "O:" + owner + "D:P" + strings.Join(entries, "")
+	return sddl, nil
 }
 
 func validateDirectoryPlatform(path string, info os.FileInfo) error {
@@ -279,40 +311,16 @@ func validatePrivateDACL(handle windows.Handle) error {
 		}
 		principals = append(principals, sid.String())
 	}
-	if !validPrivateDACLPrincipals(owner.String(), principals) {
+	principal, principalErr := privateDACLAppContainerPrincipal()
+	valid := windowssecurity.ValidPrivateDACLPrincipals(owner.String(), principals, principal)
+	if principalErr != nil || !valid {
 		return ErrUnavailable
 	}
 	return nil
 }
 
 func validPrivateDACLPrincipals(owner string, principals []string) bool {
-	const system, administrators, ownerRights = "S-1-5-18", "S-1-5-32-544", "S-1-3-4"
-	if owner == "" || len(principals) == 0 {
-		return false
-	}
-	actual := make(map[string]struct{}, len(principals))
-	for _, principal := range principals {
-		if principal != owner && principal != system && principal != administrators && principal != ownerRights {
-			return false
-		}
-		if _, duplicate := actual[principal]; duplicate {
-			return false
-		}
-		actual[principal] = struct{}{}
-	}
-	if _, legacy := actual[ownerRights]; legacy {
-		return len(actual) == 3 && hasPrincipal(actual, ownerRights) && hasPrincipal(actual, system) && hasPrincipal(actual, administrators)
-	}
-	expected := map[string]struct{}{owner: {}, system: {}, administrators: {}}
-	if len(actual) != len(expected) {
-		return false
-	}
-	for principal := range expected {
-		if !hasPrincipal(actual, principal) {
-			return false
-		}
-	}
-	return true
+	return windowssecurity.ValidPrivateDACLPrincipals(owner, principals, "")
 }
 
 func hasPrincipal(principals map[string]struct{}, principal string) bool {
@@ -323,7 +331,14 @@ func hasPrincipal(principals map[string]struct{}, principal string) bool {
 func validateFinalHandlePath(handle windows.Handle, expectedPath string) error {
 	buffer := make([]uint16, windows.MAX_LONG_PATH)
 	length, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
-	if err != nil || length == 0 || length >= uint32(len(buffer)) {
+	if err != nil {
+		if err == windows.ERROR_ACCESS_DENIED && privateAppContainerFinalPath != nil &&
+			privateAppContainerFinalPath(handle, expectedPath) == nil {
+			return nil
+		}
+		return ErrUnavailable
+	}
+	if length == 0 || length >= uint32(len(buffer)) {
 		return ErrUnavailable
 	}
 	actual := windows.UTF16ToString(buffer[:length])

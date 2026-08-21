@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"unicode/utf16"
 	"unsafe"
 
@@ -21,10 +22,47 @@ const (
 	packageWindowsStreamInfoHeaderSize   = 24
 )
 
+var (
+	privatePackageAppContainerPrincipal = func() (string, error) { return "", nil }
+	privatePackageTestAdapterOnce       sync.Once
+)
+
+func installPrivatePackageAppContainerTestAdapter(principal func() (string, error)) {
+	if principal == nil {
+		return
+	}
+	privatePackageTestAdapterOnce.Do(func() {
+		privatePackageAppContainerPrincipal = principal
+	})
+}
+
+func currentPrivatePackageAppContainerSID() (*windows.SID, error) {
+	principal, err := privatePackageAppContainerPrincipal()
+	if err != nil {
+		return nil, errors.New("source qualification AppContainer identity is unavailable")
+	}
+	if principal == "" {
+		return nil, nil
+	}
+	sid, err := windows.StringToSid(principal)
+	if err != nil || sid == nil || !sid.IsValid() {
+		return nil, errors.New("source qualification AppContainer identity is invalid")
+	}
+	return sid, nil
+}
+
 func openPackageDirectory(path string) (*os.File, error) {
 	return openWindowsPackagePath(
 		path,
 		windows.GENERIC_READ,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+	)
+}
+
+func openPackageAncestorDirectory(path string) (*os.File, error) {
+	return openWindowsPackagePath(
+		path,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
 	)
 }
@@ -66,15 +104,23 @@ func validatePrivatePackagePermissions(file *os.File, _ os.FileInfo, directory b
 	if err != nil {
 		return errors.New("source qualification Windows SYSTEM identity is unavailable")
 	}
+	appContainerSID, err := currentPrivatePackageAppContainerSID()
+	if err != nil {
+		return err
+	}
 	dacl, daclDefaulted, err := descriptor.DACL()
-	if err != nil || daclDefaulted || dacl == nil || dacl.AceCount != 2 {
+	expectedCount := uint16(2)
+	if appContainerSID != nil {
+		expectedCount++
+	}
+	if err != nil || daclDefaulted || dacl == nil || dacl.AceCount != expectedCount {
 		return errors.New("source qualification Windows private DACL is not exact")
 	}
 	expectedFlags := uint8(0)
 	if directory {
 		expectedFlags = uint8(windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT)
 	}
-	seenOwner, seenSystem := false, false
+	seenOwner, seenSystem, seenAppContainer := false, false, false
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil ||
@@ -99,11 +145,16 @@ func validatePrivatePackagePermissions(file *os.File, _ os.FileInfo, directory b
 				return errors.New("source qualification Windows private SYSTEM ACE is duplicated")
 			}
 			seenSystem = true
+		case appContainerSID != nil && sid.Equals(appContainerSID):
+			if seenAppContainer {
+				return errors.New("source qualification Windows private AppContainer ACE is duplicated")
+			}
+			seenAppContainer = true
 		default:
 			return errors.New("source qualification Windows private DACL grants another identity")
 		}
 	}
-	if !seenOwner || !seenSystem {
+	if !seenOwner || !seenSystem || appContainerSID != nil && !seenAppContainer {
 		return errors.New("source qualification Windows private DACL is incomplete")
 	}
 	return nil
@@ -118,6 +169,10 @@ func securePrivatePackagePath(path string, directory bool) error {
 	if err != nil {
 		return errors.New("source qualification Windows SYSTEM identity is unavailable")
 	}
+	appContainerSID, err := currentPrivatePackageAppContainerSID()
+	if err != nil {
+		return err
+	}
 	inheritance := uint32(0)
 	if directory {
 		inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
@@ -125,6 +180,9 @@ func securePrivatePackagePath(path string, directory bool) error {
 	var pinner runtime.Pinner
 	pinner.Pin(current.User.Sid)
 	pinner.Pin(system)
+	if appContainerSID != nil {
+		pinner.Pin(appContainerSID)
+	}
 	defer pinner.Unpin()
 	entries := []windows.EXPLICIT_ACCESS{
 		{
@@ -148,15 +206,35 @@ func securePrivatePackagePath(path string, directory bool) error {
 			},
 		},
 	}
+	if appContainerSID != nil {
+		entries = append(entries, windows.EXPLICIT_ACCESS{
+			AccessPermissions: 0x1f01ff,
+			AccessMode:        windows.GRANT_ACCESS,
+			Inheritance:       inheritance,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(appContainerSID),
+			},
+		})
+	}
 	acl, err := windows.ACLFromEntries(entries, nil)
 	if err != nil {
 		return errors.New("source qualification Windows private DACL could not be created")
 	}
+	securityInformation := windows.SECURITY_INFORMATION(
+		windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION,
+	)
+	var owner *windows.SID
+	if appContainerSID == nil {
+		securityInformation |= windows.OWNER_SECURITY_INFORMATION
+		owner = current.User.Sid
+	}
 	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		current.User.Sid,
+		securityInformation,
+		owner,
 		nil,
 		acl,
 		nil,

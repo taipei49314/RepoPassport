@@ -397,13 +397,7 @@ func generatedPrivatePEM(t *testing.T) (ed25519.PrivateKey, []byte) {
 
 func writePrivateFile(t *testing.T, path string, content []byte, mode os.FileMode) {
 	t.Helper()
-	if err := os.WriteFile(path, content, mode); err != nil {
+	if err := writePrivateFileForTest(path, content, mode); err != nil {
 		t.Fatalf("write private file: %v", err)
-	}
-	if err := os.Chmod(path, mode); err != nil {
-		t.Fatalf("chmod private file: %v", err)
-	}
-	if mode&0o077 == 0 {
-		securePrivatePermissionsForTest(t, path)
 	}
 }

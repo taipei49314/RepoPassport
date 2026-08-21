@@ -278,7 +278,7 @@ func TestQualifyPrePublishRejectsChecksumChangedBetweenSnapshots(t *testing.T) {
 func TestPreparePrePublishSealsQualifiedBytesBeforePublication(t *testing.T) {
 	fixture := testQualificationFixture(t)
 	staged := stagePrePublish(t, fixture)
-	parent := t.TempDir()
+	parent := privateQualificationFixtureDir(t)
 	source := filepath.Join(parent, ".release-publish-fixture")
 	if err := os.Rename(staged, source); err != nil {
 		t.Fatal(err)

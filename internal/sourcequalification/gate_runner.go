@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const (
@@ -52,14 +54,15 @@ type gateRunEnvironment struct {
 // platform containment launcher may wrap that exact vector; the logical
 // public argv remains in the receipt record.
 type gateProcessRequest struct {
-	Application string
-	Args        []string
-	Dir         string
-	Env         []string
-	Network     NetworkMode
-	Timeout     time.Duration
-	StdoutLimit int64
-	StderrLimit int64
+	Application            string
+	ContainmentApplication string
+	Args                   []string
+	Dir                    string
+	Env                    []string
+	Network                NetworkMode
+	Timeout                time.Duration
+	StdoutLimit            int64
+	StderrLimit            int64
 }
 
 type gateProcessResult struct {
@@ -169,6 +172,9 @@ func runRequiredGates(
 			Timeout:     time.Duration(specification.TimeoutSeconds) * time.Second,
 			StdoutLimit: maximumGateOutputBytes,
 			StderrLimit: maximumGateOutputBytes,
+		}
+		if request.GOOS == "windows" && specification.Network == NetworkNone {
+			processRequest.ContainmentApplication = applications["repopass-source-qualify"]
 		}
 
 		result, executionErr := executor.Execute(ctx, processRequest)
@@ -332,7 +338,7 @@ func validGateDirectory(path string) bool {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := pathsecurity.Resolve(path)
 	return err == nil && filepath.IsAbs(resolved) && sameCanonicalPath(path, resolved)
 }
 
@@ -355,7 +361,7 @@ func validGateApplication(repositoryRoot, application string, toolDirectories []
 	if runtime.GOOS != "windows" && (info.Mode().Perm()&0o111 == 0 || info.Mode().Perm()&0o022 != 0) {
 		return false
 	}
-	resolved, err := filepath.EvalSymlinks(application)
+	resolved, err := pathsecurity.Resolve(application)
 	if err != nil || !filepath.IsAbs(resolved) || !sameCanonicalPath(application, resolved) ||
 		pathWithinRepository(repositoryRoot, resolved) {
 		return false

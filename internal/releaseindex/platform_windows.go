@@ -5,11 +5,10 @@ package releaseindex
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"runtime"
-	"strings"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 )
 
@@ -39,20 +38,7 @@ func validateOpenedPath(file *os.File, expectedPath string) error {
 	if information.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
 		return os.ErrInvalid
 	}
-	buffer := make([]uint16, windows.MAX_LONG_PATH)
-	length, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
-	if err != nil || length == 0 || length >= uint32(len(buffer)) {
-		return os.ErrInvalid
-	}
-	finalPath := windows.UTF16ToString(buffer[:length])
-	if strings.HasPrefix(strings.ToUpper(finalPath), `\\?\UNC\`) {
-		return os.ErrInvalid
-	}
-	if strings.HasPrefix(strings.ToUpper(finalPath), `\\?\`) {
-		finalPath = finalPath[len(`\\?\`):]
-	}
-	expectedAbsolute, err := filepath.Abs(expectedPath)
-	if err != nil || !strings.EqualFold(filepath.Clean(finalPath), filepath.Clean(expectedAbsolute)) {
+	if pathsecurity.ValidateFinalPath(handle, expectedPath) != nil {
 		return os.ErrInvalid
 	}
 	return nil
@@ -183,20 +169,7 @@ func validatePublicationACL(path string, requireProtected bool) error {
 func validatePublicationFile(path string) error { return validatePublicationACL(path, false) }
 
 func validateFinalWindowsHandlePath(handle windows.Handle, expectedPath string) error {
-	buffer := make([]uint16, windows.MAX_LONG_PATH)
-	length, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
-	if err != nil || length == 0 || length >= uint32(len(buffer)) {
-		return os.ErrInvalid
-	}
-	finalPath := windows.UTF16ToString(buffer[:length])
-	if strings.HasPrefix(strings.ToUpper(finalPath), `\\?\UNC\`) {
-		return os.ErrInvalid
-	}
-	if strings.HasPrefix(strings.ToUpper(finalPath), `\\?\`) {
-		finalPath = finalPath[len(`\\?\`):]
-	}
-	absolute, err := filepath.Abs(expectedPath)
-	if err != nil || !strings.EqualFold(filepath.Clean(finalPath), filepath.Clean(absolute)) {
+	if pathsecurity.ValidateFinalPath(handle, expectedPath) != nil {
 		return os.ErrInvalid
 	}
 	return nil

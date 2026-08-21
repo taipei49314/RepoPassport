@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const maximumPackageContainmentDepth = 1024
@@ -27,6 +29,12 @@ type packageIdentityPathPlan struct {
 // never follows a symlink or reparse point and returns an error when either
 // path, an existing ancestor, or an absence claim changes during inspection.
 func securePackagePathContains(parent, child string) (bool, error) {
+	if contains, handled, err := pathsecurity.QualificationPathContains(parent, child); handled {
+		if err != nil {
+			return false, errPackagePathContainment
+		}
+		return contains, nil
+	}
 	parentFirst, err := inspectPackageIdentityPath(parent)
 	if err != nil {
 		return false, errPackagePathContainment

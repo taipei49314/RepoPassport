@@ -434,7 +434,6 @@ func TestObserveCrossProcessEqualGeneration(t *testing.T) {
 }
 
 func TestObserveContextAndTimeoutBoundLockContention(t *testing.T) {
-	requireHostFilesystem(t)
 	root := filepath.Join(t.TempDir(), "controller-data")
 	assertOutcome(t, capture(ObservePolicy(context.Background(), root, testAuthorityA, "repopass", "alpha", 1, testDigestA)), Result{EvaluationInitialized, 1}, nil)
 	command := exec.Command(os.Args[0], "-test.run=^TestReleaseStateProcessHelper$")

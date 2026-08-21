@@ -12,6 +12,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/rendering"
 	"github.com/taipei49314/RepoPassport/internal/verification"
 )
@@ -69,7 +70,7 @@ func (s RunStore) Write(result domain.VerificationResult) (string, error) {
 			err,
 		)
 	}
-	resolvedDirectory, err := filepath.EvalSymlinks(directory)
+	resolvedDirectory, err := pathsecurity.Resolve(directory)
 	if err != nil || !sameFilesystemPath(directory, resolvedDirectory) {
 		return "", domain.WrapError(
 			domain.CodeEvidenceBuildFailed,
@@ -126,7 +127,7 @@ func (s RunStore) Read(id string) (domain.VerificationResult, error) {
 	if !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
 		return domain.VerificationResult{}, domain.NewError(domain.CodeEvidenceDigestMismatch, domain.SeverityCritical, "Verification run directory is not a regular directory.")
 	}
-	resolvedDirectory, err := filepath.EvalSymlinks(directory)
+	resolvedDirectory, err := pathsecurity.Resolve(directory)
 	if err != nil || !sameFilesystemPath(directory, resolvedDirectory) {
 		return domain.VerificationResult{}, domain.WrapError(domain.CodeEvidenceDigestMismatch, domain.SeverityCritical, "Verification run directory resolved through a link.", err)
 	}
@@ -175,7 +176,7 @@ func secureRoot(value string, create bool) (string, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return "", domain.NewError(domain.CodeEvidenceDigestMismatch, domain.SeverityCritical, "Authoritative run root is not a regular directory.")
 	}
-	resolved, err := filepath.EvalSymlinks(root)
+	resolved, err := pathsecurity.Resolve(root)
 	if err != nil || !sameFilesystemPath(root, resolved) {
 		return "", domain.WrapError(domain.CodeEvidenceDigestMismatch, domain.SeverityCritical, "Authoritative run root resolved through a link.", err)
 	}

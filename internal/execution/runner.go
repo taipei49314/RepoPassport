@@ -20,6 +20,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/controllerfs"
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/runtimepolicy"
 	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
@@ -2637,7 +2638,7 @@ func prepareInputs(inputs []domain.PlanInput, snapshotRoot string) ([]InputMount
 		}
 
 		sourcePath := filepath.Join(snapshotRoot, filepath.FromSlash(fixture))
-		resolved, err := filepath.EvalSymlinks(sourcePath)
+		resolved, err := pathsecurity.Resolve(sourcePath)
 		if err != nil || !pathWithin(snapshotRoot, resolved) || !samePath(sourcePath, resolved) {
 			return nil, domain.WrapError(
 				domain.CodeSourceSymlinkEscape,

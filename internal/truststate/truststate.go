@@ -42,9 +42,11 @@ const (
 )
 
 var (
-	ErrGenerationRollback     = errors.New("state-generation-rollback")
-	ErrGenerationEquivocation = errors.New("state-generation-equivocation")
-	ErrUnavailable            = errors.New("state-unavailable")
+	ErrGenerationRollback            = errors.New("state-generation-rollback")
+	ErrGenerationEquivocation        = errors.New("state-generation-equivocation")
+	ErrUnavailable                   = errors.New("state-unavailable")
+	privateStatePathResolver         = filepath.EvalSymlinks
+	privateStatePathBoundaryResolver = func(string) (string, error) { return "", nil }
 )
 
 // Result deliberately exposes only the current durable generation. It never
@@ -161,7 +163,7 @@ func stateRoot(ctx context.Context, dataRoot string) (string, error) {
 	if err := validatePrivateStateDirectory(root); err != nil {
 		return "", ErrUnavailable
 	}
-	resolved, err := filepath.EvalSymlinks(root)
+	resolved, err := privateStatePathResolver(root)
 	if err != nil || !samePath(root, resolved) {
 		return "", ErrUnavailable
 	}
@@ -169,6 +171,10 @@ func stateRoot(ctx context.Context, dataRoot string) (string, error) {
 }
 
 func repositoryLocal(dataRoot string) bool {
+	boundary, err := privateStatePathBoundaryResolver(dataRoot)
+	if err != nil {
+		return true
+	}
 	current := dataRoot
 	for {
 		for _, marker := range []string{"repo-passport.yml", ".git"} {
@@ -177,6 +183,9 @@ func repositoryLocal(dataRoot string) bool {
 			} else if !os.IsNotExist(err) {
 				return true
 			}
+		}
+		if boundary != "" && samePath(current, boundary) {
+			return false
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
@@ -193,6 +202,13 @@ func ensurePrivateDirectory(path string) (bool, error) {
 	}
 	volume := filepath.VolumeName(absolute)
 	base := volume + string(filepath.Separator)
+	boundary, err := privateStatePathBoundaryResolver(absolute)
+	if err != nil {
+		return false, ErrUnavailable
+	}
+	if boundary != "" {
+		base = boundary
+	}
 	relative, err := filepath.Rel(base, absolute)
 	if err != nil || filepath.IsAbs(relative) {
 		return false, ErrUnavailable

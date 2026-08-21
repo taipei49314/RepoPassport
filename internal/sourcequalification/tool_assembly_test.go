@@ -300,8 +300,8 @@ func newToolAssemblyFixture(t *testing.T) *toolAssemblyFixture {
 	if runtime.Version() != toolManifestGoVersion {
 		t.Fatalf("tool assembly fixtures require %s, running %s", toolManifestGoVersion, runtime.Version())
 	}
-	root := t.TempDir()
-	toolAssemblySecure(t, root, true)
+	root := filepath.Join(t.TempDir(), "tool-assembly")
+	toolAssemblyMkdirPrivate(t, root)
 	outputs := filepath.Join(root, "controller-outputs")
 	toolAssemblyMkdirPrivate(t, outputs)
 
@@ -375,8 +375,8 @@ func newToolAssemblyCase(
 	packageDir, linuxController, windowsController string,
 ) *toolAssemblyCase {
 	t.Helper()
-	root := t.TempDir()
-	toolAssemblySecure(t, root, true)
+	root := filepath.Join(t.TempDir(), "tool-assembly-case")
+	toolAssemblyMkdirPrivate(t, root)
 	input := &toolAssemblyCase{
 		root:              root,
 		packageDir:        filepath.Join(root, "package"),
@@ -515,6 +515,7 @@ func toolAssemblyCommit(t *testing.T, root, message string) string {
 
 func toolAssemblyBuildController(t *testing.T, root, output, goos string) {
 	t.Helper()
+	buildOutput := output + ".build"
 	goExecutable := filepath.Join(runtime.GOROOT(), "bin", "go")
 	if runtime.GOOS == "windows" {
 		goExecutable += ".exe"
@@ -525,7 +526,7 @@ func toolAssemblyBuildController(t *testing.T, root, output, goos string) {
 		"-buildvcs=true",
 		"-trimpath",
 		"-o",
-		output,
+		buildOutput,
 		"./internal/sourcequalification/cmd/repopass-source-qualify",
 	)
 	command.Dir = root
@@ -543,7 +544,9 @@ func toolAssemblyBuildController(t *testing.T, root, output, goos string) {
 	if outputBytes, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build %s controller fixture: %v: %s", goos, err, outputBytes)
 	}
-	toolAssemblySecure(t, output, false)
+	controller := toolAssemblyRead(t, buildOutput)
+	toolAssemblyRemove(t, buildOutput)
+	toolAssemblyWritePrivate(t, output, controller, false)
 }
 
 func toolAssemblyEnvironment(overrides map[string]string) []string {
@@ -596,11 +599,9 @@ func toolAssemblyCopyPrivateFile(t *testing.T, source, destination string) {
 
 func toolAssemblyMkdirPrivate(t *testing.T, path string) {
 	t.Helper()
-	requireHostFilesystem(t)
-	if err := os.Mkdir(path, 0o700); err != nil {
+	if err := toolAssemblyCreatePrivateDirectory(path); err != nil {
 		t.Fatalf("create private tool assembly directory: %v", err)
 	}
-	toolAssemblySecure(t, path, true)
 }
 
 func toolAssemblyWritePrivate(t *testing.T, path string, raw []byte, directory bool) {
@@ -608,14 +609,8 @@ func toolAssemblyWritePrivate(t *testing.T, path string, raw []byte, directory b
 	if directory {
 		t.Fatal("toolAssemblyWritePrivate only writes regular files")
 	}
-	toolAssemblyWrite(t, path, raw)
-	toolAssemblySecure(t, path, false)
-}
-
-func toolAssemblySecure(t *testing.T, path string, directory bool) {
-	t.Helper()
-	if err := securePrivatePackagePath(path, directory); err != nil {
-		t.Fatalf("secure tool assembly fixture: %v", err)
+	if err := toolAssemblyCreatePrivateFile(path, raw); err != nil {
+		t.Fatalf("write private tool assembly fixture %q: %v", filepath.Base(path), err)
 	}
 }
 

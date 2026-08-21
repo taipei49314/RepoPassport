@@ -3,6 +3,7 @@
 package releasequalification
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,4 +53,66 @@ func TestSealedSnapshotPathsConvergeToCurrentOwnerProtectedACL(t *testing.T) {
 			t.Fatal("sealed snapshot DACL is not the exact two-principal contract")
 		}
 	}
+}
+
+func TestQualificationSnapshotDACLRejectsWrongACEContracts(t *testing.T) {
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || current == nil || current.User.Sid == nil {
+		t.Fatal("current token SID is unavailable")
+	}
+	system, err := windows.StringToSid("S-1-5-18")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := current.User.Sid.String()
+	exact := snapshotTestDescriptor(t, fmt.Sprintf(
+		"O:%sD:P(A;;FA;;;%s)(A;;FA;;;SY)", owner, owner,
+	))
+	if !validQualificationSnapshotDACL(exact, current.User.Sid, system, nil, false) {
+		t.Fatal("exact snapshot file DACL was rejected")
+	}
+	for name, sddl := range map[string]string{
+		"wrong mask":      fmt.Sprintf("O:%sD:P(A;;FR;;;%s)(A;;FA;;;SY)", owner, owner),
+		"wrong flags":     fmt.Sprintf("O:%sD:P(A;OICI;FA;;;%s)(A;OICI;FA;;;SY)", owner, owner),
+		"extra principal": fmt.Sprintf("O:%sD:P(A;;FA;;;%s)(A;;FA;;;SY)(A;;FA;;;BA)", owner, owner),
+		"duplicate owner": fmt.Sprintf("O:%sD:P(A;;FA;;;%s)(A;;FA;;;%s)", owner, owner, owner),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if validQualificationSnapshotDACL(
+				snapshotTestDescriptor(t, sddl), current.User.Sid, system, nil, false,
+			) {
+				t.Fatalf("invalid snapshot DACL was accepted: %s", sddl)
+			}
+		})
+	}
+
+	appContainer, err := windows.StringToSid("S-1-15-2-111-222-333-444-555-666-777")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withAppContainer := snapshotTestDescriptor(t, fmt.Sprintf(
+		"O:%sD:P(A;;FA;;;%s)(A;;FA;;;SY)(A;;FA;;;%s)", owner, owner, appContainer.String(),
+	))
+	if !validQualificationSnapshotDACL(
+		withAppContainer, current.User.Sid, system, appContainer, false,
+	) {
+		t.Fatal("exact AppContainer snapshot DACL was rejected")
+	}
+	systemOwner := snapshotTestDescriptor(t, "O:SYD:P(A;;FA;;;SY)(A;;FA;;;SY)")
+	if !validQualificationSnapshotDACL(systemOwner, system, system, nil, false) {
+		t.Fatal("legacy SYSTEM-owner two-ACE snapshot DACL was rejected")
+	}
+	systemOwnerSingle := snapshotTestDescriptor(t, "O:SYD:P(A;;FA;;;SY)")
+	if validQualificationSnapshotDACL(systemOwnerSingle, system, system, nil, false) {
+		t.Fatal("SYSTEM-owner snapshot DACL accepted a changed one-ACE profile")
+	}
+}
+
+func snapshotTestDescriptor(t *testing.T, sddl string) *windows.SECURITY_DESCRIPTOR {
+	t.Helper()
+	descriptor, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil || descriptor == nil {
+		t.Fatalf("parse security descriptor: %v", err)
+	}
+	return descriptor
 }

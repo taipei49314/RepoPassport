@@ -4,14 +4,17 @@ package sourcequalification
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 	"time"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 )
 
@@ -48,16 +51,54 @@ type windowsJobBasicAccounting struct {
 	TotalTerminatedProcesses  uint32
 }
 
-func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gateProcessResult, error) {
+func executeOSGateProcess(
+	ctx context.Context,
+	request gateProcessRequest,
+) (result gateProcessResult, resultErr error) {
 	attributeSlots := uint32(1)
 	var appContainer *windowsAppContainerSession
+	inheritedDescriptor, inheritedQualification := pathsecurity.QualificationTestDescriptor()
+	if windowsEnvironmentContainsKey(request.Env, pathsecurity.QualificationRootsEnvironment) {
+		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
+	if request.Network != NetworkNone && inheritedQualification && windowsQualificationDescriptorTarget(request) {
+		request.Env = appendQualificationDescriptor(request.Env, inheritedDescriptor)
+	}
+	request.Env = windowsCompleteAppContainerEnvironment(request.Env)
+	if !validGateProcessRequest(request) {
+		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
 	if request.Network == NetworkNone {
-		session, err := windowsPrepareNetworkNoneAppContainer(request)
+		session, err := windowsPrepareNetworkNoneAppContainer(&request)
 		if err != nil || session == nil {
-			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+			return gateProcessResult{
+				Blocked:       true,
+				CleanupFailed: errors.Is(err, errWindowsAppContainerPrepareCleanup),
+			}, errGateProcessBlocked
 		}
 		appContainer = session
-		defer appContainer.release()
+		defer func() {
+			if cleanupErr := appContainer.release(); cleanupErr != nil {
+				result.CleanupFailed = true
+				result.ExitCode = nil
+				if resultErr == nil {
+					resultErr = errors.Join(errGateProcessBlocked, cleanupErr)
+				}
+			}
+		}()
+		if inheritedQualification && windowsQualificationDescriptorTarget(request) {
+			request.Env = appendQualificationDescriptor(request.Env, inheritedDescriptor)
+		} else if request.ContainmentApplication != "" {
+			descriptor, err := pathsecurity.BuildQualificationRootsDescriptor(request.Dir, request.Env)
+			if err != nil {
+				return gateProcessResult{Blocked: true}, errGateProcessBlocked
+			}
+			request.Env = appendQualificationDescriptor(request.Env, descriptor)
+		}
+		request.Env = windowsCompleteAppContainerEnvironment(request.Env)
+		if !validGateProcessRequest(request) {
+			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		}
 		attributeSlots = 2
 	}
 
@@ -139,11 +180,20 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
 
-	application, err := windows.UTF16PtrFromString(request.Application)
+	executionApplication := request.Application
+	executionArgv := append([]string{request.Application}, request.Args...)
+	if appContainer != nil && request.ContainmentApplication != "" {
+		executionApplication = request.ContainmentApplication
+		executionArgv = append(
+			[]string{windowsAppContainerBootstrapArgv0, request.Application},
+			request.Args...,
+		)
+	}
+	application, err := windows.UTF16PtrFromString(executionApplication)
 	if err != nil {
 		return gateProcessResult{}, errGateProcessInvalid
 	}
-	commandLine, err := windows.UTF16FromString(windows.ComposeCommandLine(append([]string{request.Application}, request.Args...)))
+	commandLine, err := windows.UTF16FromString(windows.ComposeCommandLine(executionArgv))
 	if err != nil {
 		return gateProcessResult{}, errGateProcessInvalid
 	}
@@ -151,7 +201,10 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	if err != nil {
 		return gateProcessResult{}, errGateProcessInvalid
 	}
-	environment := windowsGateEnvironmentBlock(request.Env)
+	environment, environmentOK := windowsGateEnvironmentBlock(request.Env)
+	if !environmentOK {
+		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
 	startup := windows.StartupInfoEx{
 		StartupInfo: windows.StartupInfo{
 			Cb:        uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
@@ -232,7 +285,7 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 		waitDone <- windowsGateWaitResult{err: waitErr, exitCode: exitCode}
 	}()
 
-	result := gateProcessResult{}
+	result = gateProcessResult{}
 	timeout := time.NewTimer(request.Timeout)
 	defer timeout.Stop()
 	var waitResult windowsGateWaitResult
@@ -315,6 +368,29 @@ func executeOSGateProcess(ctx context.Context, request gateProcessRequest) (gate
 	return result, nil
 }
 
+func appendQualificationDescriptor(environment []string, descriptor string) []string {
+	return append(
+		append([]string(nil), environment...),
+		pathsecurity.QualificationRootsEnvironment+"="+descriptor,
+	)
+}
+
+func windowsQualificationDescriptorTarget(request gateProcessRequest) bool {
+	if request.ContainmentApplication != "" {
+		return true
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return false
+	}
+	application, err := filepath.Abs(request.Application)
+	return err == nil && strings.EqualFold(filepath.Clean(executable), filepath.Clean(application))
+}
+
 func releaseWindowsGateHandle(
 	handle *windows.Handle,
 	closeHandle func(windows.Handle) error,
@@ -333,7 +409,7 @@ func releaseWindowsGateHandle(
 	return true
 }
 
-func windowsGateEnvironmentBlock(environment []string) []uint16 {
+func windowsGateEnvironmentBlock(environment []string) ([]uint16, bool) {
 	ordered := windowsCompleteAppContainerEnvironment(environment)
 	sort.Slice(ordered, func(left, right int) bool {
 		return strings.ToUpper(ordered[left]) < strings.ToUpper(ordered[right])
@@ -342,12 +418,15 @@ func windowsGateEnvironmentBlock(environment []string) []uint16 {
 	for _, item := range ordered {
 		encoded, err := windows.UTF16FromString(item)
 		if err != nil || len(encoded) == 0 {
-			continue
+			return nil, false
 		}
 		block = append(block, encoded...)
+		if len(block)+1 > 32767 {
+			return nil, false
+		}
 	}
 	block = append(block, 0)
-	return block
+	return block, true
 }
 
 func windowsCompleteAppContainerEnvironment(environment []string) []string {
@@ -409,6 +488,16 @@ func windowsEnvironmentLookup(environment []string, name string) string {
 		}
 	}
 	return ""
+}
+
+func windowsEnvironmentContainsKey(environment []string, name string) bool {
+	for _, item := range environment {
+		key, _, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
 }
 
 func drainWindowsGatePipe(reader *os.File, destination io.Writer) <-chan error {

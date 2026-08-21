@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
@@ -346,7 +347,7 @@ func rejectSymlinkPath(root, target string) error {
 			return errors.New("assertion path traverses a symbolic link or reparse point")
 		}
 	}
-	if resolved, evalErr := filepath.EvalSymlinks(target); evalErr == nil {
+	if resolved, evalErr := pathsecurity.Resolve(target); evalErr == nil {
 		if !samePath(resolved, target) || !pathWithin(root, resolved) {
 			return errors.New("assertion path resolves outside its runner-owned mount")
 		}

@@ -14,6 +14,10 @@ func openPackageDirectory(path string) (*os.File, error) {
 	return openLinuxPackagePath(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW)
 }
 
+func openPackageAncestorDirectory(path string) (*os.File, error) {
+	return openPackageDirectory(path)
+}
+
 func openPackageRegularFile(path string) (*os.File, error) {
 	return openLinuxPackagePath(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK)
 }

@@ -11,6 +11,10 @@ func openPackageDirectory(path string) (*os.File, error) {
 	return os.Open(path)
 }
 
+func openPackageAncestorDirectory(path string) (*os.File, error) {
+	return openPackageDirectory(path)
+}
+
 func openPackageRegularFile(path string) (*os.File, error) {
 	return os.Open(path)
 }
