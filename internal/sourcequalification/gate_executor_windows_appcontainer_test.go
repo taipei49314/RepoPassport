@@ -826,6 +826,11 @@ func TestWindowsAppContainerDACLJournalRestoresTreeByHandleIdentity(t *testing.T
 		directory:    windowsPathDACLState(t, directory),
 		originalFile: windowsPathDACLState(t, originalFile),
 	}
+	identities := map[string]windowsAppContainerObjectIdentity{
+		root:         windowsPathObjectIdentity(t, root),
+		directory:    windowsPathObjectIdentity(t, directory),
+		originalFile: windowsPathObjectIdentity(t, originalFile),
+	}
 	sid := testWindowsAppContainerSID(t)
 	session := newWindowsAppContainerTestSession(t, sid)
 	if err := session.grantPath(root, windows.GENERIC_READ|windows.GENERIC_EXECUTE, true); err != nil {
@@ -833,6 +838,14 @@ func TestWindowsAppContainerDACLJournalRestoresTreeByHandleIdentity(t *testing.T
 	}
 	if len(session.daclRestores) != len(baselines) {
 		t.Fatalf("journal entries = %d, want %d", len(session.daclRestores), len(baselines))
+	}
+	wantJournalOrder := []windowsAppContainerObjectIdentity{
+		identities[originalFile], identities[directory], identities[root],
+	}
+	for index, want := range wantJournalOrder {
+		if got := session.daclRestores[index].identity; got != want {
+			t.Fatalf("journal identity %d = %#v, want postorder %#v", index, got, want)
+		}
 	}
 	for path := range baselines {
 		if !strings.Contains(windowsPathDACLString(t, path), sid.String()) {
@@ -1456,6 +1469,20 @@ func windowsPathDACLState(t *testing.T, path string) windowsTestDACLState {
 		revision: revision,
 		dacl:     daclIdentity,
 	}
+}
+
+func windowsPathObjectIdentity(t *testing.T, path string) windowsAppContainerObjectIdentity {
+	t.Helper()
+	file, _, err := windowsOpenAppContainerGrantPath(path)
+	if err != nil {
+		t.Fatalf("open Windows path identity: %v", err)
+	}
+	identity, identityErr := windowsReadAppContainerObjectIdentity(windows.Handle(file.Fd()))
+	closeErr := file.Close()
+	if identityErr != nil || closeErr != nil {
+		t.Fatalf("read Windows path identity: identity=%v close=%v", identityErr, closeErr)
+	}
+	return identity
 }
 
 func sameWindowsTestDACLState(left, right windowsTestDACLState) bool {

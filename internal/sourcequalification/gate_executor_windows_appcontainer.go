@@ -1098,33 +1098,35 @@ func (session *windowsAppContainerSession) grantPathLimited(
 	if err != nil {
 		return err
 	}
-	if err := session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), 0); err != nil {
-		return err
-	}
 	if !propagate || information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
-		return nil
+		return session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), 0)
 	}
 
 	for {
 		entries, readErr := file.ReadDir(128)
 		if readErr != nil && readErr != io.EOF {
-			return readErr
+			return windowsAppContainerPreMutationFailure(readErr, file.Close())
 		}
 		for _, entry := range entries {
 			name := entry.Name()
 			if name == "" || name == "." || name == ".." {
-				return windows.ERROR_INVALID_NAME
+				return windowsAppContainerPreMutationFailure(windows.ERROR_INVALID_NAME, file.Close())
 			}
 			if err := session.grantPathLimited(
 				filepath.Join(path, name), access, true, depth+1, budget,
 			); err != nil {
-				return err
+				return windowsAppContainerPreMutationFailure(err, file.Close())
 			}
 		}
 		if readErr == io.EOF || len(entries) < 128 {
-			return nil
+			break
 		}
 	}
+	// SetSecurityInfo can re-propagate a directory's inheritable baseline ACEs
+	// even though the added package ACE is non-inheriting. Snapshot descendants
+	// first so reverse journal restoration runs parent before child and returns
+	// every object to its pre-session state.
+	return session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), 0)
 }
 
 func (session *windowsAppContainerSession) grantOpenHandle(
