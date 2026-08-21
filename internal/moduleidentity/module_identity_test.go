@@ -148,7 +148,7 @@ func testRootModule(t *testing.T, root string) {
 }
 
 func testLocalPackagePaths(t *testing.T, root string) {
-	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "PACKAGE_PATH_MISMATCH", "list", "-f", "{{.ImportPath}}", "./...")
+	out := runGo(t, root, map[string]string{"GOWORK": "off"}, "PACKAGE_PATH_MISMATCH", "list", "-buildvcs=false", "-f", "{{.ImportPath}}", "./...")
 	paths := commandLines(t, out)
 	if len(paths) == 0 {
 		t.Fatal("PACKAGE_PATH_MISMATCH: go list returned no repository packages")

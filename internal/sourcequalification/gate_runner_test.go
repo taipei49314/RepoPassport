@@ -14,6 +14,7 @@ package sourcequalification
 //	}
 //	type gateRunEnvironment struct {
 //		ToolPath string
+//		WindowsNetworkNoneToolPath string
 //		HomeDir string
 //		GoCacheDir string
 //		GoModCacheDir string
@@ -167,6 +168,82 @@ func TestGateProcessEnvironmentAddsCleanupOnlyToReleaseGate(t *testing.T) {
 		if markedGates != 1 {
 			t.Fatalf("lane %s release cleanup gate count = %d, want 1", lane, markedGates)
 		}
+	}
+}
+
+func TestGateEnvironmentUsesWindowsNetworkNoneToolPathOnlyForNetworkNone(t *testing.T) {
+	configuration := gateRunEnvironment{
+		ToolPath:                   `C:\host-tools`,
+		WindowsNetworkNoneToolPath: `C:\contained-tools`,
+	}
+	tests := []struct {
+		name    string
+		network NetworkMode
+		want    string
+	}{
+		{name: "network none", network: NetworkNone, want: configuration.WindowsNetworkNoneToolPath},
+		{name: "Go modules", network: NetworkGoModules, want: configuration.ToolPath},
+		{name: "vulnerability database", network: NetworkVulnerabilityDatabase, want: configuration.ToolPath},
+		{name: "Go modules and vulnerability database", network: NetworkGoModulesAndVulnerabilityDatabase, want: configuration.ToolPath},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := gateTestEnvironmentValue(t, gateEnvironment(configuration, test.network), "PATH"); got != test.want {
+				t.Fatalf("PATH = %q, want %q", got, test.want)
+			}
+		})
+	}
+
+	if got := gateTestEnvironmentValue(
+		t,
+		gateProcessEnvironment(configuration, releaseBuildGate),
+		"PATH",
+	); got != configuration.ToolPath {
+		t.Fatalf("release-build PATH = %q, want host path %q", got, configuration.ToolPath)
+	}
+	if got := gateTestEnvironmentValue(
+		t,
+		controllerRuntimeFactEnvironment(configuration),
+		"PATH",
+	); got != configuration.ToolPath {
+		t.Fatalf("controller-fact PATH = %q, want host path %q", got, configuration.ToolPath)
+	}
+}
+
+func TestRunRequiredGatesRejectsMissingOrIncompleteWindowsNetworkNoneToolPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolPath func(gateRunnerFixture) string
+	}{
+		{
+			name:     "missing",
+			toolPath: func(gateRunnerFixture) string { return "" },
+		},
+		{
+			name: "omits required NetworkNone applications",
+			toolPath: func(fixture gateRunnerFixture) string {
+				return filepath.Join(fixture.privateRoot, "host-tools")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newGateRunnerFixture(t, LaneWindowsAMD64)
+			fixture.request.Environment.WindowsNetworkNoneToolPath = test.toolPath(fixture)
+			executor := &gateTestExecutor{}
+			records, err := runRequiredGates(
+				context.Background(),
+				fixture.request,
+				executor,
+				&gateTestLogSink{},
+			)
+			if !errors.Is(err, errGateInvalidInput) || records != nil {
+				t.Fatalf("invalid Windows NetworkNone PATH = (records=%#v, err=%v), want invalid input", records, err)
+			}
+			if len(executor.boundApplications) != 0 || len(executor.requests) != 0 {
+				t.Fatal("invalid Windows NetworkNone PATH reached application binding or execution")
+			}
+		})
 	}
 }
 
@@ -456,11 +533,22 @@ func newGateRunnerFixture(t *testing.T, lane Lane) gateRunnerFixture {
 	repository := filepath.Join(root, "repository")
 	privateRoot := filepath.Join(root, "private")
 	tools := filepath.Join(privateRoot, "tools")
+	hostOnlyTools := filepath.Join(privateRoot, "host-tools")
+	windowsNetworkNoneTools := filepath.Join(privateRoot, "windows-network-none-tools")
 	home := filepath.Join(privateRoot, "home")
 	cache := filepath.Join(privateRoot, "cache")
 	moduleCache := filepath.Join(privateRoot, "modules")
 	temporary := filepath.Join(privateRoot, "temporary")
-	for _, directory := range []string{repository, tools, home, cache, moduleCache, temporary} {
+	for _, directory := range []string{
+		repository,
+		tools,
+		hostOnlyTools,
+		windowsNetworkNoneTools,
+		home,
+		cache,
+		moduleCache,
+		temporary,
+	} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatalf("create gate fixture directory: %v", err)
 		}
@@ -474,8 +562,13 @@ func newGateRunnerFixture(t *testing.T, lane Lane) gateRunnerFixture {
 		applications[name] = path
 	}
 	goos := "windows"
+	windowsNetworkNoneToolPath := strings.Join(
+		[]string{tools, windowsNetworkNoneTools},
+		string(os.PathListSeparator),
+	)
 	if lane == LaneLinuxAMD64 {
 		goos = "linux"
+		windowsNetworkNoneToolPath = ""
 	}
 	return gateRunnerFixture{
 		privateRoot: privateRoot,
@@ -487,14 +580,18 @@ func newGateRunnerFixture(t *testing.T, lane Lane) gateRunnerFixture {
 			GOARCH:         "amd64",
 			Applications:   applications,
 			Environment: gateRunEnvironment{
-				ToolPath:                 tools,
-				HomeDir:                  home,
-				GoCacheDir:               cache,
-				GoModCacheDir:            moduleCache,
-				TempDir:                  temporary,
-				GoProxy:                  "https://proxy.golang.org",
-				GoSumDB:                  "sum.golang.org",
-				VulnerabilityDatabaseURL: "https://vuln.go.dev",
+				ToolPath: strings.Join(
+					[]string{tools, hostOnlyTools},
+					string(os.PathListSeparator),
+				),
+				WindowsNetworkNoneToolPath: windowsNetworkNoneToolPath,
+				HomeDir:                    home,
+				GoCacheDir:                 cache,
+				GoModCacheDir:              moduleCache,
+				TempDir:                    temporary,
+				GoProxy:                    "https://proxy.golang.org",
+				GoSumDB:                    "sum.golang.org",
+				VulnerabilityDatabaseURL:   "https://vuln.go.dev",
 			},
 		},
 	}
@@ -676,8 +773,12 @@ func requireGateEnvironment(t *testing.T, environment []string, configuration ga
 		}
 		got[name] = value
 	}
+	wantToolPath := configuration.ToolPath
+	if specification.Network == NetworkNone && configuration.WindowsNetworkNoneToolPath != "" {
+		wantToolPath = configuration.WindowsNetworkNoneToolPath
+	}
 	want := map[string]string{
-		"PATH": configuration.ToolPath, "HOME": configuration.HomeDir, "USERPROFILE": configuration.HomeDir,
+		"PATH": wantToolPath, "HOME": configuration.HomeDir, "USERPROFILE": configuration.HomeDir,
 		"XDG_CONFIG_HOME": configuration.HomeDir, "TMPDIR": configuration.TempDir, "TMP": configuration.TempDir, "TEMP": configuration.TempDir,
 		"LANG": "C", "LC_ALL": "C", "TZ": "UTC",
 		"GOWORK": "off", "GOENV": "off", "GOTOOLCHAIN": "local", "GOFLAGS": "", "GOCACHEPROG": "", "GOTELEMETRY": "off",
@@ -712,6 +813,18 @@ func requireGateEnvironment(t *testing.T, environment []string, configuration ga
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("gate environment = %#v, want exact allowlist %#v", got, want)
 	}
+}
+
+func gateTestEnvironmentValue(t *testing.T, environment []string, wantName string) string {
+	t.Helper()
+	for _, item := range environment {
+		name, value, ok := strings.Cut(item, "=")
+		if ok && strings.EqualFold(name, wantName) {
+			return value
+		}
+	}
+	t.Fatalf("environment does not contain %s", wantName)
+	return ""
 }
 
 func gateTestInt64(value int64) *int64 { return &value }

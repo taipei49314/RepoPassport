@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
+	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -41,6 +42,10 @@ type windowsTrustedGitSnapshot struct {
 }
 
 func resolveTrustedGitExecutablePlatform(repositoryRoot string) (string, error) {
+	contained, err := windowssecurity.CurrentProcessIsAppContainer()
+	if err != nil || contained {
+		return "", errors.New("fixed machine Git application is unavailable in AppContainer")
+	}
 	for _, candidate := range windowsTrustedGitCandidates() {
 		resolved, err := validateWindowsTrustedGitCandidate(repositoryRoot, candidate)
 		if err == nil {

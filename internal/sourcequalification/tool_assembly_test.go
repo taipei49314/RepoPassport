@@ -297,6 +297,7 @@ func TestAssembleQualificationToolsContract(t *testing.T) {
 
 func newToolAssemblyFixture(t *testing.T) *toolAssemblyFixture {
 	t.Helper()
+	requireHostFilesystem(t)
 	if runtime.Version() != toolManifestGoVersion {
 		t.Fatalf("tool assembly fixtures require %s, running %s", toolManifestGoVersion, runtime.Version())
 	}

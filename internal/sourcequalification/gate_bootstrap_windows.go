@@ -3,6 +3,7 @@
 package sourcequalification
 
 import (
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -46,6 +47,9 @@ func RunWindowsAppContainerGateBootstrap(
 			return windowsAppContainerBootstrapError, true
 		}
 	}
+	if !windowsAppContainerBootstrapPATHExcludesGit() {
+		return windowsAppContainerBootstrapError, true
+	}
 
 	command := exec.Command(args[1], args[2:]...)
 	command.Stdin = stdin
@@ -58,6 +62,11 @@ func RunWindowsAppContainerGateBootstrap(
 		return windowsAppContainerBootstrapError, true
 	}
 	return 0, true
+}
+
+func windowsAppContainerBootstrapPATHExcludesGit() bool {
+	path, err := exec.LookPath("git")
+	return path == "" && errors.Is(err, exec.ErrNotFound)
 }
 
 func validWindowsAppContainerBootstrapApplication(path string) bool {

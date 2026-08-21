@@ -53,6 +53,7 @@ func TestControllerRuntimeFactCollectsPinnedGoVersion(t *testing.T) {
 }
 
 func TestControllerRuntimeFactCollectsGitVersion(t *testing.T) {
+	requireHostFilesystem(t)
 	repository := t.TempDir()
 	gitPath := requirePATHRuntimeTool(t, "git")
 	resolved, err := trustedControllerRuntimePath(repository, gitPath)
