@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
@@ -45,16 +46,16 @@ func ValidateSchemaJSON(root string) error {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("schema JSON root is unavailable")
 	}
-	resolved, err := filepath.EvalSymlinks(root)
+	resolved, err := pathsecurity.Resolve(root)
 	if err != nil {
-		// AppContainer cannot always eval ancestor junctions. The root itself
-		// is already a real directory.
-		resolved = root
-	} else {
-		resolved = filepath.Clean(resolved)
-		if !sameSchemaJSONPath(root, resolved) && !sameSchemaJSONRootIdentity(root, resolved) {
-			return errors.New("schema JSON root is redirected")
+		if _, qualification := pathsecurity.QualificationTestDescriptor(); qualification {
+			return errors.New("schema JSON root is unavailable")
 		}
+		resolved = root
+	}
+	resolved = filepath.Clean(resolved)
+	if !sameSchemaJSONPath(root, resolved) && !sameSchemaJSONRootIdentity(root, resolved) {
+		return errors.New("schema JSON root is redirected")
 	}
 
 	schemaCount := 0

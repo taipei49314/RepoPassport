@@ -136,6 +136,14 @@ func TestOSGateExecutorReportsMissingApplicationAsBlocked(t *testing.T) {
 	}
 }
 
+func TestGateProcessRequestRejectsContainmentOnNetworkedGate(t *testing.T) {
+	request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
+	request.ContainmentApplication = request.Application
+	if validGateProcessRequest(request) {
+		t.Fatal("networked gate accepted a containment application")
+	}
+}
+
 func gateExecutorRequest(t *testing.T, mode string, timeout time.Duration, stdoutLimit, stderrLimit int64) gateProcessRequest {
 	t.Helper()
 	executable, err := filepath.Abs(os.Args[0])

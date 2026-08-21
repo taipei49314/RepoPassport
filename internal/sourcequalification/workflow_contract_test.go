@@ -683,6 +683,10 @@ func requireWorkflowLaneJob(t *testing.T, lane string, job *yaml.Node) {
 				t.Errorf("windows produce-lane must hide and privately restore the step-output channel: missing %q", fragment)
 			}
 		}
+		if !strings.Contains(script, "Join-Path $env:RUNNER_TEMP 'rpq'") ||
+			strings.Contains(script, "Join-Path $env:GITHUB_WORKSPACE 'rpq'") {
+			t.Error("windows produce-lane must keep the short private root in RUNNER_TEMP and outside the checkout")
+		}
 	}
 
 	testedRevision := "${{ needs.context.outputs.tested-revision }}"

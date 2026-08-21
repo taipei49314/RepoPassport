@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 // ReadFile performs the frozen bounded no-link, same-handle double-read.
@@ -38,7 +40,7 @@ func readFileWithProfile(path string, afterFirstRead func(), exclusive bool) ([]
 		isReparsePoint(absolute) || before.Size() < 0 || before.Size() > MaxBytes {
 		return nil, invalid("file")
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !samePath(absolute, resolved) {
 		return nil, invalid("file")
 	}
@@ -79,7 +81,7 @@ func readFileWithProfile(path string, afterFirstRead func(), exclusive bool) ([]
 	defer clear(second)
 	finalHandle, handleErr := file.Stat()
 	finalPath, pathErr := os.Lstat(absolute)
-	finalResolved, resolveErr := filepath.EvalSymlinks(absolute)
+	finalResolved, resolveErr := pathsecurity.Resolve(absolute)
 	if handleErr != nil || pathErr != nil || resolveErr != nil ||
 		requireUnlinkedParents(filepath.Dir(absolute)) != nil || isReparsePoint(absolute) ||
 		!samePath(absolute, finalResolved) || !stableFileInfo(opened, finalHandle) ||
@@ -133,7 +135,7 @@ func requireUnlinkedParents(directory string) error {
 			}
 		}
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !samePath(absolute, resolved) {
 		return os.ErrInvalid
 	}

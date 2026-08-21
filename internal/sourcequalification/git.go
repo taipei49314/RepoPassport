@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const (
@@ -213,7 +215,7 @@ func newRepositoryInspectorWithScratch(
 	if err := validateNoLinkMetadata(requestedRoot, rootInfo); err != nil {
 		return nil, nil, err
 	}
-	resolvedRoot, err := filepath.EvalSymlinks(requestedRoot)
+	resolvedRoot, err := pathsecurity.Resolve(requestedRoot)
 	if err != nil {
 		return nil, nil, errors.New("repository root could not be resolved")
 	}
@@ -289,7 +291,7 @@ func canonicalIsolatedGitScratchParent(repositoryRoot, tempDir string) (string, 
 		return "", errors.New("isolated Git environment parent is invalid")
 	}
 	absolute = filepath.Clean(absolute)
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !filepath.IsAbs(resolved) {
 		return "", errors.New("isolated Git environment parent is invalid")
 	}

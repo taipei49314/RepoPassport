@@ -3,9 +3,11 @@
 package sourcequalification
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 )
 
@@ -29,6 +31,13 @@ func canonicalTrustedRuntimePathPlatform(path string) (string, error) {
 	defer windows.CloseHandle(handle)
 	buffer := make([]uint16, windows.MAX_LONG_PATH)
 	length, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) && pathsecurity.ValidateFinalPath(handle, path) == nil {
+		actual := filepath.Clean(path)
+		if err := validatePackagePlatformPath(actual); err != nil {
+			return "", errGateInvalidInput
+		}
+		return actual, nil
+	}
 	if err != nil || length == 0 || length >= uint32(len(buffer)) {
 		return "", errGateInvalidInput
 	}

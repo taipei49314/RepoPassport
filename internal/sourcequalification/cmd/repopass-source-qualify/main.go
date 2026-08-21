@@ -65,6 +65,14 @@ type controllerRecord struct {
 }
 
 func main() {
+	if exitCode, handled := sourcequalification.RunWindowsAppContainerGateBootstrap(
+		os.Args,
+		os.Stdin,
+		os.Stdout,
+		os.Stderr,
+	); handled {
+		os.Exit(exitCode)
+	}
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 

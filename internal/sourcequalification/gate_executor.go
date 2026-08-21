@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const (
@@ -51,7 +53,9 @@ func (osGateExecutor) Execute(ctx context.Context, request gateProcessRequest) (
 	if ctx.Err() != nil {
 		return gateProcessResult{Cancelled: true}, nil
 	}
-	if !availableGateApplication(request.Application) || !validGateProcessDirectory(request.Dir) {
+	if !availableGateApplication(request.Application) ||
+		(request.ContainmentApplication != "" && !availableGateApplication(request.ContainmentApplication)) ||
+		!validGateProcessDirectory(request.Dir) {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
 
@@ -87,6 +91,8 @@ func normalizeGateProcessEnvironment(environment []string) ([]string, bool) {
 
 func validGateProcessRequest(request gateProcessRequest) bool {
 	if !cleanAbsoluteGatePath(request.Application) || !cleanAbsoluteGatePath(request.Dir) ||
+		(request.ContainmentApplication != "" && !cleanAbsoluteGatePath(request.ContainmentApplication)) ||
+		(request.ContainmentApplication != "" && request.Network != NetworkNone) ||
 		!validGateProcessNetwork(request.Network) ||
 		request.Timeout <= 0 || request.Timeout > maximumGateProcessTimeout ||
 		request.StdoutLimit <= 0 || request.StdoutLimit > maximumGateOutputBytes ||
@@ -96,7 +102,7 @@ func validGateProcessRequest(request gateProcessRequest) bool {
 		return false
 	}
 
-	total := len(request.Application) + len(request.Dir)
+	total := len(request.Application) + len(request.ContainmentApplication) + len(request.Dir)
 	for _, argument := range request.Args {
 		if strings.IndexByte(argument, 0) >= 0 {
 			return false
@@ -131,7 +137,7 @@ func availableGateApplication(path string) bool {
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		return false
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := pathsecurity.Resolve(path)
 	return err == nil && filepath.IsAbs(resolved) && sameCanonicalPath(path, resolved)
 }
 
@@ -140,7 +146,7 @@ func validGateProcessDirectory(path string) bool {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := pathsecurity.Resolve(path)
 	return err == nil && filepath.IsAbs(resolved) && sameCanonicalPath(path, resolved)
 }
 

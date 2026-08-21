@@ -102,6 +102,13 @@ func TestRunRequiredGatesUsesExactArgvEnvironmentAndPrivateApplications(t *testi
 		if request.Application != fixture.request.Applications[specification.Argv[0]] {
 			t.Fatalf("gate %s application = %q, want trusted absolute application", specification.ID, request.Application)
 		}
+		wantContainment := ""
+		if fixture.request.GOOS == "windows" && specification.Network == NetworkNone {
+			wantContainment = fixture.request.Applications["repopass-source-qualify"]
+		}
+		if request.ContainmentApplication != wantContainment {
+			t.Fatalf("gate %s containment application = %q, want %q", specification.ID, request.ContainmentApplication, wantContainment)
+		}
 		if !reflect.DeepEqual(request.Args, wantArgv[1:]) {
 			t.Fatalf("gate %s args = %#v, want %#v", specification.ID, request.Args, wantArgv[1:])
 		}

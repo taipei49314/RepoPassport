@@ -214,6 +214,13 @@ func qualificationWorkspaceSecurityAttributes() (
 	if owner != "S-1-5-18" {
 		sddl += "(A;OICI;FA;;;SY)"
 	}
+	appContainerSID, err := currentPrivatePackageAppContainerSID()
+	if err != nil {
+		return nil, nil, errQualificationWorkspaceCreate
+	}
+	if appContainerSID != nil {
+		sddl += "(A;OICI;FA;;;" + appContainerSID.String() + ")"
+	}
 	descriptor, err := windows.SecurityDescriptorFromString(sddl)
 	if err != nil || descriptor == nil {
 		return nil, nil, errQualificationWorkspaceCreate
@@ -301,16 +308,24 @@ func validWindowsQualificationWorkspaceDACL(file *os.File) bool {
 	if err != nil || system == nil {
 		return false
 	}
+	appContainerSID, appContainerErr := currentPrivatePackageAppContainerSID()
+	if appContainerErr != nil {
+		return false
+	}
 	dacl, daclDefaulted, err := descriptor.DACL()
 	expectedCount := uint16(2)
 	if owner.Equals(system) {
 		expectedCount = 1
+	}
+	if appContainerSID != nil && !appContainerSID.Equals(owner) && !appContainerSID.Equals(system) {
+		expectedCount++
 	}
 	if err != nil || daclDefaulted || dacl == nil || dacl.AceCount != expectedCount {
 		return false
 	}
 	seenOwner := false
 	seenSystem := false
+	seenAppContainer := false
 	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
 		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil ||
@@ -338,13 +353,18 @@ func validWindowsQualificationWorkspaceDACL(file *os.File) bool {
 				return false
 			}
 			seenSystem = true
+		case appContainerSID != nil && sid.Equals(appContainerSID):
+			if seenAppContainer {
+				return false
+			}
+			seenAppContainer = true
 		default:
 			return false
 		}
 	}
 	runtime.KeepAlive(current)
 	runtime.KeepAlive(system)
-	return seenOwner && seenSystem
+	return seenOwner && seenSystem && (appContainerSID == nil || seenAppContainer)
 }
 
 func removeWindowsQualificationWorkspaceContents(
@@ -475,6 +495,9 @@ func removeWindowsQualificationWorkspaceEntry(
 	}
 	closeErr := file.Close()
 	if err != nil || closeErr != nil {
+		return errQualificationWorkspaceCleanup
+	}
+	if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
 		return errQualificationWorkspaceCleanup
 	}
 	return nil

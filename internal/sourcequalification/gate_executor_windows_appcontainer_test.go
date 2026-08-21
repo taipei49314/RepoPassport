@@ -4,18 +4,25 @@ package sourcequalification
 
 import (
 	"context"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
 	"golang.org/x/sys/windows"
 )
+
+const windowsAppContainerBootstrapHelperEnvironment = "REPOPASS_WINDOWS_APPCONTAINER_BOOTSTRAP_HELPER"
 
 func TestWindowsExecutableTreeIncludesGoRoot(t *testing.T) {
 	t.Parallel()
@@ -62,11 +69,14 @@ func TestWindowsNewAppContainerNameFormat(t *testing.T) {
 
 func TestWindowsGateEnvironmentBlockIncludesSystemRootAndTerminator(t *testing.T) {
 	t.Parallel()
-	block := windowsGateEnvironmentBlock([]string{
+	block, ok := windowsGateEnvironmentBlock([]string{
 		"PATH=C:\\go\\bin",
 		"SYSTEMROOT=C:\\Windows",
 		"GOFLAGS=",
 	})
+	if !ok {
+		t.Fatal("environment block was rejected")
+	}
 	decoded := windowsDecodeEnvironmentBlock(block)
 	if decoded["SystemRoot"] != `C:\Windows` || decoded["SystemDrive"] != "C:" ||
 		decoded["SYSTEMROOT"] != `C:\Windows` || decoded["GOFLAGS"] != "" {
@@ -138,23 +148,296 @@ func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
 	}
 }
 
+func TestWindowsAppContainerBootstrapRestoresTempAndKeepsContainment(t *testing.T) {
+	skipIfHostLoopbackUnavailable(t)
+	fixtureRoot := requireSchemaJSONAppContainerFixtureRoot(t)
+	dir := filepath.Join(fixtureRoot, "repo")
+	toolRoot := filepath.Join(fixtureRoot, "tools")
+	privateRoot, cleanupPrivateRoot, _, err := createPrivateQualificationStaging(
+		fixtureRoot, "private-",
+	)
+	if err != nil || cleanupPrivateRoot == nil {
+		t.Fatalf("create private AppContainer fixture root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := cleanupPrivateRoot(); err != nil {
+			t.Errorf("cleanup private AppContainer fixture root: %v", err)
+		}
+	})
+	directories, err := createControllerRuntimeDirectories(privateRoot)
+	if err != nil {
+		t.Fatalf("create private AppContainer runtime directories: %v", err)
+	}
+	home := directories["home"]
+	gocache := directories["go-cache"]
+	gomodcache := directories["go-mod-cache"]
+	tmpdir := directories["tmp"]
+	for _, path := range []string{dir, toolRoot, filepath.Join(home, "go"), filepath.Join(home, "bin")} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, path := range []string{filepath.Join(home, "go"), filepath.Join(home, "bin")} {
+		if err := securePrivatePackagePath(path, true); err != nil {
+			t.Fatalf("secure private AppContainer fixture %q: %v", filepath.Base(path), err)
+		}
+	}
+	sentinel := filepath.Join(privateRoot, "private-log-sentinel")
+	if err := os.WriteFile(sentinel, []byte("private\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moduleSentinel := filepath.Join(gomodcache, "module-sentinel.txt")
+	if err := os.WriteFile(moduleSentinel, []byte("module\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	privateRootDACL := windowsPathDACLString(t, privateRoot)
+	repositoryDACL := windowsPathDACLState(t, dir)
+	moduleCacheDACL := windowsPathDACLState(t, gomodcache)
+	moduleSentinelDACL := windowsPathDACLState(t, moduleSentinel)
+	containment := buildSourceQualifyApplicationAt(t, filepath.Join(toolRoot, "repopass-source-qualify.exe"))
+	helper := filepath.Join(dir, "sourcequalification-bootstrap-helper.test.exe")
+	copyWindowsAppContainerTestExecutable(t, helper)
+
+	environment := windowsNetworkNoneGoVersionEnvironment(t, containment, privateRoot)
+	for index, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		switch strings.ToUpper(name) {
+		case "HOME", "USERPROFILE":
+			environment[index] = name + "=" + home
+		case "GOCACHE":
+			environment[index] = name + "=" + gocache
+		case "GOMODCACHE":
+			environment[index] = name + "=" + gomodcache
+		case "GOPATH":
+			environment[index] = name + "=" + filepath.Join(home, "go")
+		case "GOBIN":
+			environment[index] = name + "=" + filepath.Join(home, "bin")
+		case "GOTMPDIR", "TMPDIR", "TMP", "TEMP":
+			environment[index] = name + "=" + tmpdir
+		}
+	}
+	environment = append(environment,
+		windowsAppContainerBootstrapHelperEnvironment+"=1",
+		"REPOPASS_WINDOWS_APPCONTAINER_PRIVATE_ROOT="+privateRoot,
+		"REPOPASS_WINDOWS_APPCONTAINER_MODULE_CACHE="+gomodcache,
+		"REPOPASS_WINDOWS_APPCONTAINER_MODULE_SENTINEL="+moduleSentinel,
+		"REPOPASS_WINDOWS_APPCONTAINER_PRIVATE_SENTINEL="+sentinel,
+	)
+	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application:            helper,
+		ContainmentApplication: containment,
+		Args:                   []string{"-test.run=^TestWindowsAppContainerBootstrapHelperProcess$"},
+		Dir:                    dir,
+		Env:                    environment,
+		Network:                NetworkNone,
+		Timeout:                30 * time.Second,
+		StdoutLimit:            4096,
+		StderrLimit:            4096,
+	})
+	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
+		result.TimedOut || result.Cancelled || result.CleanupFailed ||
+		string(result.Stdout) != "BOOTSTRAP_OK\n" || len(result.Stderr) != 0 {
+		exitCode := int64(-1)
+		if result.ExitCode != nil {
+			exitCode = *result.ExitCode
+		}
+		t.Fatalf("AppContainer bootstrap exit=%d result=%#v err=%v stdout=%q stderr=%q",
+			exitCode, result, err, result.Stdout, result.Stderr)
+	}
+	if got := windowsPathDACLString(t, privateRoot); got != privateRootDACL {
+		t.Fatalf("private root DACL was not restored: got %q, want %q", got, privateRootDACL)
+	}
+	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "private\n" {
+		t.Fatalf("private sibling changed: bytes=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(moduleSentinel); err != nil || string(got) != "module\n" {
+		t.Fatalf("module cache sentinel changed: bytes=%q err=%v", got, err)
+	}
+	if got := windowsPathDACLState(t, dir); got != repositoryDACL {
+		t.Fatal("repository DACL/control was not restored exactly")
+	}
+	if got := windowsPathDACLState(t, gomodcache); got != moduleCacheDACL {
+		t.Fatal("module cache DACL/control was not restored exactly")
+	}
+	if got := windowsPathDACLState(t, moduleSentinel); got != moduleSentinelDACL {
+		t.Fatal("module cache entry DACL/control was not restored exactly")
+	}
+	entries, err := os.ReadDir(privateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), windowsAppContainerWorkspacePrefix) {
+			t.Fatalf("writable AppContainer workspace remained after release: %q", entry.Name())
+		}
+	}
+}
+
+func TestWindowsAppContainerBootstrapHelperProcess(t *testing.T) {
+	if os.Getenv(windowsAppContainerBootstrapHelperEnvironment) != "1" {
+		return
+	}
+	privateRoot := os.Getenv("REPOPASS_WINDOWS_APPCONTAINER_PRIVATE_ROOT")
+	moduleCache := os.Getenv("REPOPASS_WINDOWS_APPCONTAINER_MODULE_CACHE")
+	moduleSentinel := os.Getenv("REPOPASS_WINDOWS_APPCONTAINER_MODULE_SENTINEL")
+	contained, err := windowssecurity.CurrentProcessIsAppContainer()
+	if err != nil || !contained {
+		os.Exit(91)
+	}
+	principal, err := windowssecurity.CurrentAppContainerPrincipal()
+	if err != nil || !strings.HasPrefix(principal, "S-1-15-2-") {
+		os.Exit(92)
+	}
+	workspace := os.Getenv("HOME")
+	if privateRoot == "" || moduleCache == "" || moduleSentinel == "" || workspace == "" ||
+		filepath.Dir(workspace) != privateRoot ||
+		!strings.HasPrefix(filepath.Base(workspace), windowsAppContainerWorkspacePrefix) ||
+		os.Getenv("GOMODCACHE") != moduleCache || filepath.Clean(os.TempDir()) != filepath.Clean(workspace) {
+		os.Exit(93)
+	}
+	for _, name := range windowsAppContainerWritableEnvironmentKeys {
+		if os.Getenv(name) != workspace {
+			os.Exit(101)
+		}
+	}
+	sentinel := os.Getenv("REPOPASS_WINDOWS_APPCONTAINER_PRIVATE_SENTINEL")
+	if sentinel == "" {
+		os.Exit(94)
+	}
+	if _, err := os.ReadFile(sentinel); err == nil {
+		os.Exit(95)
+	}
+	if err := os.WriteFile(sentinel, []byte("changed\n"), 0o600); err == nil {
+		os.Exit(96)
+	}
+	moduleBytes, err := os.ReadFile(moduleSentinel)
+	if err != nil || string(moduleBytes) != "module\n" {
+		os.Exit(97)
+	}
+	if err := os.WriteFile(filepath.Join(moduleCache, "new.txt"), []byte("changed\n"), 0o600); err == nil {
+		os.Exit(98)
+	}
+	if err := os.WriteFile(moduleSentinel, []byte("changed\n"), 0o600); err == nil {
+		os.Exit(99)
+	}
+	if err := os.Rename(moduleSentinel, filepath.Join(moduleCache, "renamed.txt")); err == nil {
+		os.Exit(100)
+	}
+	if err := os.Remove(moduleSentinel); err == nil {
+		os.Exit(102)
+	}
+	if err := os.WriteFile(filepath.Join(".", "appcontainer-write.txt"), []byte("changed\n"), 0o600); err == nil {
+		os.Exit(103)
+	}
+	if err := os.Remove(workspace); err == nil {
+		os.Exit(104)
+	}
+	workspacePointer, err := windows.UTF16PtrFromString(workspace)
+	if err != nil {
+		os.Exit(105)
+	}
+	if handle, openErr := windows.CreateFile(
+		workspacePointer,
+		windows.WRITE_DAC,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	); openErr == nil {
+		_ = windows.CloseHandle(handle)
+		os.Exit(106)
+	}
+	filePath := filepath.Join(workspace, "runtime.txt")
+	if err := os.WriteFile(filePath, []byte("one\n"), 0o600); err != nil {
+		os.Exit(107)
+	}
+	file, err := os.OpenFile(filePath, os.O_RDWR, 0)
+	if err != nil {
+		os.Exit(108)
+	}
+	if _, err := file.WriteAt([]byte("two"), 0); err != nil || file.Close() != nil {
+		os.Exit(109)
+	}
+	renamed := filepath.Join(workspace, "renamed.txt")
+	if err := os.Rename(filePath, renamed); err != nil {
+		os.Exit(110)
+	}
+	if got, err := os.ReadFile(renamed); err != nil || string(got) != "two\n" {
+		os.Exit(111)
+	}
+	nested := filepath.Join(workspace, "nested")
+	if err := os.Mkdir(nested, 0o700); err != nil ||
+		os.WriteFile(filepath.Join(nested, "value.txt"), []byte("nested\n"), 0o600) != nil {
+		os.Exit(112)
+	}
+	if !strings.Contains(windowsPathDACLString(t, renamed), principal) {
+		os.Exit(113)
+	}
+	if err := os.RemoveAll(nested); err != nil || os.Remove(renamed) != nil {
+		os.Exit(114)
+	}
+	_, _ = os.Stdout.WriteString("BOOTSTRAP_OK\n")
+	os.Exit(0)
+}
+
+func windowsPathDACLString(t *testing.T, path string) string {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(
+		path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil || descriptor == nil || !descriptor.IsValid() {
+		t.Fatalf("read Windows path DACL: %v", err)
+	}
+	value := descriptor.String()
+	if value == "" {
+		t.Fatal("Windows path DACL string is unavailable")
+	}
+	return value
+}
+
+func TestWindowsAppContainerBootstrapMarkerIsPrivate(t *testing.T) {
+	contained, err := windowssecurity.CurrentProcessIsAppContainer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitCode, handled := RunWindowsAppContainerGateBootstrap(
+		[]string{windowsAppContainerBootstrapArgv0},
+		strings.NewReader(""),
+		io.Discard,
+		io.Discard,
+	)
+	if contained {
+		if !handled || exitCode != windowsAppContainerBootstrapError {
+			t.Fatalf("contained malformed bootstrap = %d/%v", exitCode, handled)
+		}
+		return
+	}
+	if handled || exitCode != 0 {
+		t.Fatalf("host bootstrap marker bypassed public command handling: %d/%v", exitCode, handled)
+	}
+}
+
 func TestOSGateExecutorIsolatesSchemaJSONWithNetworkNone(t *testing.T) {
 	skipIfHostLoopbackUnavailable(t)
 	dir := requireSchemaJSONAppContainerFixtureRoot(t)
+	privateRoot := t.TempDir()
 	application := requireBuiltSourceQualifyApplication(t)
+	goApplication := requireTrustedWindowsGoApplication(t)
 	writeSchemaJSONFixture(t, dir, "schemas/example.schema.json", []byte(`{"type":"object"}`))
 	writeSchemaJSONFixture(t, dir, "testdata/fixtures/example/fixture.json", []byte(`{"status":"healthy"}`))
 
 	started := time.Now()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
-		Application: application,
-		Args:        []string{"validate-schema-json", "--root", "."},
-		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(requireTrustedWindowsGoApplication(t), dir),
-		Network:     NetworkNone,
-		Timeout:     30 * time.Second,
-		StdoutLimit: 4096,
-		StderrLimit: 4096,
+		Application:            application,
+		ContainmentApplication: application,
+		Args:                   []string{"validate-schema-json", "--root", "."},
+		Dir:                    dir,
+		Env:                    windowsNetworkNoneGoVersionEnvironment(t, goApplication, privateRoot),
+		Network:                NetworkNone,
+		Timeout:                30 * time.Second,
+		StdoutLimit:            4096,
+		StderrLimit:            4096,
 	})
 	if time.Since(started) > 20*time.Second {
 		t.Fatal("NetworkNone schema JSON AppContainer grant walked too long")
@@ -181,13 +464,14 @@ func TestOSGateExecutorIsolatesSchemaJSONThroughJunctionAncestor(t *testing.T) {
 		t.Skip("junction spelling is not a valid gate directory")
 	}
 	application := requireBuiltSourceQualifyApplication(t)
+	privateRoot := t.TempDir()
 
 	started := time.Now()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
 		Application: application,
 		Args:        []string{"validate-schema-json", "--root", "."},
 		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(requireTrustedWindowsGoApplication(t), dir),
+		Env:         windowsNetworkNoneGoVersionEnvironment(t, requireTrustedWindowsGoApplication(t), privateRoot),
 		Network:     NetworkNone,
 		Timeout:     30 * time.Second,
 		StdoutLimit: 4096,
@@ -213,19 +497,20 @@ func TestOSGateExecutorIsolatesGoVetWithNetworkNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	application := requireTrustedWindowsGoApplication(t)
+	privateRoot := t.TempDir()
 
 	started := time.Now()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
 		Application: application,
 		Args:        []string{"vet", "./..."},
 		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
+		Env:         windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot),
 		Network:     NetworkNone,
 		Timeout:     45 * time.Second,
 		StdoutLimit: 4096,
 		StderrLimit: 4096,
 	})
-	if time.Since(started) > 40*time.Second {
+	if time.Since(started) > 90*time.Second {
 		t.Fatal("NetworkNone go vet AppContainer grant walked too long")
 	}
 	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
@@ -245,19 +530,20 @@ func TestOSGateExecutorIsolatesGoTestWithNetworkNone(t *testing.T) {
 		t.Fatal(err)
 	}
 	application := requireTrustedWindowsGoApplication(t)
+	privateRoot := t.TempDir()
 
 	started := time.Now()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
 		Application: application,
 		Args:        []string{"test", "-count=1", "."},
 		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
+		Env:         windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot),
 		Network:     NetworkNone,
 		Timeout:     60 * time.Second,
 		StdoutLimit: 8192,
 		StderrLimit: 8192,
 	})
-	if time.Since(started) > 50*time.Second {
+	if time.Since(started) > 90*time.Second {
 		t.Fatal("NetworkNone go test AppContainer grant walked too long")
 	}
 	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
@@ -269,11 +555,13 @@ func TestOSGateExecutorIsolatesGoTestWithNetworkNone(t *testing.T) {
 
 func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 	skipIfHostLoopbackUnavailable(t)
-	dir := requireSchemaJSONAppContainerFixtureRoot(t)
-	modcache := filepath.Join(dir, "modcache")
-	gocache := filepath.Join(dir, "gocache")
-	gopath := filepath.Join(dir, "gopath")
-	for _, path := range []string{modcache, gocache, gopath} {
+	fixtureRoot := requireSchemaJSONAppContainerFixtureRoot(t)
+	dir := filepath.Join(fixtureRoot, "repo")
+	privateRoot := filepath.Join(fixtureRoot, "private")
+	modcache := filepath.Join(privateRoot, "go-mod-cache")
+	gocache := filepath.Join(privateRoot, "go-cache")
+	gopath := filepath.Join(privateRoot, "gopath")
+	for _, path := range []string{dir, modcache, gocache, gopath} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -289,8 +577,8 @@ func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 	download.Dir = dir
 	download.Env = []string{
 		"PATH=" + filepath.Dir(application),
-		"HOME=" + dir,
-		"USERPROFILE=" + dir,
+		"HOME=" + privateRoot,
+		"USERPROFILE=" + privateRoot,
 		"GOTOOLCHAIN=local",
 		"GOWORK=off",
 		"GOENV=off",
@@ -300,7 +588,7 @@ func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 		"GOMODCACHE=" + modcache,
 		"GOCACHE=" + gocache,
 		"GOPATH=" + gopath,
-		"GOTMPDIR=" + dir,
+		"GOTMPDIR=" + privateRoot,
 		"SYSTEMROOT=" + os.Getenv("SYSTEMROOT"),
 		"WINDIR=" + os.Getenv("WINDIR"),
 	}
@@ -308,7 +596,7 @@ func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 		t.Skipf("host module download unavailable: %v\n%s", err, output)
 	}
 
-	env := windowsNetworkNoneGoVersionEnvironment(application, dir)
+	env := windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot)
 	for index, item := range env {
 		name, _, _ := strings.Cut(item, "=")
 		switch strings.ToUpper(name) {
@@ -332,7 +620,7 @@ func TestOSGateExecutorIsolatesGoVetWithFilledModuleCache(t *testing.T) {
 		StdoutLimit: 8192,
 		StderrLimit: 8192,
 	})
-	if time.Since(started) > 50*time.Second {
+	if time.Since(started) > 90*time.Second {
 		t.Fatal("module-cache go vet AppContainer grant walked too long")
 	}
 	if result.Blocked || err != nil || result.ExitCode == nil || *result.ExitCode != 0 ||
@@ -355,13 +643,14 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 		}
 		t.Skip("module root is unavailable")
 	}
-	dir := requireSchemaJSONAppContainerFixtureRoot(t)
-	src := filepath.Join(dir, "module")
-	modcache := filepath.Join(dir, "modcache")
-	gocache := filepath.Join(dir, "gocache")
-	gopath := filepath.Join(dir, "gopath")
-	tmpdir := filepath.Join(dir, "tmp")
-	for _, path := range []string{src, modcache, gocache, gopath, tmpdir} {
+	fixtureRoot := requireSchemaJSONAppContainerFixtureRoot(t)
+	src := filepath.Join(fixtureRoot, "module")
+	privateRoot := filepath.Join(fixtureRoot, "private")
+	modcache := filepath.Join(privateRoot, "go-mod-cache")
+	gocache := filepath.Join(privateRoot, "go-cache")
+	gopath := filepath.Join(privateRoot, "gopath")
+	tmpdir := filepath.Join(privateRoot, "tmp")
+	for _, path := range []string{src, privateRoot, modcache, gocache, gopath, tmpdir} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -372,8 +661,8 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 	download.Dir = src
 	download.Env = []string{
 		"PATH=" + filepath.Dir(application),
-		"HOME=" + dir,
-		"USERPROFILE=" + dir,
+		"HOME=" + privateRoot,
+		"USERPROFILE=" + privateRoot,
 		"GOTOOLCHAIN=local",
 		"GOWORK=off",
 		"GOENV=off",
@@ -395,7 +684,7 @@ func TestOSGateExecutorIsolatesGoVetOfModuleRootWithFilledCache(t *testing.T) {
 		t.Skipf("host readonly module download unavailable: %v\n%s", err, output)
 	}
 
-	env := windowsNetworkNoneGoVersionEnvironment(application, dir)
+	env := windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot)
 	for index, item := range env {
 		name, _, _ := strings.Cut(item, "=")
 		switch strings.ToUpper(name) {
@@ -436,7 +725,7 @@ func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
 	application := `C:\hostedtoolcache\windows\go\1.26.6\x64\bin\go.exe`
 	dir := t.TempDir()
 	systemRoot := `C:\Windows`
-	required, writable, readable := windowsNetworkNoneAccessPaths(gateProcessRequest{
+	required, moduleCache, readable := windowsNetworkNoneAccessPaths(gateProcessRequest{
 		Application: application,
 		Dir:         dir,
 		Env: []string{
@@ -451,17 +740,738 @@ func TestWindowsNetworkNoneAccessPathsOmitSystemRoots(t *testing.T) {
 			"WINDIR=" + systemRoot,
 		},
 	})
-	for _, path := range concatWindowsPaths(required, writable, readable) {
+	for _, path := range concatWindowsPaths(required, moduleCache, readable) {
 		if windowsAppContainerTreeMutationForbidden(path) {
 			t.Fatalf("NetworkNone grant list included system path %q", path)
 		}
 	}
 }
 
+func TestWindowsNetworkNoneAccessPathsIncludeContainmentApplication(t *testing.T) {
+	dir := t.TempDir()
+	application := filepath.Join(dir, "go.exe")
+	containment := filepath.Join(dir, "repopass-source-qualify.exe")
+	for _, path := range []string{application, containment} {
+		if err := os.WriteFile(path, []byte("fixture"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	required, _, readable := windowsNetworkNoneAccessPaths(gateProcessRequest{
+		Application:            application,
+		ContainmentApplication: containment,
+		Dir:                    dir,
+	})
+	for _, want := range []string{application, containment} {
+		if !containsWindowsPath(required, want) || containsWindowsPath(readable, want) {
+			t.Fatalf("containment access paths required=%q readable=%q, want one required grant for %q", required, readable, want)
+		}
+	}
+}
+
+func newWindowsAppContainerTestSession(t *testing.T, sid *windows.SID) *windowsAppContainerSession {
+	t.Helper()
+	session := &windowsAppContainerSession{sid: sid}
+	principal, err := windowssecurity.CurrentAppContainerPrincipal()
+	if err != nil {
+		t.Fatalf("read current AppContainer principal: %v", err)
+	}
+	if principal == "" {
+		return session
+	}
+	session.baselinePackageSID, err = windows.StringToSid(principal)
+	if err != nil || !validWindowsAppContainerPackageSID(session.baselinePackageSID) {
+		t.Fatalf("parse current AppContainer principal %q: %v", principal, err)
+	}
+	return session
+}
+
+func TestWindowsAppContainerGrantRejectsJunctionBeforeMutation(t *testing.T) {
+	parent := t.TempDir()
+	target := t.TempDir()
+	junction := filepath.Join(parent, "redirect")
+	if !createSchemaJSONDirectoryRedirect(t, junction, target) {
+		t.Skip("directory junction fixture is unavailable")
+	}
+	parentBefore := windowsPathDACLState(t, parent)
+	before := windowsPathDACLString(t, target)
+	session := newWindowsAppContainerTestSession(t, testWindowsAppContainerSID(t))
+	if err := session.grantPath(parent, windows.GENERIC_ALL, true); err == nil {
+		t.Fatal("tree containing a junction was accepted")
+	}
+	if err := session.release(); err != nil {
+		t.Fatalf("restore rejected junction grant cleanup: %v", err)
+	}
+	if after := windowsPathDACLString(t, target); after != before {
+		t.Fatalf("junction target DACL changed: got %q, want %q", after, before)
+	}
+	if after := windowsPathDACLState(t, parent); after != parentBefore {
+		t.Fatal("junction rejection changed its parent DACL")
+	}
+}
+
+func TestWindowsAppContainerDACLJournalRestoresTreeByHandleIdentity(t *testing.T) {
+	requireHostFilesystem(t)
+	root := t.TempDir()
+	directory := filepath.Join(root, "existing")
+	originalFile := filepath.Join(directory, "source.txt")
+	renamedFile := filepath.Join(directory, "renamed.txt")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(originalFile, []byte("source\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	baselines := map[string]windowsTestDACLState{
+		root:         windowsPathDACLState(t, root),
+		directory:    windowsPathDACLState(t, directory),
+		originalFile: windowsPathDACLState(t, originalFile),
+	}
+	sid := testWindowsAppContainerSID(t)
+	session := newWindowsAppContainerTestSession(t, sid)
+	if err := session.grantPath(root, windows.GENERIC_READ|windows.GENERIC_EXECUTE, true); err != nil {
+		t.Fatalf("grant read-only tree: %v", err)
+	}
+	if len(session.daclRestores) != len(baselines) {
+		t.Fatalf("journal entries = %d, want %d", len(session.daclRestores), len(baselines))
+	}
+	for path := range baselines {
+		if !strings.Contains(windowsPathDACLString(t, path), sid.String()) {
+			t.Fatalf("journaled path %q omitted the package SID", path)
+		}
+	}
+
+	newChild := filepath.Join(root, "new-child.txt")
+	if err := os.WriteFile(newChild, []byte("new\n"), 0o600); err != nil {
+		t.Fatalf("create child while journal handles are retained: %v", err)
+	}
+	if strings.Contains(windowsPathDACLString(t, newChild), sid.String()) {
+		t.Fatal("NO_INHERITANCE grant leaked the package SID into a new child")
+	}
+	if err := os.Rename(originalFile, renamedFile); err == nil {
+		t.Fatal("rename succeeded while the journal retained a non-share-delete handle")
+	}
+	if err := session.release(); err != nil {
+		t.Fatalf("restore journal: %v", err)
+	}
+	if err := os.Rename(originalFile, renamedFile); err != nil {
+		t.Fatalf("rename after journal release: %v", err)
+	}
+	if got := windowsPathDACLState(t, root); got != baselines[root] {
+		t.Fatal("root DACL/control was not restored exactly")
+	}
+	if got := windowsPathDACLState(t, directory); got != baselines[directory] {
+		t.Fatal("directory DACL/control was not restored exactly")
+	}
+	if got := windowsPathDACLState(t, renamedFile); got != baselines[originalFile] {
+		t.Fatal("renamed file DACL/control was not restored through its retained identity")
+	}
+	for _, path := range []string{root, directory, renamedFile, newChild} {
+		if strings.Contains(windowsPathDACLString(t, path), sid.String()) {
+			t.Fatalf("release left package SID residue on %q", path)
+		}
+	}
+}
+
+func TestWindowsAppContainerDACLPackageBaselineRejectsOrphans(t *testing.T) {
+	foreign := testWindowsAppContainerSID(t)
+	other, err := windows.StringToSid(
+		"S-1-15-2-27011983-37021984-47031985-57041986-67051987-77061988-87071989",
+	)
+	if err != nil || other == nil || !other.IsValid() {
+		t.Fatalf("create second package SID fixture: %v", err)
+	}
+	allApplications, err := windows.StringToSid("S-1-15-2-1")
+	if err != nil || allApplications == nil || !allApplications.IsValid() {
+		t.Fatalf("create broad AppContainer SID fixture: %v", err)
+	}
+	allRestrictedApplications, err := windows.StringToSid("S-1-15-2-2")
+	if err != nil || allRestrictedApplications == nil || !allRestrictedApplications.IsValid() {
+		t.Fatalf("create restricted AppContainer SID fixture: %v", err)
+	}
+	unknownPackageNamespace, err := windows.StringToSid("S-1-15-2-99")
+	if err != nil || unknownPackageNamespace == nil || !unknownPackageNamespace.IsValid() {
+		t.Fatalf("create unknown AppContainer SID fixture: %v", err)
+	}
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || current == nil || current.User.Sid == nil {
+		t.Fatalf("read current user SID: %v", err)
+	}
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	for _, sid := range []*windows.SID{
+		foreign, other, allApplications, allRestrictedApplications, unknownPackageNamespace, current.User.Sid,
+	} {
+		pinner.Pin(sid)
+	}
+	build := func(packageSID *windows.SID) *windows.ACL {
+		t.Helper()
+		acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+			windowsAppContainerAccessEntry(
+				current.User.Sid, windows.GENERIC_ALL, uint32(windows.NO_INHERITANCE),
+			),
+			windowsAppContainerAccessEntry(
+				packageSID,
+				windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE,
+				uint32(windows.NO_INHERITANCE),
+			),
+		}, nil)
+		if err != nil || acl == nil {
+			t.Fatalf("create package baseline ACL: %v", err)
+		}
+		return acl
+	}
+	foreignACL := build(foreign)
+	if err := windowsValidateAppContainerDACLPackageBaseline(foreignACL, nil); !errors.Is(
+		err, errWindowsAppContainerDACLOrphan,
+	) {
+		t.Fatalf("host baseline accepted a package SID: %v", err)
+	}
+	if err := windowsValidateAppContainerDACLPackageBaseline(foreignACL, other); !errors.Is(
+		err, errWindowsAppContainerDACLOrphan,
+	) {
+		t.Fatalf("nested baseline accepted a foreign package SID: %v", err)
+	}
+	if err := windowsValidateAppContainerDACLPackageBaseline(foreignACL, foreign); err != nil {
+		t.Fatalf("nested baseline rejected its exact current token SID: %v", err)
+	}
+	if err := windowsValidateAppContainerDACLPackageBaseline(foreignACL, other, foreign); err != nil {
+		t.Fatalf("session baseline rejected its exact active package SID: %v", err)
+	}
+	if err := windowsValidateAppContainerDACLPackageBaseline(
+		build(unknownPackageNamespace), nil,
+	); !errors.Is(err, errWindowsAppContainerDACLOrphan) {
+		t.Fatalf("baseline accepted an unknown package-namespace SID: %v", err)
+	}
+	for _, wellKnown := range []*windows.SID{allApplications, allRestrictedApplications} {
+		if err := windowsValidateAppContainerDACLPackageBaseline(build(wellKnown), nil); err != nil {
+			t.Fatalf("baseline rejected well-known AppContainer read principal %s: %v", wellKnown, err)
+		}
+		for _, profile := range []struct {
+			mask  windows.ACCESS_MASK
+			flags uint32
+		}{
+			{windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE, uint32(windows.INHERITED_ACE)},
+			{
+				windows.GENERIC_READ | windows.GENERIC_EXECUTE,
+				uint32(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE | windows.INHERIT_ONLY_ACE),
+			},
+			{
+				windows.GENERIC_READ | windows.GENERIC_EXECUTE,
+				uint32(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE |
+					windows.INHERIT_ONLY_ACE | windows.INHERITED_ACE),
+			},
+		} {
+			readACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+				windowsAppContainerAccessEntry(wellKnown, profile.mask, profile.flags),
+			}, nil)
+			if err != nil {
+				t.Fatalf("create canonical broad read ACL: %v", err)
+			}
+			if err := windowsValidateAppContainerDACLPackageBaseline(readACL, nil); err != nil {
+				t.Fatalf("baseline rejected canonical broad read principal %s mask=%#x flags=%#x: %v",
+					wellKnown, profile.mask, profile.flags, err)
+			}
+		}
+		writeACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+			windowsAppContainerAccessEntry(
+				wellKnown,
+				windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE|windows.FILE_GENERIC_WRITE,
+				uint32(windows.NO_INHERITANCE),
+			),
+		}, nil)
+		if err != nil {
+			t.Fatalf("create broad write ACL: %v", err)
+		}
+		if err := windowsValidateAppContainerDACLPackageBaseline(writeACL, nil); !errors.Is(
+			err, errWindowsAppContainerDACLOrphan,
+		) {
+			t.Fatalf("baseline accepted broad AppContainer write principal %s: %v", wellKnown, err)
+		}
+		if err := windowsValidateAppContainerDACLPackageBaselineForTarget(
+			writeACL, windowsAppContainerDACLNullDevice, nil,
+		); err != nil {
+			t.Fatalf("null-device baseline rejected exact broad read/write principal %s: %v", wellKnown, err)
+		}
+		deny := windowsAppContainerAccessEntry(
+			wellKnown,
+			windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE,
+			uint32(windows.NO_INHERITANCE),
+		)
+		deny.AccessMode = windows.DENY_ACCESS
+		denyACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{deny}, nil)
+		if err != nil {
+			t.Fatalf("create broad deny ACL: %v", err)
+		}
+		if err := windowsValidateAppContainerDACLPackageBaseline(denyACL, nil); !errors.Is(
+			err, errWindowsAppContainerDACLOrphan,
+		) {
+			t.Fatalf("baseline accepted broad AppContainer deny principal %s: %v", wellKnown, err)
+		}
+	}
+	objectACL := build(allApplications)
+	var objectACE *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(objectACL, 1, &objectACE); err != nil || objectACE == nil {
+		t.Fatalf("read broad object ACE fixture: %v", err)
+	}
+	objectACE.Header.AceType = 5 // ACCESS_ALLOWED_OBJECT_ACE_TYPE
+	if err := windowsValidateAppContainerDACLPackageBaseline(objectACL, nil); !errors.Is(
+		err, errWindowsAppContainerDACLOrphan,
+	) {
+		t.Fatalf("baseline accepted a broad object ACE: %v", err)
+	}
+	invalidInheritanceACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		windowsAppContainerAccessEntry(
+			allApplications,
+			windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE,
+			uint32(windows.INHERIT_ONLY_ACE),
+		),
+	}, nil)
+	if err != nil {
+		t.Fatalf("create invalid broad inheritance ACL: %v", err)
+	}
+	if err := windowsValidateAppContainerDACLPackageBaseline(invalidInheritanceACL, nil); !errors.Is(
+		err, errWindowsAppContainerDACLOrphan,
+	) {
+		t.Fatalf("baseline accepted invalid broad inheritance flags: %v", err)
+	}
+	for name, invalid := range map[string]windows.EXPLICIT_ACCESS{
+		"read subset": windowsAppContainerAccessEntry(
+			allApplications, windows.FILE_READ_DATA, uint32(windows.NO_INHERITANCE),
+		),
+		"object-inherit only": windowsAppContainerAccessEntry(
+			allApplications,
+			windows.GENERIC_READ|windows.GENERIC_EXECUTE,
+			uint32(windows.OBJECT_INHERIT_ACE),
+		),
+	} {
+		acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{invalid}, nil)
+		if err != nil {
+			t.Fatalf("create invalid broad %s ACL: %v", name, err)
+		}
+		if err := windowsValidateAppContainerDACLPackageBaseline(acl, nil); !errors.Is(
+			err, errWindowsAppContainerDACLOrphan,
+		) {
+			t.Fatalf("baseline accepted invalid broad %s profile: %v", name, err)
+		}
+	}
+}
+
+func TestWindowsCanonicalAppContainerSIDParts(t *testing.T) {
+	t.Parallel()
+	valid := map[string][]uint32{
+		"S-1-15-2-1":                      {2, 1},
+		"S-1-15-3-4":                      {3, 4},
+		"S-1-15-2-1-2-3-4-5-6-4294967295": {2, 1, 2, 3, 4, 5, 6, 4294967295},
+	}
+	for value, want := range valid {
+		got, ok := windowsCanonicalAppContainerSIDParts(value)
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Errorf("parse %q = %v, %v; want %v, true", value, got, ok, want)
+		}
+	}
+	for _, value := range []string{
+		"", "S-1-15", "s-1-15-2-1", "S-2-15-2-1", "S-1-16-2-1",
+		"S-1-15-02-1", "S-1-15-2-01", "S-1-15-2-+1", "S-1-15-2--1",
+		"S-1-15-2-4294967296", "S-1-15-2-one", "S-1-15-2-1-",
+	} {
+		if got, ok := windowsCanonicalAppContainerSIDParts(value); ok || got != nil {
+			t.Errorf("parse %q = %v, %v; want nil, false", value, got, ok)
+		}
+	}
+}
+
+func FuzzWindowsCanonicalAppContainerSIDParts(f *testing.F) {
+	for _, value := range []string{
+		"S-1-15-2-1",
+		"S-1-15-2-1-2-3-4-5-6-7",
+		"S-1-15-2-4294967296",
+		"S-1-15-02-1",
+		"not-a-sid",
+	} {
+		f.Add(value)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		parts, ok := windowsCanonicalAppContainerSIDParts(value)
+		if !ok {
+			return
+		}
+		var rebuilt strings.Builder
+		rebuilt.WriteString("S-1-15")
+		for _, part := range parts {
+			rebuilt.WriteByte('-')
+			rebuilt.WriteString(strconv.FormatUint(uint64(part), 10))
+		}
+		if rebuilt.String() != value {
+			t.Fatalf("accepted noncanonical SID %q as %q", value, rebuilt.String())
+		}
+	})
+}
+
+func TestWindowsAppContainerOrphanGrantCannotBecomeSupplemental(t *testing.T) {
+	classified := windowsClassifyAppContainerGrantFailure(errWindowsAppContainerDACLOrphan, 7, 7)
+	if !errors.Is(classified, errWindowsAppContainerDACLOrphan) ||
+		errors.Is(classified, errWindowsAppContainerGrantNotApplied) {
+		t.Fatalf("orphan grant classification = %v, want hard failure", classified)
+	}
+}
+
+func TestWindowsAppContainerRepeatedGrantDoesNotDuplicateACE(t *testing.T) {
+	root, cleanup, _, err := createPrivateQualificationStaging(t.TempDir(), "repeat-")
+	if err != nil || cleanup == nil {
+		t.Fatalf("create repeated-grant fixture: path=%q cleanup=%v err=%v", root, cleanup != nil, err)
+	}
+	cleaned := false
+	t.Cleanup(func() {
+		if !cleaned {
+			_ = cleanup()
+		}
+	})
+	baseline := windowsPathDACLState(t, root)
+	sid := testWindowsAppContainerSID(t)
+	session := newWindowsAppContainerTestSession(t, sid)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			_ = session.release()
+		}
+	})
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := session.grantPath(root, windows.GENERIC_READ|windows.GENERIC_EXECUTE, false); err != nil {
+			t.Fatalf("grant attempt %d: %v", attempt, err)
+		}
+		profiles := windowsPathACEProfilesForSID(t, root, sid)
+		want := map[windowsTestACEProfile]int{
+			{
+				mask:  windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE,
+				flags: uint8(windows.NO_INHERITANCE),
+			}: 1,
+		}
+		if !reflect.DeepEqual(profiles, want) {
+			t.Fatalf("grant attempt %d package ACEs = %#v, want %#v", attempt, profiles, want)
+		}
+	}
+	if len(session.daclRestores) != 2 {
+		t.Fatalf("repeated grant journal entries = %d, want 2", len(session.daclRestores))
+	}
+	if err := session.release(); err != nil {
+		t.Fatalf("release repeated grant session: %v", err)
+	}
+	released = true
+	if got := windowsPathDACLState(t, root); got != baseline {
+		t.Fatal("repeated grant release did not restore the exact baseline DACL/control")
+	}
+	if profiles := windowsPathACEProfilesForSID(t, root, sid); len(profiles) != 0 {
+		t.Fatalf("repeated grant release left active package ACEs: %#v", profiles)
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup repeated-grant fixture: %v", err)
+	}
+	cleaned = true
+}
+
+func TestWindowsAppContainerRehomesWritableEnvironmentExactly(t *testing.T) {
+	application := requireTrustedWindowsGoApplication(t)
+	privateRoot := t.TempDir()
+	environment := windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot)
+	moduleCache := windowsEnvironmentLookup(environment, "GOMODCACHE")
+	withoutXDG := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, "XDG_CONFIG_HOME") {
+			continue
+		}
+		withoutXDG = append(withoutXDG, entry)
+	}
+	original := append([]string(nil), withoutXDG...)
+	workspace := filepath.Join(privateRoot, windowsAppContainerWorkspacePrefix+"fixture")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, ok := windowsRehomeAppContainerWritableEnvironment(withoutXDG, workspace)
+	if !ok || !reflect.DeepEqual(withoutXDG, original) {
+		t.Fatalf("writable environment rewrite = %v, input changed=%v", ok, !reflect.DeepEqual(withoutXDG, original))
+	}
+	counts := make(map[string]int, len(windowsAppContainerWritableEnvironmentKeys))
+	for _, entry := range rewritten {
+		name, value, found := strings.Cut(entry, "=")
+		if !found {
+			t.Fatalf("rewritten environment entry is malformed: %q", entry)
+		}
+		for _, writableName := range windowsAppContainerWritableEnvironmentKeys {
+			if strings.EqualFold(name, writableName) {
+				counts[writableName]++
+				if value != workspace {
+					t.Fatalf("%s = %q, want workspace %q", writableName, value, workspace)
+				}
+			}
+		}
+	}
+	for _, name := range windowsAppContainerWritableEnvironmentKeys {
+		if counts[name] != 1 {
+			t.Fatalf("writable environment %s count = %d, want 1", name, counts[name])
+		}
+	}
+	if got := windowsEnvironmentLookup(rewritten, "GOMODCACHE"); got != moduleCache {
+		t.Fatalf("GOMODCACHE = %q, want preserved %q", got, moduleCache)
+	}
+	if got := windowsQualificationPrivateRoot(rewritten); !strings.EqualFold(got, privateRoot) {
+		t.Fatalf("rewritten private root = %q, want %q", got, privateRoot)
+	}
+	duplicate := append(append([]string(nil), withoutXDG...), "HOME="+workspace)
+	if got, ok := windowsRehomeAppContainerWritableEnvironment(duplicate, workspace); ok || got != nil {
+		t.Fatal("duplicate writable environment key was accepted")
+	}
+	oversize := append(append([]string(nil), withoutXDG...), "OVERSIZE="+strings.Repeat("x", maximumGateProcessTextBytes))
+	if got, ok := windowsRehomeAppContainerWritableEnvironment(oversize, workspace); ok || got != nil {
+		t.Fatal("oversize writable environment was accepted")
+	}
+}
+
+func TestWindowsAppContainerWorkspaceLeavesLegacyGitPathHeadroom(t *testing.T) {
+	const legacySafePathUnits = 240
+	workspaceName := windowsAppContainerWorkspacePrefix + strings.Repeat("0", 32)
+	if len(workspaceName) != len(windowsAppContainerWorkspacePrefix)+32 {
+		t.Fatal("AppContainer workspace name does not retain the 128-bit hex nonce")
+	}
+	longestGitFixture := filepath.Join(
+		`D:\a\_temp`,
+		"rpq",
+		workspaceName,
+		"TestInspectRepositoryRejectsShallowAndInjectedGitStatereplace_o9999999999",
+		"001",
+		"repository",
+		".git",
+		"refs",
+		"replace",
+		strings.Repeat("f", 40)+".lock",
+	)
+	encoded, err := windows.UTF16FromString(longestGitFixture)
+	if err != nil {
+		t.Fatalf("encode longest Git fixture path: %v", err)
+	}
+	if units := len(encoded) - 1; units >= legacySafePathUnits {
+		t.Fatalf("longest Git fixture path uses %d UTF-16 units, want less than %d: %q",
+			units, legacySafePathUnits, longestGitFixture)
+	}
+}
+
+func TestWindowsQualificationPrivateRootStaysOutsideCleanRepository(t *testing.T) {
+	fixture := newGitRepositoryFixture(t)
+	privateRoot := filepath.Join(filepath.Dir(fixture.root), "rpq")
+	if windowsPathsOverlap(fixture.root, privateRoot) {
+		t.Fatalf("private root %q overlaps repository %q", privateRoot, fixture.root)
+	}
+	if err := os.Mkdir(privateRoot, 0o700); err != nil {
+		t.Fatalf("create disjoint private root: %v", err)
+	}
+	for _, phase := range []string{"present", "removed"} {
+		snapshot, err := InspectRepository(fixture.request())
+		if err != nil || snapshot.Subject.Dirty {
+			t.Fatalf("repository inspection while private root is %s: dirty=%v err=%v",
+				phase, snapshot.Subject.Dirty, err)
+		}
+		if phase == "present" {
+			if err := os.Remove(privateRoot); err != nil {
+				t.Fatalf("remove disjoint private root: %v", err)
+			}
+		}
+	}
+}
+
+func TestWindowsAppContainerWritableWorkspaceACLAndCleanup(t *testing.T) {
+	parent := t.TempDir()
+	parentBefore := windowsPathDACLState(t, parent)
+	workspace, cleanup, _, err := createPrivateQualificationStaging(parent, windowsAppContainerWorkspacePrefix)
+	if err != nil || cleanup == nil {
+		t.Fatalf("create writable workspace: path=%q cleanup=%v err=%v", workspace, cleanup != nil, err)
+	}
+	workspaceBefore := windowsPathDACLState(t, workspace)
+	sid := testWindowsAppContainerSID(t)
+	session := newWindowsAppContainerTestSession(t, sid)
+	session.writableWorkspacePath = workspace
+	session.cleanupWritableWorkspace = cleanup
+	if err := session.grantWritableWorkspaceRoot(workspace); err != nil {
+		t.Fatalf("grant writable workspace: %v", err)
+	}
+	profiles := windowsPathACEProfilesForSID(t, workspace, sid)
+	wantProfiles := map[windowsTestACEProfile]int{
+		{mask: windowsAppContainerWritableRootAccess, flags: uint8(windows.NO_INHERITANCE)}: 1,
+		{
+			mask:  windowsAppContainerWritableChildAccess,
+			flags: uint8(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE | windows.INHERIT_ONLY_ACE),
+		}: 1,
+	}
+	if !reflect.DeepEqual(profiles, wantProfiles) {
+		t.Fatalf("writable workspace package ACEs = %#v, want %#v", profiles, wantProfiles)
+	}
+	if windowsAppContainerWritableRootAccess&(windows.DELETE|windows.WRITE_DAC|windows.WRITE_OWNER) != 0 ||
+		windowsAppContainerWritableChildAccess&(windows.WRITE_DAC|windows.WRITE_OWNER) != 0 {
+		t.Fatal("writable workspace grants delete/DACL/owner authority outside the descendant contract")
+	}
+	directory := filepath.Join(workspace, "nested")
+	file := filepath.Join(directory, "value.txt")
+	if err := os.Mkdir(directory, 0o700); err != nil || os.WriteFile(file, []byte("value\n"), 0o600) != nil {
+		t.Fatal("create inherited writable workspace entries")
+	}
+	for _, path := range []string{directory, file} {
+		inherited := windowsPathACEProfilesForSID(t, path, sid)
+		found := false
+		for profile := range inherited {
+			if profile.mask == windowsAppContainerWritableChildAccess &&
+				profile.flags&uint8(windows.INHERITED_ACE) != 0 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("new workspace entry %q did not inherit the exact package access", path)
+		}
+	}
+	if err := session.restoreDACLs(); err != nil {
+		t.Fatalf("restore writable workspace: %v", err)
+	}
+	if got := windowsPathDACLState(t, workspace); got != workspaceBefore {
+		t.Fatal("writable workspace DACL/control was not restored exactly")
+	}
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup writable workspace: %v", err)
+	}
+	session.cleanupWritableWorkspace = nil
+	if _, err := os.Lstat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("writable workspace survived release: %v", err)
+	}
+	if got := windowsPathDACLState(t, parent); got != parentBefore {
+		t.Fatal("writable workspace changed its parent DACL/control")
+	}
+}
+
+type windowsTestACEProfile struct {
+	mask  windows.ACCESS_MASK
+	flags uint8
+}
+
+func windowsPathACEProfilesForSID(t *testing.T, path string, sid *windows.SID) map[windowsTestACEProfile]int {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(
+		path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil || descriptor == nil || !descriptor.IsValid() {
+		t.Fatalf("read Windows path DACL profiles: %v", err)
+	}
+	dacl, defaulted, err := descriptor.DACL()
+	if err != nil || defaulted || dacl == nil {
+		t.Fatalf("read Windows path DACL profiles: defaulted=%v err=%v", defaulted, err)
+	}
+	profiles := make(map[windowsTestACEProfile]int)
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil ||
+			ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			continue
+		}
+		principal := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if principal != nil && principal.IsValid() && principal.Equals(sid) {
+			profiles[windowsTestACEProfile{mask: ace.Mask, flags: ace.Header.AceFlags}]++
+		}
+	}
+	return profiles
+}
+
+func TestWindowsAppContainerNullDeviceLeaseRoundTrip(t *testing.T) {
+	lease, err := windowsAcquireAppContainerNullLease()
+	if err != nil {
+		t.Fatalf("acquire NUL DACL lease: %v", err)
+	}
+	if err := windowsReleaseAppContainerNullLease(lease, true); err != nil {
+		t.Fatalf("release NUL DACL lease: %v", err)
+	}
+}
+
+func TestWindowsAppContainerNullDeviceLeaseWaitIsBounded(t *testing.T) {
+	name := windowsAppContainerNullMutexName + ".test." + strconv.Itoa(os.Getpid()) + "." +
+		strconv.FormatInt(time.Now().UnixNano(), 10)
+	holderReady := make(chan struct{})
+	releaseHolder := make(chan struct{})
+	holderDone := make(chan error, 1)
+	go func() {
+		lease, err := windowsAcquireNamedAppContainerNullLease(name, time.Second)
+		if err != nil {
+			holderDone <- err
+			return
+		}
+		close(holderReady)
+		<-releaseHolder
+		holderDone <- windowsReleaseAppContainerNullLease(lease, true)
+	}()
+	select {
+	case <-holderReady:
+	case err := <-holderDone:
+		t.Fatalf("acquire holder lease: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("holder lease did not become ready")
+	}
+
+	started := time.Now()
+	lease, err := windowsAcquireNamedAppContainerNullLease(name, 25*time.Millisecond)
+	elapsed := time.Since(started)
+	close(releaseHolder)
+	if holderErr := <-holderDone; holderErr != nil {
+		t.Fatalf("release holder lease: %v", holderErr)
+	}
+	if lease != 0 || !errors.Is(err, errWindowsAppContainerNullLease) {
+		t.Fatalf("contended lease = %v, %v; want zero fail-closed lease", lease, err)
+	}
+	if elapsed < 20*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("bounded lease wait took %s", elapsed)
+	}
+}
+
+type windowsTestDACLState struct {
+	control  windows.SECURITY_DESCRIPTOR_CONTROL
+	revision uint32
+	dacl     string
+}
+
+func windowsPathDACLState(t *testing.T, path string) windowsTestDACLState {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(
+		path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil || descriptor == nil || !descriptor.IsValid() {
+		t.Fatalf("read Windows path DACL state: %v", err)
+	}
+	control, revision, err := descriptor.Control()
+	if err != nil {
+		t.Fatalf("read Windows path DACL control: %v", err)
+	}
+	dacl, defaulted, err := descriptor.DACL()
+	if err != nil || defaulted || dacl == nil {
+		t.Fatalf("read Windows path DACL: defaulted=%v err=%v", defaulted, err)
+	}
+	daclBytes, ok := windowsACLBytes(dacl)
+	if !ok {
+		t.Fatal("copy Windows path DACL")
+	}
+	return windowsTestDACLState{
+		control:  control,
+		revision: revision,
+		dacl:     string(daclBytes),
+	}
+}
+
+func testWindowsAppContainerSID(t *testing.T) *windows.SID {
+	t.Helper()
+	sid, err := windows.StringToSid("S-1-15-2-17011983-27021984-37031985-47041986-57051987-67061988-77071989")
+	if err != nil || sid == nil || !sid.IsValid() {
+		t.Fatalf("create package SID fixture: %v", err)
+	}
+	return sid
+}
+
 func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t *testing.T) {
 	skipIfHostLoopbackUnavailable(t)
 	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
+	privateRoot := t.TempDir()
 	locked := filepath.Join(dir, "locked-pack")
 	file, err := os.OpenFile(locked, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -473,16 +1483,17 @@ func TestWindowsPrepareNetworkNoneAppContainerIgnoresUnwritableSourceTreeReset(t
 	}
 
 	started := time.Now()
-	session, err := windowsPrepareNetworkNoneAppContainer(gateProcessRequest{
+	request := gateProcessRequest{
 		Application: application,
 		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
-	})
+		Env:         windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot),
+	}
+	session, err := windowsPrepareNetworkNoneAppContainer(&request)
 	if err != nil || session == nil {
 		t.Fatalf("prepare with a held source file: session=%v err=%v", session != nil, err)
 	}
 	defer session.release()
-	if time.Since(started) > 45*time.Second {
+	if time.Since(started) > 90*time.Second {
 		t.Fatal("source-tree AppContainer grant walked too long")
 	}
 }
@@ -491,11 +1502,12 @@ func TestOSGateExecutorIsolatesGoVersionWithNetworkNone(t *testing.T) {
 	skipIfHostLoopbackUnavailable(t)
 	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
+	privateRoot := t.TempDir()
 	result, err := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
 		Application: application,
 		Args:        []string{"version"},
 		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
+		Env:         windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot),
 		Network:     NetworkNone,
 		Timeout:     20 * time.Second,
 		StdoutLimit: 4096,
@@ -516,14 +1528,15 @@ func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
 	skipIfHostLoopbackUnavailable(t)
 	application := requireTrustedWindowsGoApplication(t)
 	dir := t.TempDir()
+	privateRoot := t.TempDir()
 	request := gateProcessRequest{
 		Application: application,
 		Args:        []string{"version"},
 		Dir:         dir,
-		Env:         windowsNetworkNoneGoVersionEnvironment(application, dir),
+		Env:         windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot),
 		Network:     NetworkNone,
 	}
-	session, err := windowsPrepareNetworkNoneAppContainer(request)
+	session, err := windowsPrepareNetworkNoneAppContainer(&request)
 	if err != nil || session == nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -593,7 +1606,10 @@ func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	environment := windowsGateEnvironmentBlock(request.Env)
+	environment, ok := windowsGateEnvironmentBlock(request.Env)
+	if !ok {
+		t.Fatal("environment block was rejected")
+	}
 	startup := windows.StartupInfoEx{
 		StartupInfo: windows.StartupInfo{
 			Cb:        uint32(unsafe.Sizeof(windows.StartupInfoEx{})),
@@ -627,15 +1643,26 @@ func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
 	}
 }
 
-func windowsNetworkNoneGoVersionEnvironment(application, dir string) []string {
+func windowsNetworkNoneGoVersionEnvironment(t *testing.T, application, privateRoot string) []string {
+	t.Helper()
+	home := filepath.Join(privateRoot, "home")
+	goCache := filepath.Join(privateRoot, "go-cache")
+	goModCache := filepath.Join(privateRoot, "go-mod-cache")
+	temporary := filepath.Join(privateRoot, "tmp")
+	for _, path := range []string{home, goCache, goModCache, temporary} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	systemRoot := os.Getenv("SYSTEMROOT")
 	return []string{
 		"PATH=" + filepath.Dir(application),
-		"HOME=" + dir,
-		"USERPROFILE=" + dir,
-		"TMPDIR=" + dir,
-		"TMP=" + dir,
-		"TEMP=" + dir,
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+		"XDG_CONFIG_HOME=" + home,
+		"TMPDIR=" + temporary,
+		"TMP=" + temporary,
+		"TEMP=" + temporary,
 		"LANG=C",
 		"LC_ALL=C",
 		"TZ=UTC",
@@ -646,11 +1673,11 @@ func windowsNetworkNoneGoVersionEnvironment(application, dir string) []string {
 		"GOCACHEPROG=",
 		"GOTELEMETRY=off",
 		"CGO_ENABLED=0",
-		"GOCACHE=" + dir,
-		"GOMODCACHE=" + dir,
-		"GOPATH=" + filepath.Join(dir, "go"),
-		"GOBIN=" + filepath.Join(dir, "bin"),
-		"GOTMPDIR=" + dir,
+		"GOCACHE=" + goCache,
+		"GOMODCACHE=" + goModCache,
+		"GOPATH=" + filepath.Join(home, "go"),
+		"GOBIN=" + filepath.Join(home, "bin"),
+		"GOTMPDIR=" + temporary,
 		"GOPROXY=off",
 		"GOSUMDB=off",
 		"GOVULNDB=off",
@@ -691,6 +1718,46 @@ func requireBuiltSourceQualifyApplication(t *testing.T) string {
 		t.Fatalf("trusted source-qualify path: %v", err)
 	}
 	return resolved
+}
+
+func buildSourceQualifyApplicationAt(t *testing.T, out string) string {
+	t.Helper()
+	command := exec.Command("go", "build", "-trimpath", "-o", out,
+		"github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify")
+	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=local")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build source-qualify controller: %v\n%s", err, output)
+	}
+	return out
+}
+
+func copyWindowsAppContainerTestExecutable(t *testing.T, destination string) {
+	t.Helper()
+	source, err := os.Open(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(target, source); err != nil {
+		_ = target.Close()
+		t.Fatal(err)
+	}
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func containsWindowsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if strings.EqualFold(filepath.Clean(path), filepath.Clean(want)) {
+			return true
+		}
+	}
+	return false
 }
 
 func requireSchemaJSONAppContainerFixtureRoot(t *testing.T) string {

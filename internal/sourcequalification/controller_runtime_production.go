@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const controllerRuntimeFactLimit int64 = 4096
@@ -448,7 +450,7 @@ func trustedControllerRuntimePath(repositoryRoot, path string) (string, error) {
 }
 
 func canonicalTrustedRuntimePath(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
+	resolved, err := pathsecurity.Resolve(path)
 	if err == nil && filepath.IsAbs(resolved) {
 		return filepath.Clean(resolved), nil
 	}

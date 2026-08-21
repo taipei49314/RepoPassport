@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
@@ -57,7 +58,7 @@ func windowsTrustedGitCandidates() []windowsTrustedGitCandidate {
 		path = filepath.Clean(path)
 		if !filepath.IsAbs(root) || !filepath.IsAbs(path) ||
 			strings.ContainsAny(root, "%\x00\r\n") || strings.ContainsAny(path, "%\x00\r\n") ||
-			!packagePathContains(root, path) {
+			!windowsTrustedGitCandidateContains(root, path) {
 			return
 		}
 		key := strings.ToLower(root) + "\x00" + strings.ToLower(path)
@@ -121,13 +122,23 @@ func validateWindowsTrustedGitCandidate(
 ) (string, error) {
 	root := filepath.Clean(candidate.root)
 	path := filepath.Clean(candidate.path)
+	qualificationBoundary, qualification, qualificationErr := windowsTrustedGitQualificationBoundary(root, path)
 	if root != candidate.root || path != candidate.path || !filepath.IsAbs(root) ||
-		!filepath.IsAbs(path) || !packagePathContains(root, path) ||
-		pathWithinRepository(repositoryRoot, root) || pathWithinRepository(repositoryRoot, path) {
+		!filepath.IsAbs(path) || qualificationErr != nil || !windowsTrustedGitCandidateContains(root, path) ||
+		(!qualification && pathWithinRepository(repositoryRoot, root)) || pathWithinRepository(repositoryRoot, path) {
 		return "", errors.New("Windows Git candidate is not a fixed external machine path")
 	}
-	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
-	resolvedPath, pathErr := filepath.EvalSymlinks(path)
+	if qualification {
+		resolvedBoundary, boundaryErr := pathsecurity.Resolve(qualificationBoundary)
+		resolvedPath, pathErr := pathsecurity.Resolve(path)
+		if boundaryErr != nil || pathErr != nil ||
+			!sameCanonicalPath(qualificationBoundary, resolvedBoundary) || !sameCanonicalPath(path, resolvedPath) {
+			return "", errors.New("Windows Git candidate traverses a reparse point")
+		}
+		return validateWindowsTrustedGitPaths(path, []string{qualificationBoundary, path})
+	}
+	resolvedRoot, rootErr := pathsecurity.Resolve(root)
+	resolvedPath, pathErr := pathsecurity.Resolve(path)
 	if rootErr != nil || pathErr != nil || !sameCanonicalPath(root, resolvedRoot) ||
 		!sameCanonicalPath(path, resolvedPath) || validatePackageDirectoryChain(root) != nil {
 		return "", errors.New("Windows Git candidate traverses a reparse point")
@@ -147,6 +158,30 @@ func validateWindowsTrustedGitCandidate(
 		current = filepath.Join(current, component)
 		paths = append(paths, current)
 	}
+	return validateWindowsTrustedGitPaths(path, paths)
+}
+
+func windowsTrustedGitCandidateContains(root, path string) bool {
+	_, handled, err := windowsTrustedGitQualificationBoundary(root, path)
+	if handled {
+		return err == nil
+	}
+	return packagePathContains(root, path)
+}
+
+func windowsTrustedGitQualificationBoundary(root, path string) (string, bool, error) {
+	boundary, handled, err := pathsecurity.QualificationPathBoundary(path, "tool")
+	if !handled {
+		return "", false, nil
+	}
+	if err != nil || !sameCanonicalPath(filepath.Dir(path), boundary) ||
+		!sameCanonicalPath(filepath.Dir(boundary), root) {
+		return "", true, errors.New("Windows Git qualification boundary is invalid")
+	}
+	return boundary, true, nil
+}
+
+func validateWindowsTrustedGitPaths(path string, paths []string) (string, error) {
 	for index, currentPath := range paths {
 		directory := index != len(paths)-1
 		opened, openedSnapshot, err := openWindowsTrustedGitPath(currentPath, directory)

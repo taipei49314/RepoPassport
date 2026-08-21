@@ -12,6 +12,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/controllerfs"
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/internal/structuredjson"
 )
 
@@ -185,7 +186,7 @@ func readPreparedSchema(
 			"Resolved JSON Schema path escaped the immutable source snapshot.",
 		)
 	}
-	resolved, err := filepath.EvalSymlinks(candidate)
+	resolved, err := pathsecurity.Resolve(candidate)
 	if err != nil ||
 		!pathWithin(snapshotRoot, resolved) ||
 		!samePath(candidate, resolved) {

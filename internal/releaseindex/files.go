@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/taipei49314/RepoPassport/internal/attestation"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 const (
@@ -187,7 +188,7 @@ func stableFileWithPostReadHook(path string, maximum int64, retain bool, postRea
 	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 0 || before.Size() > maximum || isReparsePoint(absolute) {
 		return nil, stableStat{}, ErrReadFailed
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !samePath(absolute, resolved) {
 		return nil, stableStat{}, ErrReadFailed
 	}
@@ -298,7 +299,7 @@ func safeExistingDirectory(path string) (string, error) {
 	if err != nil || !before.IsDir() || before.Mode()&os.ModeSymlink != 0 || isReparsePoint(absolute) {
 		return "", ErrReadFailed
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !samePath(absolute, resolved) {
 		return "", ErrReadFailed
 	}

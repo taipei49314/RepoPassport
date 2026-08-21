@@ -32,7 +32,11 @@ const (
 
 // lockTimeout bounds cross-process lock acquisition. Tests shorten it to
 // exercise the timeout path without weakening the production bound.
-var lockTimeout = 5 * time.Second
+var (
+	lockTimeout                      = 5 * time.Second
+	privateStatePathResolver         = filepath.EvalSymlinks
+	privateStatePathBoundaryResolver = func(string) (string, error) { return "", nil }
+)
 
 // Evaluation describes how a complete authenticated tuple compared with the
 // one durable record rooted at the same explicit trust root.
@@ -252,7 +256,7 @@ func stateRoot(ctx context.Context, dataRoot string) (string, error) {
 		}
 	}
 	root := paths[len(paths)-1]
-	resolved, err := filepath.EvalSymlinks(root)
+	resolved, err := privateStatePathResolver(root)
 	if err != nil || !samePath(root, resolved) {
 		return "", ErrUnavailable
 	}
@@ -260,6 +264,10 @@ func stateRoot(ctx context.Context, dataRoot string) (string, error) {
 }
 
 func repositoryLocal(dataRoot string) bool {
+	boundary, err := privateStatePathBoundaryResolver(dataRoot)
+	if err != nil {
+		return true
+	}
 	current := dataRoot
 	for {
 		for _, marker := range []string{"repo-passport.yml", ".git"} {
@@ -268,6 +276,9 @@ func repositoryLocal(dataRoot string) bool {
 			} else if !os.IsNotExist(err) {
 				return true
 			}
+		}
+		if boundary != "" && samePath(current, boundary) {
+			return false
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
@@ -284,6 +295,13 @@ func ensurePrivateDirectory(path string) (bool, error) {
 	}
 	volume := filepath.VolumeName(absolute)
 	base := volume + string(filepath.Separator)
+	boundary, err := privateStatePathBoundaryResolver(absolute)
+	if err != nil {
+		return false, ErrUnavailable
+	}
+	if boundary != "" {
+		base = boundary
+	}
 	relative, err := filepath.Rel(base, absolute)
 	if err != nil || filepath.IsAbs(relative) {
 		return false, ErrUnavailable

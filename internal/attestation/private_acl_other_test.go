@@ -2,6 +2,11 @@
 
 package attestation
 
-import "testing"
+import "os"
 
-func securePrivatePermissionsForTest(*testing.T, string) {}
+func writePrivateFileForTest(path string, content []byte, mode os.FileMode) error {
+	if err := os.WriteFile(path, content, mode); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
+}

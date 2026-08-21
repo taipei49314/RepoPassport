@@ -270,8 +270,8 @@ func TestOfflineQualificationVerificationContract(t *testing.T) {
 		}
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
-				root := t.TempDir()
-				toolAssemblySecure(t, root, true)
+				root := filepath.Join(t.TempDir(), "offline-manifest")
+				toolAssemblyMkdirPrivate(t, root)
 				manifest := test.manifest(t)
 				path := filepath.Join(root, qualificationToolManifestFilename)
 				toolAssemblyWritePrivate(t, path, manifest, false)
@@ -316,8 +316,8 @@ func newOfflineVerificationFixture(t *testing.T) *offlineVerificationFixture {
 		windowsController = selfExecutable
 	}
 
-	root := t.TempDir()
-	toolAssemblySecure(t, root, true)
+	root := filepath.Join(t.TempDir(), "offline-verification")
+	toolAssemblyMkdirPrivate(t, root)
 	packageDir := filepath.Join(root, "package")
 	toolAssemblyWriteQualificationPackage(
 		t,
@@ -400,8 +400,8 @@ func offlineVerificationRequireFields(t *testing.T, value any, want []string) {
 
 func offlineVerificationCopyPackage(t *testing.T, source string) string {
 	t.Helper()
-	root := t.TempDir()
-	toolAssemblySecure(t, root, true)
+	root := filepath.Join(t.TempDir(), "offline-package-copy")
+	toolAssemblyMkdirPrivate(t, root)
 	destination := filepath.Join(root, "package")
 	toolAssemblyCopyDirectory(t, source, destination)
 	return destination

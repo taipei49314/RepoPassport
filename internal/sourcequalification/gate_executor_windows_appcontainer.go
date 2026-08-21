@@ -3,21 +3,65 @@
 package sourcequalification
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
 	"golang.org/x/sys/windows"
 )
 
 const (
 	windowsProcThreadAttributeSecurityCapabilities = 0x00020009
 	windowsHRESULTAlreadyExists                    = 0x800700B7
+	windowsAppContainerNullMutexName               = `Global\RepoPass.SourceQualification.AppContainer.NullDACL.v1`
+	windowsAppContainerWorkspacePrefix             = "w-"
+	windowsFileDeleteChild                         = 0x00000040
+	windowsAppContainerWritableRootAccess          = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE |
+		windows.FILE_GENERIC_EXECUTE | windowsFileDeleteChild
+	windowsAppContainerWritableChildAccess = windowsAppContainerWritableRootAccess | windows.DELETE
+)
+
+var windowsAppContainerWritableEnvironmentKeys = [...]string{
+	"HOME",
+	"USERPROFILE",
+	"XDG_CONFIG_HOME",
+	"GOCACHE",
+	"GOPATH",
+	"GOBIN",
+	"GOTMPDIR",
+	"TMPDIR",
+	"TMP",
+	"TEMP",
+}
+
+var (
+	errWindowsAppContainerPrepareCleanup  = errors.New("Windows AppContainer preparation cleanup failed")
+	errWindowsAppContainerPrivateGrant    = errors.New("Windows AppContainer private-boundary grant failed")
+	errWindowsAppContainerRequiredGrant   = errors.New("Windows AppContainer required-path grant failed")
+	errWindowsAppContainerWritableGrant   = errors.New("Windows AppContainer writable-path grant failed")
+	errWindowsAppContainerReadableGrant   = errors.New("Windows AppContainer readable-path grant failed")
+	errWindowsAppContainerNullGrant       = errors.New("Windows AppContainer null-device grant failed")
+	errWindowsAppContainerNullLease       = errors.New("Windows AppContainer null-device lease failed")
+	errWindowsAppContainerGrantNotApplied = errors.New("Windows AppContainer supplemental grant was not applied")
+	errWindowsAppContainerAncestorGrant   = errors.New("Windows AppContainer ancestor grant failed")
+	errWindowsAppContainerDACLRestore     = errors.New("Windows AppContainer DACL restore failed")
+	errWindowsAppContainerDACLSet         = errors.New("Windows AppContainer DACL set failed")
+	errWindowsAppContainerDACLRead        = errors.New("Windows AppContainer DACL readback failed")
+	errWindowsAppContainerDACLMismatch    = errors.New("Windows AppContainer DACL readback mismatched")
+	errWindowsAppContainerDACLIdentity    = errors.New("Windows AppContainer DACL object identity changed")
+	errWindowsAppContainerDACLOrphan      = errors.New("Windows AppContainer DACL contains an orphan package principal")
+	errWindowsAppContainerProfileCleanup  = errors.New("Windows AppContainer profile cleanup failed")
+	errWindowsAppContainerWorkspace       = errors.New("Windows AppContainer writable workspace failed")
 )
 
 type windowsSecurityCapabilities struct {
@@ -28,21 +72,78 @@ type windowsSecurityCapabilities struct {
 }
 
 type windowsAppContainerSession struct {
-	name         string
-	sid          *windows.SID
-	capabilities windowsSecurityCapabilities
+	name                     string
+	sid                      *windows.SID
+	baselinePackageSID       *windows.SID
+	capabilities             windowsSecurityCapabilities
+	daclRestores             []*windowsAppContainerDACLRestore
+	writableWorkspacePath    string
+	cleanupWritableWorkspace func() error
+}
+
+type windowsAppContainerDACLRestore struct {
+	file              *os.File
+	descriptor        *windows.SECURITY_DESCRIPTOR
+	dacl              *windows.ACL
+	identity          windowsAppContainerObjectIdentity
+	daclBytes         []byte
+	daclIdentity      windowsACLSemanticIdentity
+	control           windows.SECURITY_DESCRIPTOR_CONTROL
+	revision          uint32
+	lease             windows.Handle
+	leaseThreadLocked bool
+}
+
+type windowsACLSemanticIdentity struct {
+	revision uint8
+	aces     [][]byte
+}
+
+type windowsAppContainerObjectIdentity struct {
+	fileType      uint32
+	hasFileID     bool
+	volumeSerial  uint32
+	fileIndexHigh uint32
+	fileIndexLow  uint32
+}
+
+type windowsAppContainerDACLTarget uint8
+
+const (
+	windowsAppContainerDACLFilesystem windowsAppContainerDACLTarget = iota
+	windowsAppContainerDACLNullDevice
+)
+
+type windowsACLHeader struct {
+	revision  uint8
+	reserved  uint8
+	size      uint16
+	count     uint16
+	reserved2 uint16
 }
 
 var (
 	windowsUserenv                                   = windows.NewLazySystemDLL("userenv.dll")
-	windowsAdvapi32                                  = windows.NewLazySystemDLL("advapi32.dll")
 	windowsCreateAppContainerProfile                 = windowsUserenv.NewProc("CreateAppContainerProfile")
 	windowsDeleteAppContainerProfile                 = windowsUserenv.NewProc("DeleteAppContainerProfile")
 	windowsDeriveAppContainerSidFromAppContainerName = windowsUserenv.NewProc("DeriveAppContainerSidFromAppContainerName")
-	windowsTreeResetNamedSecurityInfo                = windowsAdvapi32.NewProc("TreeResetNamedSecurityInfoW")
 )
 
-func windowsPrepareNetworkNoneAppContainer(request gateProcessRequest) (*windowsAppContainerSession, error) {
+func windowsPrepareNetworkNoneAppContainer(request *gateProcessRequest) (*windowsAppContainerSession, error) {
+	if request == nil {
+		return nil, windows.ERROR_INVALID_PARAMETER
+	}
+	baselinePrincipal, err := windowssecurity.CurrentAppContainerPrincipal()
+	if err != nil {
+		return nil, err
+	}
+	var baselinePackageSID *windows.SID
+	if baselinePrincipal != "" {
+		baselinePackageSID, err = windows.StringToSid(baselinePrincipal)
+		if err != nil || baselinePackageSID == nil || !baselinePackageSID.IsValid() {
+			return nil, windows.ERROR_INVALID_SID
+		}
+	}
 	name, err := windowsNewAppContainerName()
 	if err != nil {
 		return nil, err
@@ -51,26 +152,81 @@ func windowsPrepareNetworkNoneAppContainer(request gateProcessRequest) (*windows
 	if err != nil {
 		return nil, err
 	}
-	session := &windowsAppContainerSession{name: name, sid: sid}
+	session := &windowsAppContainerSession{
+		name:               name,
+		sid:                sid,
+		baselinePackageSID: baselinePackageSID,
+	}
 	session.capabilities.AppContainerSid = sid
-	if err := windowsGrantAppContainerGatePaths(request, sid); err != nil {
-		session.release()
+	if err := session.prepareWritableWorkspace(request); err != nil {
+		if cleanupErr := session.release(); cleanupErr != nil {
+			return nil, errors.Join(err, errWindowsAppContainerPrepareCleanup, cleanupErr)
+		}
+		return nil, err
+	}
+	if err := windowsGrantAppContainerGatePaths(*request, session); err != nil {
+		if cleanupErr := session.release(); cleanupErr != nil {
+			return nil, errors.Join(err, errWindowsAppContainerPrepareCleanup, cleanupErr)
+		}
 		return nil, err
 	}
 	return session, nil
 }
 
-func (session *windowsAppContainerSession) release() {
-	if session == nil || session.name == "" {
-		return
+func (session *windowsAppContainerSession) release() error {
+	if session == nil {
+		return nil
 	}
-	name, err := windows.UTF16PtrFromString(session.name)
-	if err == nil {
-		_, _, _ = windowsDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(name)))
+	cleanupErr := session.restoreDACLs()
+	if session.cleanupWritableWorkspace != nil {
+		cleanupErr = errors.Join(cleanupErr, session.cleanupWritableWorkspace())
+		session.cleanupWritableWorkspace = nil
+		session.writableWorkspacePath = ""
 	}
+	if session.name == "" {
+		session.sid = nil
+		session.baselinePackageSID = nil
+		session.capabilities = windowsSecurityCapabilities{}
+		return cleanupErr
+	}
+
+	cleanupErr = errors.Join(cleanupErr, windowsDeleteAppContainerProfileByName(session.name))
 	session.name = ""
 	session.sid = nil
+	session.baselinePackageSID = nil
 	session.capabilities = windowsSecurityCapabilities{}
+	return cleanupErr
+}
+
+func (session *windowsAppContainerSession) restoreDACLs() error {
+	if session == nil {
+		return nil
+	}
+	var cleanupErr error
+	for index := len(session.daclRestores) - 1; index >= 0; index-- {
+		cleanupErr = errors.Join(cleanupErr, session.daclRestores[index].restore())
+	}
+	session.daclRestores = nil
+	return cleanupErr
+}
+
+func windowsAppContainerProfileDeletionError(hresult uintptr, callErr error) error {
+	if hresult == 0 {
+		return nil
+	}
+	if callErr == nil || callErr == windows.ERROR_SUCCESS {
+		callErr = windows.ERROR_ACCESS_DENIED
+	}
+	return errors.Join(errWindowsAppContainerProfileCleanup, callErr)
+}
+
+func windowsDeleteAppContainerProfileByName(name string) error {
+	nameUTF16, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return errors.Join(errWindowsAppContainerProfileCleanup, err)
+	}
+	hresult, _, callErr := windowsDeleteAppContainerProfile.Call(uintptr(unsafe.Pointer(nameUTF16)))
+	return windowsAppContainerProfileDeletionError(hresult, callErr)
 }
 
 func windowsNewAppContainerName() (string, error) {
@@ -104,13 +260,26 @@ func windowsCreateOrDeriveAppContainerSID(name string) (*windows.SID, error) {
 		0,
 		uintptr(unsafe.Pointer(&sid)),
 	)
-	if hr == 0 && sid != nil {
-		copied, copyErr := sid.Copy()
-		_ = windows.FreeSid(sid)
-		if copyErr != nil {
-			return nil, copyErr
+	if hr == 0 {
+		var copied *windows.SID
+		copyErr := error(windows.ERROR_INVALID_SID)
+		freeErr := error(nil)
+		if sid != nil {
+			copied, copyErr = sid.Copy()
+			freeErr = windows.FreeSid(sid)
 		}
-		return copied, nil
+		if copyErr == nil && freeErr == nil && copied != nil {
+			return copied, nil
+		}
+		operationErr := errors.Join(copyErr, freeErr)
+		if copied == nil {
+			operationErr = errors.Join(operationErr, windows.ERROR_INVALID_SID)
+		}
+		cleanupErr := windowsDeleteAppContainerProfileByName(name)
+		if cleanupErr != nil {
+			return nil, errors.Join(operationErr, errWindowsAppContainerPrepareCleanup, cleanupErr)
+		}
+		return nil, operationErr
 	}
 	if hr != 0 && uint32(hr) != windowsHRESULTAlreadyExists {
 		if callErr != windows.ERROR_SUCCESS {
@@ -129,46 +298,197 @@ func windowsCreateOrDeriveAppContainerSID(name string) (*windows.SID, error) {
 		return nil, windows.ERROR_ACCESS_DENIED
 	}
 	copied, copyErr := sid.Copy()
-	_ = windows.FreeSid(sid)
-	if copyErr != nil {
-		return nil, copyErr
+	freeErr := windows.FreeSid(sid)
+	if copyErr != nil || freeErr != nil || copied == nil {
+		operationErr := errors.Join(copyErr, freeErr)
+		if copied == nil {
+			operationErr = errors.Join(operationErr, windows.ERROR_INVALID_SID)
+		}
+		return nil, operationErr
 	}
 	return copied, nil
 }
 
-func windowsGrantAppContainerGatePaths(request gateProcessRequest, sid *windows.SID) error {
-	required, writable, readable := windowsNetworkNoneAccessPaths(request)
-	for _, path := range required {
-		if err := windowsGrantAppContainerPath(path, sid, false, false); err != nil {
-			return err
+func (session *windowsAppContainerSession) prepareWritableWorkspace(request *gateProcessRequest) error {
+	if session == nil || session.sid == nil || request == nil {
+		return errors.Join(errWindowsAppContainerWorkspace, windows.ERROR_INVALID_PARAMETER)
+	}
+	privateRoot := windowsQualificationPrivateRoot(request.Env)
+	moduleCache := windowsEnvironmentLookup(request.Env, "GOMODCACHE")
+	if privateRoot == "" || !cleanAbsoluteGatePath(moduleCache) ||
+		strings.EqualFold(privateRoot, moduleCache) ||
+		!windowsPathWithin(privateRoot, moduleCache) ||
+		windowsPathsOverlap(privateRoot, request.Dir) ||
+		!validGateDirectory(moduleCache) {
+		return errors.Join(errWindowsAppContainerWorkspace, windows.ERROR_INVALID_PARAMETER)
+	}
+
+	workspace, cleanup, _, err := createPrivateQualificationStaging(
+		privateRoot, windowsAppContainerWorkspacePrefix,
+	)
+	if err != nil || cleanup == nil {
+		return errors.Join(errWindowsAppContainerWorkspace, err)
+	}
+	session.writableWorkspacePath = workspace
+	session.cleanupWritableWorkspace = cleanup
+	if windowsPathsOverlap(workspace, moduleCache) || windowsPathsOverlap(workspace, request.Dir) {
+		return errors.Join(errWindowsAppContainerWorkspace, windows.ERROR_INVALID_PARAMETER)
+	}
+	if err := session.grantWritableWorkspaceRoot(workspace); err != nil {
+		return errors.Join(errWindowsAppContainerWritableGrant, err)
+	}
+
+	environment, ok := windowsRehomeAppContainerWritableEnvironment(request.Env, workspace)
+	if !ok {
+		return errors.Join(errWindowsAppContainerWorkspace, windows.ERROR_INVALID_PARAMETER)
+	}
+	request.Env = environment
+	if !validWindowsAppContainerEnvironmentBounds(request.Env) ||
+		windowsQualificationPrivateRoot(request.Env) != privateRoot ||
+		!strings.EqualFold(windowsEnvironmentLookup(request.Env, "GOMODCACHE"), moduleCache) {
+		return errors.Join(errWindowsAppContainerWorkspace, windows.ERROR_INVALID_PARAMETER)
+	}
+	return nil
+}
+
+func validWindowsAppContainerEnvironmentBounds(environment []string) bool {
+	if len(environment) == 0 || len(environment) > maximumGateEnvironment {
+		return false
+	}
+	total := 0
+	for _, entry := range environment {
+		total += len(entry)
+		if total > maximumGateProcessTextBytes {
+			return false
 		}
-		windowsGrantAppContainerExistingTree(path, sid, false)
+	}
+	return true
+}
+
+func (session *windowsAppContainerSession) grantWritableWorkspaceRoot(path string) error {
+	file, information, err := windowsOpenAppContainerGrantPath(path)
+	if err != nil {
+		return err
+	}
+	if information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		_ = file.Close()
+		return windows.ERROR_DIRECTORY
+	}
+	entries := []windows.EXPLICIT_ACCESS{
+		windowsAppContainerAccessEntry(
+			session.sid,
+			windowsAppContainerWritableRootAccess,
+			uint32(windows.NO_INHERITANCE),
+		),
+		windowsAppContainerAccessEntry(
+			session.sid,
+			windowsAppContainerWritableChildAccess,
+			uint32(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE|windows.INHERIT_ONLY_ACE),
+		),
+	}
+	return session.grantOpenHandleEntries(file, entries, 0)
+}
+
+func windowsRehomeAppContainerWritableEnvironment(environment []string, workspace string) ([]string, bool) {
+	if !cleanAbsoluteGatePath(workspace) {
+		return nil, false
+	}
+	targets := make(map[string]struct{}, len(windowsAppContainerWritableEnvironmentKeys))
+	for _, name := range windowsAppContainerWritableEnvironmentKeys {
+		targets[name] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(targets))
+	result := make([]string, 0, len(environment)+len(targets))
+	for _, entry := range environment {
+		name, _, ok := strings.Cut(entry, "=")
+		canonical := strings.ToUpper(name)
+		if !ok || name == "" {
+			return nil, false
+		}
+		if _, rewrite := targets[canonical]; !rewrite {
+			result = append(result, entry)
+			continue
+		}
+		if _, duplicate := seen[canonical]; duplicate {
+			return nil, false
+		}
+		seen[canonical] = struct{}{}
+		result = append(result, canonical+"="+workspace)
+	}
+	for _, name := range windowsAppContainerWritableEnvironmentKeys {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		result = append(result, name+"="+workspace)
+	}
+	if !validWindowsAppContainerEnvironmentBounds(result) {
+		return nil, false
+	}
+	return result, true
+}
+
+func windowsPathsOverlap(left, right string) bool {
+	if !cleanAbsoluteGatePath(left) || !cleanAbsoluteGatePath(right) ||
+		!strings.EqualFold(filepath.VolumeName(left), filepath.VolumeName(right)) {
+		return false
+	}
+	return windowsPathWithin(left, right) || windowsPathWithin(right, left)
+}
+
+func windowsGrantAppContainerGatePaths(request gateProcessRequest, session *windowsAppContainerSession) error {
+	if session == nil || session.sid == nil {
+		return windows.ERROR_INVALID_SID
+	}
+	required, moduleCache, readable := windowsNetworkNoneAccessPaths(request)
+	if privateRoot := windowsQualificationPrivateRoot(request.Env); privateRoot != "" {
+		if err := session.grantPath(
+			privateRoot,
+			windows.FILE_LIST_DIRECTORY|windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|
+				windows.READ_CONTROL|windows.SYNCHRONIZE,
+			false,
+		); err != nil {
+			return errors.Join(errWindowsAppContainerPrivateGrant, err)
+		}
+	}
+	for _, path := range required {
+		if err := session.grantPath(
+			path, windows.GENERIC_READ|windows.GENERIC_EXECUTE,
+			strings.EqualFold(path, request.Dir),
+		); err != nil {
+			return errors.Join(errWindowsAppContainerRequiredGrant, err)
+		}
 	}
 	// go.exe launches vet.exe -flags with stdout attached to NUL. AppContainer
 	// cannot open the Null device unless this SID is on that device DACL.
-	// Best-effort: SCHEMA-JSON and other NetworkNone gates do not need NUL, so
-	// a device-DACL failure must not Block the whole launcher.
-	_ = windowsGrantAppContainerNullDevice(sid)
-	for _, path := range writable {
-		if err := windowsGrantAppContainerPath(path, sid, true, true); err != nil {
-			return err
+	// NUL is supplemental for gates that do not launch go or Git. A failure
+	// before any mutation is safe to skip; once mutated, every failure blocks
+	// preparation so release can restore the journaled device DACL.
+	if err := session.grantNullDevice(); err != nil &&
+		!errors.Is(err, errWindowsAppContainerGrantNotApplied) {
+		return errors.Join(errWindowsAppContainerNullGrant, err)
+	}
+	for _, path := range moduleCache {
+		if err := session.grantPath(path, windows.GENERIC_READ|windows.GENERIC_EXECUTE, true); err != nil {
+			return errors.Join(errWindowsAppContainerRequiredGrant, err)
 		}
-		// TreeReset may skip existing children. MODULE-DOWNLOAD fills GOMODCACHE
-		// outside AppContainer; go vet must read and GOCACHE must stay writable.
-		windowsGrantAppContainerExistingTree(path, sid, true)
 	}
 	for _, path := range readable {
-		_ = windowsGrantAppContainerPath(path, sid, false, false)
-		if windowsAppContainerReadableTree(path) {
-			windowsGrantAppContainerExistingTree(path, sid, false)
+		propagate := windowsAppContainerReadableTree(path) &&
+			!strings.EqualFold(path, request.ContainmentApplication) &&
+			!strings.EqualFold(path, filepath.Dir(request.ContainmentApplication))
+		// External runtime trees can already be readable by AppContainer tokens.
+		// Skip a supplemental path only if it fails before the first mutation.
+		if err := session.grantPath(path, windows.GENERIC_READ|windows.GENERIC_EXECUTE, propagate); err != nil &&
+			!errors.Is(err, errWindowsAppContainerGrantNotApplied) {
+			return errors.Join(errWindowsAppContainerReadableGrant, err)
 		}
 	}
 	// AppContainer lacks SeChangeNotifyPrivilege. Schema JSON opens Dir and
 	// every ancestor except the volume root. Grant path-only traverse on Dir's
 	// ancestors. Do not grant Application/GOROOT ancestors: SetNamedSecurityInfo
 	// on C:\hostedtoolcache hangs CI. Do not inherit or TreeReset.
-	if err := windowsGrantAppContainerAncestorChain(request.Dir, sid); err != nil {
-		return err
+	if err := session.grantAncestorChain(request.Dir); err != nil {
+		return errors.Join(errWindowsAppContainerAncestorGrant, err)
 	}
 	return nil
 }
@@ -202,12 +522,12 @@ func windowsAppContainerAncestorPaths(path string) []string {
 	}
 }
 
-func windowsGrantAppContainerAncestorChain(path string, sid *windows.SID) error {
+func (session *windowsAppContainerSession) grantAncestorChain(path string) error {
 	for _, ancestor := range windowsAppContainerAncestorPaths(path) {
 		if windowsAppContainerAncestorGrantForbidden(ancestor) {
 			continue
 		}
-		if err := windowsGrantAppContainerAncestorPath(ancestor, sid); err != nil {
+		if err := session.grantAncestorPath(ancestor); err != nil {
 			return err
 		}
 	}
@@ -237,153 +557,234 @@ func windowsAppContainerAncestorGrantForbidden(path string) bool {
 	}
 }
 
-func windowsGrantAppContainerAncestorPath(path string, sid *windows.SID) error {
-	info, err := os.Lstat(path)
+func (session *windowsAppContainerSession) grantAncestorPath(path string) error {
+	file, information, err := windowsOpenAppContainerGrantPath(path)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return nil
+	if information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		_ = file.Close()
+		return windows.ERROR_DIRECTORY
 	}
-	_, err = windowsSetAppContainerPathAccess(
-		path,
-		sid,
+	return session.grantOpenHandle(
+		file,
 		windows.GENERIC_READ|windows.GENERIC_EXECUTE,
 		uint32(windows.NO_INHERITANCE),
+		0,
 	)
-	return err
 }
 
-func windowsGrantAppContainerNullDevice(sid *windows.SID) error {
-	if sid == nil {
+func (session *windowsAppContainerSession) grantNullDevice() (resultErr error) {
+	journalStart := 0
+	if session != nil {
+		journalStart = len(session.daclRestores)
+	}
+	defer func() {
+		journalEnd := journalStart
+		if session != nil {
+			journalEnd = len(session.daclRestores)
+		}
+		resultErr = windowsClassifyAppContainerGrantFailure(
+			resultErr, journalStart, journalEnd,
+		)
+	}()
+	if session == nil || session.sid == nil {
 		return windows.ERROR_INVALID_SID
 	}
 	access := windows.ACCESS_MASK(
 		windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE | windows.SYNCHRONIZE,
 	)
-	var firstErr error
-	if err := windowsGrantAppContainerNullDeviceHandle(sid, access); err == nil {
-		return nil
-	} else {
-		firstErr = err
-	}
-	for _, path := range []string{`\\.\NUL`, `NUL`} {
-		if _, err := windowsSetAppContainerPathAccess(path, sid, access, uint32(windows.NO_INHERITANCE)); err == nil {
-			return nil
-		} else if firstErr == nil {
-			firstErr = err
-		}
-		if _, err := windowsSetAppContainerPathAccess(path, sid, windows.GENERIC_ALL, uint32(windows.NO_INHERITANCE)); err == nil {
-			return nil
-		} else if firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
-
-func windowsGrantAppContainerNullDeviceHandle(sid *windows.SID, access windows.ACCESS_MASK) error {
-	name, err := windows.UTF16PtrFromString(`\\.\NUL`)
+	lease, err := windowsAcquireAppContainerNullLease()
 	if err != nil {
 		return err
+	}
+	name, err := windows.UTF16PtrFromString(`\\.\NUL`)
+	if err != nil {
+		return windowsAppContainerPreMutationFailure(
+			err, windowsReleaseAppContainerNullLease(lease, true),
+		)
 	}
 	handle, err := windows.CreateFile(
 		name,
 		windows.READ_CONTROL|windows.WRITE_DAC,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 		nil,
 		windows.OPEN_EXISTING,
 		0,
 		0,
 	)
 	if err != nil {
-		return err
+		return windowsAppContainerPreMutationFailure(
+			err, windowsReleaseAppContainerNullLease(lease, true),
+		)
 	}
-	defer windows.CloseHandle(handle)
-
-	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return err
+	file := os.NewFile(uintptr(handle), "appcontainer-null-device-grant")
+	if file == nil {
+		return windowsAppContainerPreMutationFailure(
+			windows.ERROR_INVALID_HANDLE,
+			windows.CloseHandle(handle),
+			windowsReleaseAppContainerNullLease(lease, true),
+		)
 	}
-	var merged *windows.ACL
-	preserveWorld := true
-	if descriptor != nil {
-		existing, _, daclErr := descriptor.DACL()
-		if daclErr == nil && existing != nil {
-			merged = existing
-			preserveWorld = false
-		}
-	}
-
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-	pinner.Pin(sid)
-	entries := make([]windows.EXPLICIT_ACCESS, 0, 2)
-	if preserveWorld {
-		world, worldErr := windows.CreateWellKnownSid(windows.WinWorldSid)
-		if worldErr != nil {
-			return worldErr
-		}
-		pinner.Pin(world)
-		entries = append(entries, windows.EXPLICIT_ACCESS{
-			AccessPermissions: windows.GENERIC_ALL,
-			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       uint32(windows.NO_INHERITANCE),
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
-				TrusteeValue: windows.TrusteeValueFromSID(world),
-			},
-		})
-	}
-	entries = append(entries, windows.EXPLICIT_ACCESS{
-		AccessPermissions: access,
-		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       uint32(windows.NO_INHERITANCE),
-		Trustee: windows.TRUSTEE{
-			TrusteeForm:  windows.TRUSTEE_IS_SID,
-			TrusteeType:  windows.TRUSTEE_IS_USER,
-			TrusteeValue: windows.TrusteeValueFromSID(sid),
-		},
-	})
-	acl, err := windows.ACLFromEntries(entries, merged)
-	if err != nil {
-		return err
-	}
-	err = windows.SetSecurityInfo(
-		handle,
-		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION,
-		nil,
-		nil,
-		acl,
-		nil,
-	)
-	runtime.KeepAlive(acl)
-	return err
+	return session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), lease)
 }
 
-func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, writable, readable []string) {
-	required = uniqueExistingWindowsPaths([]string{request.Application, request.Dir})
-	var writePaths, readPaths []string
+func windowsAcquireAppContainerNullLease() (windows.Handle, error) {
+	return windowsAcquireNamedAppContainerNullLease(
+		windowsAppContainerNullMutexName,
+		gateProcessCleanupTimeout,
+	)
+}
+
+func windowsAcquireNamedAppContainerNullLease(
+	mutexName string,
+	timeout time.Duration,
+) (windows.Handle, error) {
+	milliseconds := timeout.Milliseconds()
+	if timeout%time.Millisecond != 0 {
+		milliseconds++
+	}
+	if milliseconds <= 0 || milliseconds >= int64(windows.INFINITE) {
+		return 0, errors.Join(errWindowsAppContainerNullLease, windows.ERROR_INVALID_PARAMETER)
+	}
+	name, err := windows.UTF16PtrFromString(mutexName)
+	if err != nil {
+		return 0, errors.Join(errWindowsAppContainerNullLease, err)
+	}
+	runtime.LockOSThread()
+	handle, err := windows.CreateMutex(nil, false, name)
+	if err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		runtime.UnlockOSThread()
+		return 0, errors.Join(errWindowsAppContainerNullLease, err)
+	}
+	event, waitErr := windows.WaitForSingleObject(handle, uint32(milliseconds))
+	if waitErr != nil || event != windows.WAIT_OBJECT_0 {
+		var releaseErr error
+		var abandonedErr error
+		if event == windows.WAIT_ABANDONED {
+			abandonedErr = errors.Join(
+				errWindowsAppContainerPrepareCleanup,
+				windows.ERROR_ABANDONED_WAIT_0,
+			)
+			releaseErr = windows.ReleaseMutex(handle)
+		}
+		closeErr := windows.CloseHandle(handle)
+		runtime.UnlockOSThread()
+		return 0, errors.Join(
+			errWindowsAppContainerNullLease,
+			waitErr,
+			abandonedErr,
+			releaseErr,
+			closeErr,
+		)
+	}
+	return handle, nil
+}
+
+func windowsReleaseAppContainerNullLease(handle windows.Handle, threadLocked bool) error {
+	if handle == 0 {
+		if threadLocked {
+			runtime.UnlockOSThread()
+		}
+		return errWindowsAppContainerNullLease
+	}
+	releaseErr := windows.ReleaseMutex(handle)
+	closeErr := windows.CloseHandle(handle)
+	if threadLocked {
+		runtime.UnlockOSThread()
+	}
+	if releaseErr != nil || closeErr != nil {
+		return errors.Join(errWindowsAppContainerNullLease, releaseErr, closeErr)
+	}
+	return nil
+}
+
+func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, moduleCache, readable []string) {
+	required = uniqueExistingWindowsPaths([]string{
+		request.Application,
+		request.ContainmentApplication,
+		request.Dir,
+	})
+	var modulePaths, readPaths []string
 	readPaths = append(readPaths, windowsExecutableTree(request.Application)...)
+	readPaths = append(readPaths, windowsExecutableTree(request.ContainmentApplication)...)
 	for _, entry := range request.Env {
 		key, value, ok := strings.Cut(entry, "=")
 		if !ok || value == "" {
 			continue
 		}
 		switch strings.ToUpper(key) {
-		case "HOME", "USERPROFILE", "TMPDIR", "TMP", "TEMP", "GOCACHE", "GOMODCACHE", "GOPATH", "GOBIN", "GOTMPDIR":
-			writePaths = append(writePaths, value)
+		case "GOMODCACHE":
+			modulePaths = append(modulePaths, value)
 		case "GOROOT":
 			readPaths = append(readPaths, value)
 		case "PATH":
 			readPaths = append(readPaths, filepath.SplitList(value)...)
 		}
 	}
-	writable = uniqueExistingWindowsPaths(writePaths)
-	readable = uniqueExistingWindowsPaths(readPaths)
-	return required, writable, readable
+	moduleCache = uniqueExistingWindowsPaths(modulePaths)
+	readable = excludeExistingWindowsPaths(
+		uniqueExistingWindowsPaths(readPaths),
+		append(append([]string(nil), required...), moduleCache...),
+	)
+	return required, moduleCache, readable
+}
+
+func excludeExistingWindowsPaths(paths, excluded []string) []string {
+	keys := make(map[string]struct{}, len(excluded))
+	for _, path := range excluded {
+		keys[strings.ToLower(filepath.Clean(path))] = struct{}{}
+	}
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, skip := keys[strings.ToLower(filepath.Clean(path))]; skip {
+			continue
+		}
+		result = append(result, path)
+	}
+	return result
+}
+
+func windowsQualificationPrivateRoot(environment []string) string {
+	values := make(map[string]string, 4)
+	for _, entry := range environment {
+		name, value, ok := strings.Cut(entry, "=")
+		name = strings.ToUpper(name)
+		if !ok || (name != "HOME" && name != "GOCACHE" && name != "GOMODCACHE" && name != "GOTMPDIR") {
+			continue
+		}
+		if value == "" || values[name] != "" {
+			return ""
+		}
+		values[name] = filepath.Clean(value)
+	}
+	root := values["HOME"]
+	if root == "" || !filepath.IsAbs(root) {
+		return ""
+	}
+	for _, name := range []string{"GOCACHE", "GOMODCACHE", "GOTMPDIR"} {
+		path := values[name]
+		if path == "" || !filepath.IsAbs(path) ||
+			!strings.EqualFold(filepath.VolumeName(root), filepath.VolumeName(path)) {
+			return ""
+		}
+		for !windowsPathWithin(root, path) {
+			parent := filepath.Dir(root)
+			if parent == root {
+				return ""
+			}
+			root = parent
+		}
+	}
+	if filepath.Dir(root) == root {
+		return ""
+	}
+	return root
+}
+
+func windowsPathWithin(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator))
 }
 
 func windowsExecutableTree(application string) []string {
@@ -497,91 +898,265 @@ func windowsCreateAppContainerPipe(sid *windows.SID) (*os.File, *os.File, error)
 	return reader, writer, nil
 }
 
-func windowsGrantAppContainerPath(path string, sid *windows.SID, writable, propagate bool) error {
-	info, err := os.Lstat(path)
-	if err != nil {
+func (session *windowsAppContainerSession) grantPath(
+	path string,
+	access windows.ACCESS_MASK,
+	propagate bool,
+) (resultErr error) {
+	journalStart := 0
+	if session != nil {
+		journalStart = len(session.daclRestores)
+	}
+	defer func() {
+		journalEnd := journalStart
+		if session != nil {
+			journalEnd = len(session.daclRestores)
+		}
+		resultErr = windowsClassifyAppContainerGrantFailure(
+			resultErr, journalStart, journalEnd,
+		)
+	}()
+	budget := 500_000
+	return session.grantPathLimited(path, access, propagate, 0, &budget)
+}
+
+func windowsClassifyAppContainerGrantFailure(err error, journalStart, journalEnd int) error {
+	if err == nil || journalEnd != journalStart ||
+		errors.Is(err, errWindowsAppContainerPrepareCleanup) ||
+		errors.Is(err, errWindowsAppContainerDACLOrphan) {
 		return err
 	}
-	access := windows.ACCESS_MASK(windows.GENERIC_READ | windows.GENERIC_EXECUTE)
-	if writable {
-		access = windows.GENERIC_ALL
+	return errors.Join(errWindowsAppContainerGrantNotApplied, err)
+}
+
+func (restore *windowsAppContainerDACLRestore) restore() error {
+	if restore == nil {
+		return errWindowsAppContainerDACLRestore
 	}
-	inheritance := uint32(windows.NO_INHERITANCE)
-	if info.IsDir() {
-		inheritance = uint32(windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE)
+	if restore.file == nil || restore.dacl == nil || restore.descriptor == nil {
+		leaseErr := windowsReleaseAppContainerNullLease(restore.lease, restore.leaseThreadLocked)
+		restore.lease = 0
+		restore.leaseThreadLocked = false
+		return errors.Join(errWindowsAppContainerDACLRestore, leaseErr)
 	}
-	acl, err := windowsSetAppContainerPathAccess(path, sid, access, inheritance)
-	if err != nil {
-		return err
+	handle := windows.Handle(restore.file.Fd())
+	restoreErr := windowsVerifyAppContainerObjectIdentity(handle, restore.identity)
+	if restoreErr != nil {
+		restoreErr = errors.Join(errWindowsAppContainerDACLIdentity, restoreErr)
+	} else {
+		restoreErr = windowsRestoreAppContainerDACL(handle, restore)
+		if restoreErr != nil {
+			restoreErr = errors.Join(errWindowsAppContainerDACLSet, restoreErr)
+		}
 	}
-	if !propagate || !info.IsDir() || windowsAppContainerTreeMutationForbidden(path) {
-		return nil
+	if restoreErr == nil {
+		restoreErr = windowsVerifyAppContainerObjectIdentity(handle, restore.identity)
+		if restoreErr != nil {
+			restoreErr = errors.Join(errWindowsAppContainerDACLIdentity, restoreErr)
+		}
 	}
-	if err := windowsPropagateAppContainerDACL(path, acl); err != nil && writable {
-		return err
+	if restoreErr == nil {
+		current, readErr := windows.GetSecurityInfo(
+			handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION,
+		)
+		if readErr != nil {
+			restoreErr = errors.Join(errWindowsAppContainerDACLRead, readErr)
+		} else if current == nil || !current.IsValid() {
+			restoreErr = errWindowsAppContainerDACLMismatch
+		} else {
+			control, revision, controlErr := current.Control()
+			currentDACL, defaulted, daclErr := current.DACL()
+			currentBytes, aclOK := windowsACLBytes(currentDACL)
+			currentIdentity, identityOK := windowsACLSemantic(currentDACL)
+			if controlErr != nil || daclErr != nil || defaulted || !aclOK ||
+				!identityOK ||
+				control != restore.control || revision != restore.revision ||
+				(!bytes.Equal(currentBytes, restore.daclBytes) &&
+					!sameWindowsACLSemantic(currentIdentity, restore.daclIdentity)) {
+				restoreErr = errWindowsAppContainerDACLMismatch
+			}
+		}
+		runtime.KeepAlive(current)
+	}
+	runtime.KeepAlive(restore.descriptor)
+	closeErr := restore.file.Close()
+	restore.file = nil
+	var leaseErr error
+	if restore.lease != 0 || restore.leaseThreadLocked {
+		leaseErr = windowsReleaseAppContainerNullLease(restore.lease, restore.leaseThreadLocked)
+		restore.lease = 0
+		restore.leaseThreadLocked = false
+	}
+	if restoreErr != nil || closeErr != nil || leaseErr != nil {
+		return errors.Join(errWindowsAppContainerDACLRestore, restoreErr, closeErr, leaseErr)
 	}
 	return nil
 }
 
-func windowsGrantAppContainerExistingTree(root string, sid *windows.SID, writable bool) {
-	info, err := os.Lstat(root)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 ||
-		windowsAppContainerTreeMutationForbidden(root) {
-		return
+func windowsRestoreAppContainerDACL(
+	handle windows.Handle,
+	restore *windowsAppContainerDACLRestore,
+) error {
+	if restore == nil || restore.dacl == nil || restore.descriptor == nil {
+		return windows.ERROR_INVALID_SECURITY_DESCR
 	}
-	budget := 500_000
-	windowsGrantAppContainerExistingTreeLimited(root, sid, writable, 0, &budget)
+	if restore.control&windows.SE_DACL_AUTO_INHERITED == 0 {
+		return windows.SetKernelObjectSecurity(
+			handle,
+			windows.DACL_SECURITY_INFORMATION,
+			restore.descriptor,
+		)
+	}
+	securityInformation := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION)
+	if restore.control&windows.SE_DACL_PROTECTED != 0 {
+		securityInformation |= windows.PROTECTED_DACL_SECURITY_INFORMATION
+	} else {
+		securityInformation |= windows.UNPROTECTED_DACL_SECURITY_INFORMATION
+	}
+	return windows.SetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		securityInformation,
+		nil,
+		nil,
+		restore.dacl,
+		nil,
+	)
 }
 
-func windowsGrantAppContainerExistingTreeLimited(root string, sid *windows.SID, writable bool, depth int, budget *int) {
-	if depth > maximumQualificationWorkspaceCleanupDepth || budget == nil || *budget <= 0 {
-		return
+func windowsACLBytes(acl *windows.ACL) ([]byte, bool) {
+	if acl == nil {
+		return nil, false
 	}
-	directory, err := os.Open(root)
+	header := (*windowsACLHeader)(unsafe.Pointer(acl))
+	if header.size < uint16(unsafe.Sizeof(windowsACLHeader{})) {
+		return nil, false
+	}
+	for index := uint32(0); index < uint32(header.count); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, index, &ace); err != nil || ace == nil ||
+			ace.Header.AceSize < uint16(unsafe.Sizeof(windows.ACE_HEADER{})) {
+			return nil, false
+		}
+	}
+	value := make([]byte, int(header.size))
+	copy(value, unsafe.Slice((*byte)(unsafe.Pointer(acl)), int(header.size)))
+	return value, true
+}
+
+func windowsACLSemantic(acl *windows.ACL) (windowsACLSemanticIdentity, bool) {
+	if acl == nil {
+		return windowsACLSemanticIdentity{}, false
+	}
+	header := (*windowsACLHeader)(unsafe.Pointer(acl))
+	if header.size < uint16(unsafe.Sizeof(windowsACLHeader{})) {
+		return windowsACLSemanticIdentity{}, false
+	}
+	identity := windowsACLSemanticIdentity{
+		revision: header.revision,
+		aces:     make([][]byte, 0, header.count),
+	}
+	for index := uint32(0); index < uint32(header.count); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(acl, index, &ace); err != nil || ace == nil ||
+			ace.Header.AceSize < uint16(unsafe.Sizeof(windows.ACE_HEADER{})) {
+			return windowsACLSemanticIdentity{}, false
+		}
+		value := make([]byte, int(ace.Header.AceSize))
+		copy(value, unsafe.Slice((*byte)(unsafe.Pointer(ace)), len(value)))
+		identity.aces = append(identity.aces, value)
+	}
+	return identity, true
+}
+
+func sameWindowsACLSemantic(left, right windowsACLSemanticIdentity) bool {
+	if left.revision != right.revision || len(left.aces) != len(right.aces) {
+		return false
+	}
+	for index := range left.aces {
+		if !bytes.Equal(left.aces[index], right.aces[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func (session *windowsAppContainerSession) grantPathLimited(
+	path string,
+	access windows.ACCESS_MASK,
+	propagate bool,
+	depth int,
+	budget *int,
+) error {
+	if session == nil || session.sid == nil || budget == nil ||
+		depth > maximumQualificationWorkspaceCleanupDepth || *budget <= 0 ||
+		windowsAppContainerTreeMutationForbidden(path) {
+		return windows.ERROR_ACCESS_DENIED
+	}
+	*budget--
+	file, information, err := windowsOpenAppContainerGrantPath(path)
 	if err != nil {
-		return
+		return err
 	}
-	defer directory.Close()
+	if err := session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), 0); err != nil {
+		return err
+	}
+	if !propagate || information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return nil
+	}
+
 	for {
-		entries, err := directory.ReadDir(128)
-		if err != nil && (err != io.EOF || len(entries) == 0) {
-			return
+		entries, readErr := file.ReadDir(128)
+		if readErr != nil && readErr != io.EOF {
+			return readErr
 		}
 		for _, entry := range entries {
-			*budget--
-			if *budget <= 0 {
-				return
-			}
 			name := entry.Name()
 			if name == "" || name == "." || name == ".." {
-				continue
+				return windows.ERROR_INVALID_NAME
 			}
-			child := filepath.Join(root, name)
-			info, err := os.Lstat(child)
-			if err != nil || info.Mode()&os.ModeSymlink != 0 {
-				continue
-			}
-			_ = windowsGrantAppContainerPath(child, sid, writable, false)
-			if info.IsDir() {
-				windowsGrantAppContainerExistingTreeLimited(child, sid, writable, depth+1, budget)
+			if err := session.grantPathLimited(
+				filepath.Join(path, name), access, true, depth+1, budget,
+			); err != nil {
+				return err
 			}
 		}
-		if err == io.EOF || len(entries) < 128 {
-			return
+		if readErr == io.EOF || len(entries) < 128 {
+			return nil
 		}
 	}
 }
 
-func windowsSetAppContainerPathAccess(
-	path string,
+func (session *windowsAppContainerSession) grantOpenHandle(
+	file *os.File,
+	access windows.ACCESS_MASK,
+	inheritance uint32,
+	lease windows.Handle,
+) error {
+	if session == nil || session.sid == nil || file == nil || inheritance != uint32(windows.NO_INHERITANCE) {
+		var closeErr error
+		if file != nil {
+			closeErr = file.Close()
+		}
+		return windowsAppContainerPreMutationFailure(
+			windows.ERROR_INVALID_PARAMETER,
+			closeErr,
+			windowsReleaseOptionalAppContainerNullLease(lease),
+		)
+	}
+	return session.grantOpenHandleEntries(
+		file,
+		[]windows.EXPLICIT_ACCESS{windowsAppContainerAccessEntry(session.sid, access, inheritance)},
+		lease,
+	)
+}
+
+func windowsAppContainerAccessEntry(
 	sid *windows.SID,
 	access windows.ACCESS_MASK,
 	inheritance uint32,
-) (*windows.ACL, error) {
-	var pinner runtime.Pinner
-	defer pinner.Unpin()
-	pinner.Pin(sid)
-	entries := []windows.EXPLICIT_ACCESS{{
+) windows.EXPLICIT_ACCESS {
+	return windows.EXPLICIT_ACCESS{
 		AccessPermissions: access,
 		AccessMode:        windows.GRANT_ACCESS,
 		Inheritance:       inheritance,
@@ -590,24 +1165,65 @@ func windowsSetAppContainerPathAccess(
 			TrusteeType:  windows.TRUSTEE_IS_USER,
 			TrusteeValue: windows.TrusteeValueFromSID(sid),
 		},
-	}}
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return nil, err
 	}
-	var merged *windows.ACL
-	if descriptor != nil {
-		merged, _, err = descriptor.DACL()
-		if err != nil {
-			merged = nil
+}
+
+func (session *windowsAppContainerSession) grantOpenHandleEntries(
+	file *os.File,
+	entries []windows.EXPLICIT_ACCESS,
+	lease windows.Handle,
+) error {
+	if session == nil || session.sid == nil || file == nil || len(entries) == 0 {
+		var closeErr error
+		if file != nil {
+			closeErr = file.Close()
 		}
+		return windowsAppContainerPreMutationFailure(
+			windows.ERROR_INVALID_PARAMETER,
+			closeErr,
+			windowsReleaseOptionalAppContainerNullLease(lease),
+		)
 	}
-	acl, err := windows.ACLFromEntries(entries, merged)
+	restore, err := windowsSnapshotAppContainerDACL(file)
 	if err != nil {
-		return nil, err
+		return windowsAppContainerPreMutationFailure(
+			err, file.Close(), windowsReleaseOptionalAppContainerNullLease(lease),
+		)
 	}
-	if err := windows.SetNamedSecurityInfo(
-		path,
+	target := windowsAppContainerDACLFilesystem
+	if lease != 0 {
+		if restore.identity.fileType != windows.FILE_TYPE_CHAR {
+			return windowsAppContainerPreMutationFailure(
+				windows.ERROR_INVALID_HANDLE,
+				file.Close(),
+				windowsReleaseOptionalAppContainerNullLease(lease),
+			)
+		}
+		target = windowsAppContainerDACLNullDevice
+	}
+	if err := windowsValidateAppContainerDACLPackageBaselineForTarget(
+		restore.dacl,
+		target,
+		session.baselinePackageSID,
+		session.sid,
+	); err != nil {
+		return windowsAppContainerPreMutationFailure(
+			err, file.Close(), windowsReleaseOptionalAppContainerNullLease(lease),
+		)
+	}
+
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+	pinner.Pin(session.sid)
+	acl, err := windows.ACLFromEntries(entries, restore.dacl)
+	if err != nil {
+		return windowsAppContainerPreMutationFailure(
+			err, file.Close(), windowsReleaseOptionalAppContainerNullLease(lease),
+		)
+	}
+	handle := windows.Handle(file.Fd())
+	if err := windows.SetSecurityInfo(
+		handle,
 		windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION,
 		nil,
@@ -615,9 +1231,274 @@ func windowsSetAppContainerPathAccess(
 		acl,
 		nil,
 	); err != nil {
+		runtime.KeepAlive(acl)
+		return windowsAppContainerPreMutationFailure(
+			errors.Join(errWindowsAppContainerDACLSet, err),
+			file.Close(),
+			windowsReleaseOptionalAppContainerNullLease(lease),
+		)
+	}
+	runtime.KeepAlive(acl)
+	restore.lease = lease
+	restore.leaseThreadLocked = lease != 0
+	session.daclRestores = append(session.daclRestores, restore)
+	if err := windowsVerifyAppContainerObjectIdentity(handle, restore.identity); err != nil {
+		return errors.Join(errWindowsAppContainerDACLIdentity, err)
+	}
+	return nil
+}
+
+func windowsValidateAppContainerDACLPackageBaseline(dacl *windows.ACL, allowed ...*windows.SID) error {
+	return windowsValidateAppContainerDACLPackageBaselineForTarget(
+		dacl, windowsAppContainerDACLFilesystem, allowed...,
+	)
+}
+
+func windowsValidateAppContainerDACLPackageBaselineForTarget(
+	dacl *windows.ACL,
+	target windowsAppContainerDACLTarget,
+	allowed ...*windows.SID,
+) error {
+	if dacl == nil {
+		return errWindowsAppContainerDACLOrphan
+	}
+	for index := uint32(0); index < uint32(dacl.AceCount); index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, index, &ace); err != nil || ace == nil ||
+			(ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE &&
+				ace.Header.AceType != windows.ACCESS_DENIED_ACE_TYPE) ||
+			ace.Header.AceSize < uint16(unsafe.Offsetof(ace.SidStart)+unsafe.Sizeof(ace.SidStart)) {
+			return errWindowsAppContainerDACLOrphan
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if sid == nil || !sid.IsValid() || uintptr(sid.Len()) >
+			uintptr(ace.Header.AceSize)-unsafe.Offsetof(ace.SidStart) {
+			return errWindowsAppContainerDACLOrphan
+		}
+		sidText := sid.String()
+		if sidText == "" {
+			return errWindowsAppContainerDACLOrphan
+		}
+		if windowsWellKnownAppContainerReadPrincipal(sidText) {
+			if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+				!windowsValidWellKnownAppContainerACE(ace, target) {
+				return errWindowsAppContainerDACLOrphan
+			}
+			continue
+		}
+		subAuthorities, appContainerAuthority := windowsCanonicalAppContainerSIDParts(sidText)
+		if !appContainerAuthority || len(subAuthorities) == 0 || subAuthorities[0] != 2 {
+			continue
+		}
+		if len(subAuthorities) != 8 {
+			return errWindowsAppContainerDACLOrphan
+		}
+		matched := false
+		for _, candidate := range allowed {
+			if validWindowsAppContainerPackageSID(candidate) && sidText == candidate.String() {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return errWindowsAppContainerDACLOrphan
+		}
+	}
+	return nil
+}
+
+func windowsValidWellKnownAppContainerACE(
+	ace *windows.ACCESS_ALLOWED_ACE,
+	target windowsAppContainerDACLTarget,
+) bool {
+	if ace == nil {
+		return false
+	}
+	switch target {
+	case windowsAppContainerDACLFilesystem:
+		const genericReadExecute windows.ACCESS_MASK = windows.GENERIC_READ | windows.GENERIC_EXECUTE
+		const fileReadExecute windows.ACCESS_MASK = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE
+		const inherited = uint8(windows.INHERITED_ACE)
+		const inheritOnly = uint8(
+			windows.OBJECT_INHERIT_ACE |
+				windows.CONTAINER_INHERIT_ACE |
+				windows.INHERIT_ONLY_ACE,
+		)
+		return (ace.Mask == fileReadExecute &&
+			(ace.Header.AceFlags == uint8(windows.NO_INHERITANCE) || ace.Header.AceFlags == inherited)) ||
+			(ace.Mask == genericReadExecute &&
+				(ace.Header.AceFlags == inheritOnly || ace.Header.AceFlags == inheritOnly|inherited))
+	case windowsAppContainerDACLNullDevice:
+		return ace.Mask == windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE|windows.FILE_GENERIC_EXECUTE &&
+			ace.Header.AceFlags == uint8(windows.NO_INHERITANCE)
+	default:
+		return false
+	}
+}
+
+func windowsWellKnownAppContainerReadPrincipal(value string) bool {
+	return value == "S-1-15-2-1" || value == "S-1-15-2-2"
+}
+
+func validWindowsAppContainerPackageSID(sid *windows.SID) bool {
+	if sid == nil || !sid.IsValid() {
+		return false
+	}
+	subAuthorities, ok := windowsCanonicalAppContainerSIDParts(sid.String())
+	return ok && len(subAuthorities) == 8 && subAuthorities[0] == 2
+}
+
+func windowsCanonicalAppContainerSIDParts(value string) ([]uint32, bool) {
+	parts := strings.Split(value, "-")
+	if len(parts) < 4 || parts[0] != "S" || parts[1] != "1" || parts[2] != "15" {
+		return nil, false
+	}
+	subAuthorities := make([]uint32, len(parts)-3)
+	for index, part := range parts[3:] {
+		if part == "" || (len(part) > 1 && part[0] == '0') {
+			return nil, false
+		}
+		parsed, err := strconv.ParseUint(part, 10, 32)
+		if err != nil || strconv.FormatUint(parsed, 10) != part {
+			return nil, false
+		}
+		subAuthorities[index] = uint32(parsed)
+	}
+	return subAuthorities, true
+}
+
+func windowsAppContainerPreMutationFailure(operationErr error, cleanupErrs ...error) error {
+	cleanupErr := errors.Join(cleanupErrs...)
+	if cleanupErr != nil {
+		return errors.Join(operationErr, errWindowsAppContainerPrepareCleanup, cleanupErr)
+	}
+	return operationErr
+}
+
+func windowsReleaseOptionalAppContainerNullLease(handle windows.Handle) error {
+	if handle == 0 {
+		return nil
+	}
+	return windowsReleaseAppContainerNullLease(handle, true)
+}
+
+func windowsSnapshotAppContainerDACL(file *os.File) (*windowsAppContainerDACLRestore, error) {
+	if file == nil {
+		return nil, windows.ERROR_INVALID_HANDLE
+	}
+	handle := windows.Handle(file.Fd())
+	identity, err := windowsReadAppContainerObjectIdentity(handle)
+	if err != nil {
 		return nil, err
 	}
-	return acl, nil
+	descriptor, err := windows.GetSecurityInfo(
+		handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil || descriptor == nil || !descriptor.IsValid() {
+		if err != nil {
+			return nil, err
+		}
+		return nil, windows.ERROR_INVALID_SECURITY_DESCR
+	}
+	control, revision, err := descriptor.Control()
+	if err != nil || control&windows.SE_DACL_PRESENT == 0 {
+		return nil, windows.ERROR_INVALID_ACL
+	}
+	dacl, defaulted, err := descriptor.DACL()
+	if err != nil || defaulted || dacl == nil {
+		return nil, windows.ERROR_INVALID_ACL
+	}
+	daclBytes, ok := windowsACLBytes(dacl)
+	if !ok {
+		return nil, windows.ERROR_INVALID_ACL
+	}
+	daclIdentity, ok := windowsACLSemantic(dacl)
+	if !ok {
+		return nil, windows.ERROR_INVALID_ACL
+	}
+	return &windowsAppContainerDACLRestore{
+		file:         file,
+		descriptor:   descriptor,
+		dacl:         dacl,
+		identity:     identity,
+		daclBytes:    daclBytes,
+		daclIdentity: daclIdentity,
+		control:      control,
+		revision:     revision,
+	}, nil
+}
+
+func windowsReadAppContainerObjectIdentity(handle windows.Handle) (windowsAppContainerObjectIdentity, error) {
+	fileType, err := windows.GetFileType(handle)
+	if err != nil {
+		return windowsAppContainerObjectIdentity{}, err
+	}
+	identity := windowsAppContainerObjectIdentity{fileType: fileType}
+	switch fileType {
+	case windows.FILE_TYPE_DISK:
+		var information windows.ByHandleFileInformation
+		if err := windows.GetFileInformationByHandle(handle, &information); err != nil {
+			return windowsAppContainerObjectIdentity{}, err
+		}
+		identity.hasFileID = true
+		identity.volumeSerial = information.VolumeSerialNumber
+		identity.fileIndexHigh = information.FileIndexHigh
+		identity.fileIndexLow = information.FileIndexLow
+	case windows.FILE_TYPE_CHAR:
+		// A retained character-device handle is the stable identity boundary;
+		// character devices do not expose a filesystem file ID.
+	default:
+		return windowsAppContainerObjectIdentity{}, windows.ERROR_INVALID_HANDLE
+	}
+	return identity, nil
+}
+
+func windowsVerifyAppContainerObjectIdentity(
+	handle windows.Handle,
+	want windowsAppContainerObjectIdentity,
+) error {
+	got, err := windowsReadAppContainerObjectIdentity(handle)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return windows.ERROR_FILE_INVALID
+	}
+	return nil
+}
+
+func windowsOpenAppContainerGrantPath(path string) (*os.File, windows.ByHandleFileInformation, error) {
+	pointer, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, windows.ByHandleFileInformation{}, err
+	}
+	handle, err := windows.CreateFile(
+		pointer,
+		windows.READ_CONTROL|windows.WRITE_DAC|windows.FILE_READ_ATTRIBUTES|windows.FILE_LIST_DIRECTORY,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return nil, windows.ByHandleFileInformation{}, err
+	}
+	file := os.NewFile(uintptr(handle), "appcontainer-grant")
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, windows.ByHandleFileInformation{}, windows.ERROR_INVALID_HANDLE
+	}
+	var information windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &information); err != nil ||
+		information.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		_ = file.Close()
+		if err != nil {
+			return nil, windows.ByHandleFileInformation{}, err
+		}
+		return nil, windows.ByHandleFileInformation{}, windows.ERROR_CANT_ACCESS_FILE
+	}
+	return file, information, nil
 }
 
 func windowsAppContainerTreeMutationForbidden(path string) bool {
@@ -657,34 +1538,4 @@ func windowsSystemRootCandidates() []string {
 		roots = append(roots, clean)
 	}
 	return roots
-}
-
-func windowsPropagateAppContainerDACL(path string, acl *windows.ACL) error {
-	if windowsAppContainerTreeMutationForbidden(path) {
-		return nil
-	}
-	if err := windowsTreeResetNamedSecurityInfo.Find(); err != nil {
-		return nil
-	}
-	pathUTF16, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return err
-	}
-	status, _, _ := windowsTreeResetNamedSecurityInfo.Call(
-		uintptr(unsafe.Pointer(pathUTF16)),
-		uintptr(windows.SE_FILE_OBJECT),
-		uintptr(windows.DACL_SECURITY_INFORMATION),
-		0,
-		0,
-		uintptr(unsafe.Pointer(acl)),
-		0,
-		1,
-		0,
-		1,
-		0,
-	)
-	if status != 0 {
-		return windows.Errno(status)
-	}
-	return nil
 }

@@ -13,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 )
 
 // Git's isolated HOME/config/temp scratch is private controller state. It must
@@ -94,7 +96,7 @@ func TestCanonicalIsolatedGitScratchParentResolvesEvalSymlinksUnstableTemp(t *te
 
 func TestCanonicalIsolatedGitScratchParentRejectsRepositoryDirectory(t *testing.T) {
 	repositoryRoot := t.TempDir()
-	resolvedRepo, err := filepath.EvalSymlinks(repositoryRoot)
+	resolvedRepo, err := pathsecurity.Resolve(repositoryRoot)
 	if err != nil {
 		t.Fatalf("repository EvalSymlinks: %v", err)
 	}

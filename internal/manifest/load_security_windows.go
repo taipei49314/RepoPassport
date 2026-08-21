@@ -4,9 +4,8 @@ package manifest
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"golang.org/x/sys/windows"
 )
 
@@ -21,14 +20,7 @@ func isManifestReparsePoint(path string) bool {
 
 func validateManifestOpenedHandle(file *os.File, expectedPath string) error {
 	handle := windows.Handle(file.Fd())
-	buffer := make([]uint16, 32_768)
-	count, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
-	if err != nil || count == 0 || count >= uint32(len(buffer)) {
-		return os.ErrInvalid
-	}
-	actual := strings.TrimPrefix(windows.UTF16ToString(buffer[:count]), `\\?\`)
-	expected, err := filepath.Abs(expectedPath)
-	if err != nil || !strings.EqualFold(filepath.Clean(actual), filepath.Clean(expected)) {
+	if pathsecurity.ValidateFinalPath(handle, expectedPath) != nil {
 		return os.ErrInvalid
 	}
 	var information windows.ByHandleFileInformation

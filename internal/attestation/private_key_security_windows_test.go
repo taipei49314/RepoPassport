@@ -35,15 +35,16 @@ func TestWindowsPrivateKeyRejectsHardlinksAndPermissiveDACL(t *testing.T) {
 	}
 
 	permissiveKey := filepath.Join(keyRoot, "permissive.pem")
-	writePrivateFile(t, permissiveKey, privatePEM, 0o600)
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil || user == nil || user.User.Sid == nil {
 		t.Fatalf("resolve current user SID: %v", err)
 	}
-	setPrivateDACLForTest(t, permissiveKey, fmt.Sprintf(
+	if err := createPrivateFileWithDACLForTest(permissiveKey, privatePEM, fmt.Sprintf(
 		"D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;%s)(A;;GR;;;WD)",
 		user.User.Sid.String(),
-	))
+	)); err != nil {
+		t.Fatalf("create permissive private key: %v", err)
+	}
 	if _, err := LoadPrivateKey(permissiveKey, dataRoot, output, base); domain.ErrorCodeOf(err) != domain.CodeSigningFailed {
 		t.Fatalf("permissive private-key code = %q: %v", domain.ErrorCodeOf(err), err)
 	}

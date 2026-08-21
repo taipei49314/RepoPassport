@@ -12,6 +12,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/canonicaljson"
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"github.com/taipei49314/RepoPassport/schemas"
 	"gopkg.in/yaml.v3"
 )
@@ -106,7 +107,7 @@ func readStableManifest(path string, afterFirstRead func()) ([]byte, error) {
 	if !safeManifestFileInfo(before) || isManifestReparsePoint(absolute) {
 		return nil, invalidManifestRead()
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !sameManifestPath(absolute, resolved) {
 		return nil, invalidManifestRead()
 	}
@@ -150,7 +151,7 @@ func readStableManifest(path string, afterFirstRead func()) ([]byte, error) {
 	defer clear(second)
 	finalHandle, handleErr := file.Stat()
 	finalPath, pathErr := os.Lstat(absolute)
-	finalResolved, resolveErr := filepath.EvalSymlinks(absolute)
+	finalResolved, resolveErr := pathsecurity.Resolve(absolute)
 	if handleErr != nil || pathErr != nil || resolveErr != nil ||
 		!safeManifestFileInfo(finalPath) || isManifestReparsePoint(absolute) ||
 		!sameManifestPath(absolute, finalResolved) || !stableManifestFileInfo(opened, finalHandle) ||

@@ -10,6 +10,7 @@ import (
 
 	"github.com/taipei49314/RepoPassport/internal/atomicfile"
 	"github.com/taipei49314/RepoPassport/internal/domain"
+	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -195,7 +196,7 @@ func secureInitDirectory(value string, create bool) (string, error) {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return "", domain.NewError(domain.CodeSourceSymlinkEscape, domain.SeverityCritical, "Initialization directory may not be a symlink or reparse point.")
 	}
-	resolved, err := filepath.EvalSymlinks(absolute)
+	resolved, err := pathsecurity.Resolve(absolute)
 	if err != nil || !sameInitPath(absolute, resolved) {
 		return "", domain.WrapError(domain.CodeSourceSymlinkEscape, domain.SeverityCritical, "Initialization directory resolved through a symlink or reparse point.", err)
 	}

@@ -296,8 +296,8 @@ func TestControllerFacadeToolsAndOfflineOperations(t *testing.T) {
 	})
 
 	t.Run("verify integrity failure is stable private and read only", func(t *testing.T) {
-		root := t.TempDir()
-		toolAssemblySecure(t, root, true)
+		root := filepath.Join(t.TempDir(), "controller-facade-integrity")
+		toolAssemblyMkdirPrivate(t, root)
 		packageDir := filepath.Join(root, "package-private-marker")
 		toolAssemblyCopyDirectory(t, fixture.packageDir, packageDir)
 		archivePath := filepath.Join(packageDir, packageFilesArchiveName)
@@ -368,8 +368,8 @@ func newControllerFacadeToolFixture(t *testing.T) *controllerFacadeToolFixture {
 	if runtime.Version() != toolManifestGoVersion {
 		t.Fatalf("controller facade fixtures require %s, running %s", toolManifestGoVersion, runtime.Version())
 	}
-	root := t.TempDir()
-	toolAssemblySecure(t, root, true)
+	root := filepath.Join(t.TempDir(), "controller-facade-tools")
+	toolAssemblyMkdirPrivate(t, root)
 	outputs := filepath.Join(root, "controller-outputs")
 	toolAssemblyMkdirPrivate(t, outputs)
 	sourceRoot := filepath.Join(root, "canonical-source")
@@ -454,8 +454,8 @@ func controllerFacadeSubjectRequest(
 		t.Fatalf("controller facade subject fixture requires Linux or Windows, got %s", runtime.GOOS)
 	}
 
-	root := t.TempDir()
-	toolAssemblySecure(t, root, true)
+	root := filepath.Join(t.TempDir(), "controller-facade-subject")
+	toolAssemblyMkdirPrivate(t, root)
 	packageDir := filepath.Join(root, "subject-package-private-marker")
 	toolAssemblyWriteQualificationPackage(
 		t,

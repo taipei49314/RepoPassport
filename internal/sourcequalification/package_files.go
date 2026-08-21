@@ -600,7 +600,7 @@ func openValidatedPackageDirectory(path string) (*os.File, packageFileSnapshot, 
 func validatePackageDirectoryChain(path string) error {
 	current := path
 	for {
-		directory, err := openPackageDirectory(current)
+		directory, err := openPackageAncestorDirectory(current)
 		if err != nil {
 			return errors.New("source qualification directory chain is unsafe")
 		}

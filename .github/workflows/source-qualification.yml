@@ -285,7 +285,7 @@ jobs:
               --expected-tree $env:SQ_TREE_SHA `
               --workflow-run-id $env:SQ_WORKFLOW_RUN_ID `
               --workflow-run-attempt $env:SQ_WORKFLOW_RUN_ATTEMPT `
-              --private-log-root (Join-Path $env:GITHUB_WORKSPACE 'source-qualification-private-windows') `
+              --private-log-root (Join-Path $env:RUNNER_TEMP 'rpq') `
               --out-dir (Join-Path $env:RUNNER_TEMP 'source-qualification-lane-windows')
             $controllerExit = $LASTEXITCODE
           }

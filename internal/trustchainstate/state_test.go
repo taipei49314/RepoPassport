@@ -202,7 +202,6 @@ func TestObserveRejectsInvalidCorruptAndUnsafeChainStateWithoutRepair(t *testing
 }
 
 func TestObserveChainStateConcurrencyCancellationAndProcessContention(t *testing.T) {
-	requireHostFilesystem(t)
 	if testProcessLockHelper(t) {
 		return
 	}
