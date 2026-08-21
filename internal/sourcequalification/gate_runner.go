@@ -38,15 +38,18 @@ type gateRunRequest struct {
 }
 
 type gateRunEnvironment struct {
-	ToolPath                 string
-	HomeDir                  string
-	GoCacheDir               string
-	GoModCacheDir            string
-	TempDir                  string
-	GoProxy                  string
-	GoSumDB                  string
-	VulnerabilityDatabaseURL string
-	SystemRoot               string
+	ToolPath string
+	// WindowsNetworkNoneToolPath excludes controller fact-only tools from the
+	// PATH inherited by Windows NetworkNone AppContainer gates.
+	WindowsNetworkNoneToolPath string
+	HomeDir                    string
+	GoCacheDir                 string
+	GoModCacheDir              string
+	TempDir                    string
+	GoProxy                    string
+	GoSumDB                    string
+	VulnerabilityDatabaseURL   string
+	SystemRoot                 string
 }
 
 // gateProcessRequest is the complete private process boundary. An OS-specific
@@ -271,10 +274,23 @@ func validateGateRunRequest(
 	}
 
 	toolDirectories := filepath.SplitList(request.Environment.ToolPath)
+	windowsNetworkNoneToolDirectories := toolDirectories
+	if request.GOOS == "windows" {
+		if request.Environment.WindowsNetworkNoneToolPath == "" {
+			return nil, nil, false
+		}
+		windowsNetworkNoneToolDirectories = filepath.SplitList(
+			request.Environment.WindowsNetworkNoneToolPath,
+		)
+	}
 	applications := make(map[string]string, len(requiredApplications))
 	for logicalName := range requiredApplications {
 		application, ok := request.Applications[logicalName]
 		if !ok || !validGateApplication(request.RepositoryRoot, application, toolDirectories) {
+			return nil, nil, false
+		}
+		if request.GOOS == "windows" && gateApplicationUsedWithNetworkNone(registry, logicalName) &&
+			!validGateApplication(request.RepositoryRoot, application, windowsNetworkNoneToolDirectories) {
 			return nil, nil, false
 		}
 		applications[logicalName] = application
@@ -285,6 +301,16 @@ func validateGateRunRequest(
 		}
 	}
 	return registry, applications, true
+}
+
+func gateApplicationUsedWithNetworkNone(registry []GateSpec, logicalName string) bool {
+	for _, specification := range registry {
+		if specification.Network == NetworkNone && len(specification.Argv) > 0 &&
+			specification.Argv[0] == logicalName {
+			return true
+		}
+	}
+	return false
 }
 
 func validGateLanePlatform(lane Lane, goos, goarch string) bool {
@@ -308,13 +334,19 @@ func validGateRunEnvironment(repositoryRoot string, environment gateRunEnvironme
 		return false
 	}
 
-	toolDirectories := filepath.SplitList(environment.ToolPath)
-	if len(toolDirectories) == 0 {
-		return false
+	toolPaths := []string{environment.ToolPath}
+	if environment.WindowsNetworkNoneToolPath != "" {
+		toolPaths = append(toolPaths, environment.WindowsNetworkNoneToolPath)
 	}
-	for _, directory := range toolDirectories {
-		if !validGatePrivateDirectory(repositoryRoot, directory) {
+	for _, toolPath := range toolPaths {
+		toolDirectories := filepath.SplitList(toolPath)
+		if len(toolDirectories) == 0 {
 			return false
+		}
+		for _, directory := range toolDirectories {
+			if !validGatePrivateDirectory(repositoryRoot, directory) {
+				return false
+			}
 		}
 	}
 	for _, directory := range []string{
@@ -408,8 +440,12 @@ func gateProcessEnvironment(configuration gateRunEnvironment, specification Gate
 }
 
 func gateEnvironment(configuration gateRunEnvironment, network NetworkMode) []string {
+	toolPath := configuration.ToolPath
+	if network == NetworkNone && configuration.WindowsNetworkNoneToolPath != "" {
+		toolPath = configuration.WindowsNetworkNoneToolPath
+	}
 	environment := []string{
-		"PATH=" + configuration.ToolPath,
+		"PATH=" + toolPath,
 		"HOME=" + configuration.HomeDir,
 		"USERPROFILE=" + configuration.HomeDir,
 		"XDG_CONFIG_HOME=" + configuration.HomeDir,

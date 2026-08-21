@@ -61,6 +61,39 @@ func executeOSGateProcess(
 	if windowsEnvironmentContainsKey(request.Env, pathsecurity.QualificationRootsEnvironment) {
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
+	if request.Network == NetworkNone && windowsReleaseQualificationFixtureEnvironmentReserved(request.Env) {
+		return gateProcessResult{Blocked: true}, errGateProcessBlocked
+	}
+	if windowsReleaseQualificationFixtureTarget(request) {
+		deadline := time.Now().Add(request.Timeout)
+		fixtureBinding, err := prepareWindowsReleaseQualificationFixture(ctx, &request)
+		if err != nil || fixtureBinding == nil {
+			return gateProcessResult{
+				Blocked:       true,
+				CleanupFailed: errors.Is(err, errWindowsReleaseQualificationFixtureCleanup),
+			}, errors.Join(errGateProcessBlocked, err)
+		}
+		defer func() {
+			verifyErr := fixtureBinding.Verify(context.Background())
+			releaseErr := fixtureBinding.Release()
+			if verifyErr != nil || releaseErr != nil {
+				result.CleanupFailed = true
+				result.ExitCode = nil
+				resultErr = errors.Join(
+					resultErr,
+					errGateProcessBlocked,
+					errWindowsReleaseQualificationFixture,
+					verifyErr,
+					releaseErr,
+				)
+			}
+		}()
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return gateProcessResult{TimedOut: true}, nil
+		}
+		request.Timeout = remaining
+	}
 	if request.Network != NetworkNone && inheritedQualification && windowsQualificationDescriptorTarget(request) {
 		request.Env = appendQualificationDescriptor(request.Env, inheritedDescriptor)
 	}
@@ -69,6 +102,12 @@ func executeOSGateProcess(
 		return gateProcessResult{Blocked: true}, errGateProcessBlocked
 	}
 	if request.Network == NetworkNone {
+		containsGit, scanErr := controllerRuntimeToolPathContainsGit(
+			windowsEnvironmentLookup(request.Env, "PATH"),
+		)
+		if scanErr != nil || containsGit {
+			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		}
 		session, err := windowsPrepareNetworkNoneAppContainer(&request)
 		if err != nil || session == nil {
 			return gateProcessResult{
@@ -81,9 +120,7 @@ func executeOSGateProcess(
 			if cleanupErr := appContainer.release(); cleanupErr != nil {
 				result.CleanupFailed = true
 				result.ExitCode = nil
-				if resultErr == nil {
-					resultErr = errors.Join(errGateProcessBlocked, cleanupErr)
-				}
+				resultErr = errors.Join(resultErr, errGateProcessBlocked, cleanupErr)
 			}
 		}()
 		if inheritedQualification && windowsQualificationDescriptorTarget(request) {
@@ -99,7 +136,7 @@ func executeOSGateProcess(
 		if !validGateProcessRequest(request) {
 			return gateProcessResult{Blocked: true}, errGateProcessBlocked
 		}
-		attributeSlots = 2
+		attributeSlots = windowsAppContainerProcessAttributeSlots
 	}
 
 	stdin, err := os.Open(os.DevNull)
@@ -151,14 +188,10 @@ func executeOSGateProcess(
 	var capabilityPinner runtime.Pinner
 	defer capabilityPinner.Unpin()
 	if appContainer != nil {
-		if appContainer.sid != nil {
-			capabilityPinner.Pin(appContainer.sid)
-		}
-		capabilityPinner.Pin(&appContainer.capabilities)
-		if err := attributeList.Update(
-			windowsProcThreadAttributeSecurityCapabilities,
-			unsafe.Pointer(&appContainer.capabilities),
-			unsafe.Sizeof(appContainer.capabilities),
+		if err := windowsUpdateAppContainerProcessAttributes(
+			attributeList,
+			appContainer,
+			&capabilityPinner,
 		); err != nil {
 			return gateProcessResult{Blocked: true}, errGateProcessBlocked
 		}
@@ -223,6 +256,14 @@ func executeOSGateProcess(
 			windows.CREATE_UNICODE_ENVIRONMENT |
 			windows.EXTENDED_STARTUPINFO_PRESENT,
 	)
+	if appContainer != nil {
+		containsGit, scanErr := controllerRuntimeToolPathContainsGit(
+			windowsEnvironmentLookup(request.Env, "PATH"),
+		)
+		if scanErr != nil || containsGit {
+			return gateProcessResult{Blocked: true}, errGateProcessBlocked
+		}
+	}
 	if err := windows.CreateProcess(
 		application,
 		&commandLine[0],

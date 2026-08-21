@@ -251,6 +251,7 @@ func TestInspectRepositoryRejectsMismatchedExpectedIdentity(t *testing.T) {
 
 func newGitRepositoryFixture(t *testing.T) *gitRepositoryFixture {
 	t.Helper()
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	fixture := &gitRepositoryFixture{
 		root: filepath.Join(parent, "repository"),

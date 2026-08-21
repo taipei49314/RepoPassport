@@ -71,6 +71,7 @@ func TestGitCommandErrorRedactsRawStderr(t *testing.T) {
 }
 
 func TestValidateGitExecutablePathIgnoresCheckoutBinary(t *testing.T) {
+	requireHostFilesystem(t)
 	trustedGit, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatalf("resolve trusted Git fixture executable: %v", err)

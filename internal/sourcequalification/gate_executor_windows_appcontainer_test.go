@@ -18,6 +18,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/qualificationfixture"
 	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
 	"golang.org/x/sys/windows"
 )
@@ -148,13 +149,42 @@ func TestWindowsAppContainerAncestorGrantSkipsHostProfileRoot(t *testing.T) {
 	}
 }
 
+func TestWindowsOpenAppContainerGrantPathRejectsVolumeRootBeforeOpen(t *testing.T) {
+	for _, root := range []string{`C:\`, `D:\`} {
+		for _, open := range []func(string) (*os.File, windows.ByHandleFileInformation, error){
+			windowsOpenAppContainerGrantPath,
+			windowsOpenAppContainerAncestorGrantPath,
+		} {
+			file, _, err := open(root)
+			if file != nil {
+				_ = file.Close()
+			}
+			if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+				t.Fatalf("grant-path open for volume root %q = file:%v err:%v, want access denied", root, file != nil, err)
+			}
+		}
+	}
+}
+
 func TestWindowsAppContainerBootstrapRestoresTempAndKeepsContainment(t *testing.T) {
 	skipIfHostLoopbackUnavailable(t)
 	fixtureRoot := requireSchemaJSONAppContainerFixtureRoot(t)
 	dir := filepath.Join(fixtureRoot, "repo")
 	toolRoot := filepath.Join(fixtureRoot, "tools")
+	privateBoundary, cleanupPrivateBoundary, _, err := createPrivateQualificationStaging(
+		filepath.Dir(fixtureRoot), "private-parent-",
+	)
+	if err != nil || cleanupPrivateBoundary == nil {
+		t.Fatalf("create private AppContainer ancestor: %v", err)
+	}
+	privateBoundaryDACL := windowsPathDACLState(t, privateBoundary)
+	t.Cleanup(func() {
+		if err := cleanupPrivateBoundary(); err != nil {
+			t.Errorf("cleanup private AppContainer ancestor: %v", err)
+		}
+	})
 	privateRoot, cleanupPrivateRoot, _, err := createPrivateQualificationStaging(
-		fixtureRoot, "private-",
+		privateBoundary, "private-",
 	)
 	if err != nil || cleanupPrivateRoot == nil {
 		t.Fatalf("create private AppContainer fixture root: %v", err)
@@ -246,6 +276,9 @@ func TestWindowsAppContainerBootstrapRestoresTempAndKeepsContainment(t *testing.
 	}
 	if got := windowsPathDACLString(t, privateRoot); got != privateRootDACL {
 		t.Fatalf("private root DACL was not restored: got %q, want %q", got, privateRootDACL)
+	}
+	if got := windowsPathDACLState(t, privateBoundary); !sameWindowsTestDACLState(got, privateBoundaryDACL) {
+		t.Fatal("private ancestor DACL/control was not restored exactly")
 	}
 	if got, err := os.ReadFile(sentinel); err != nil || string(got) != "private\n" {
 		t.Fatalf("private sibling changed: bytes=%q err=%v", got, err)
@@ -377,6 +410,12 @@ func TestWindowsAppContainerBootstrapHelperProcess(t *testing.T) {
 	if err := os.RemoveAll(nested); err != nil || os.Remove(renamed) != nil {
 		os.Exit(114)
 	}
+	if _, err := exec.LookPath("git"); err == nil {
+		os.Exit(115)
+	}
+	if _, err := resolveTrustedGitExecutable(privateRoot); err == nil {
+		os.Exit(116)
+	}
 	_, _ = os.Stdout.WriteString("BOOTSTRAP_OK\n")
 	os.Exit(0)
 }
@@ -415,6 +454,21 @@ func TestWindowsAppContainerBootstrapMarkerIsPrivate(t *testing.T) {
 	}
 	if handled || exitCode != 0 {
 		t.Fatalf("host bootstrap marker bypassed public command handling: %d/%v", exitCode, handled)
+	}
+}
+
+func TestWindowsAppContainerBootstrapPATHExcludesGitFailsClosed(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv("PATH", directory)
+	t.Setenv("PATHEXT", ".EXE")
+	if !windowsAppContainerBootstrapPATHExcludesGit() {
+		t.Fatal("empty AppContainer bootstrap PATH was rejected")
+	}
+	if err := os.WriteFile(filepath.Join(directory, "git.exe"), []byte("not an executable\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if windowsAppContainerBootstrapPATHExcludesGit() {
+		t.Fatal("AppContainer bootstrap PATH accepted git.exe")
 	}
 }
 
@@ -768,6 +822,26 @@ func TestWindowsNetworkNoneAccessPathsIncludeContainmentApplication(t *testing.T
 	}
 }
 
+func TestWindowsNetworkNoneAccessPathsIncludeReleaseFixtureTree(t *testing.T) {
+	root := t.TempDir()
+	fixtureRoot := filepath.Join(root, "release-fixture")
+	if err := os.Mkdir(fixtureRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, _, readable := windowsNetworkNoneAccessPaths(gateProcessRequest{
+		Env: []string{qualificationfixture.ImportRootEnv + "=" + fixtureRoot},
+	})
+	found := false
+	for _, path := range readable {
+		if strings.EqualFold(path, fixtureRoot) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("release fixture root %q missing from read-only grant paths: %q", fixtureRoot, readable)
+	}
+}
+
 func newWindowsAppContainerTestSession(t *testing.T, sid *windows.SID) *windowsAppContainerSession {
 	t.Helper()
 	session := &windowsAppContainerSession{sid: sid}
@@ -860,14 +934,17 @@ func TestWindowsAppContainerDACLJournalRestoresTreeByHandleIdentity(t *testing.T
 	if strings.Contains(windowsPathDACLString(t, newChild), sid.String()) {
 		t.Fatal("NO_INHERITANCE grant leaked the package SID into a new child")
 	}
-	if err := os.Rename(originalFile, renamedFile); err == nil {
-		t.Fatal("rename succeeded while the journal retained a non-share-delete handle")
+	if err := os.Rename(originalFile, renamedFile); err != nil {
+		t.Fatalf("rename while journal identity is retained: %v", err)
+	}
+	if _, err := os.Lstat(originalFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("renamed source path still resolves: %v", err)
+	}
+	if got := windowsPathObjectIdentity(t, renamedFile); got != identities[originalFile] {
+		t.Fatalf("renamed file identity = %#v, want retained %#v", got, identities[originalFile])
 	}
 	if err := session.release(); err != nil {
 		t.Fatalf("restore journal: %v", err)
-	}
-	if err := os.Rename(originalFile, renamedFile); err != nil {
-		t.Fatalf("rename after journal release: %v", err)
 	}
 	if got := windowsPathDACLState(t, root); !sameWindowsTestDACLState(got, baselines[root]) {
 		t.Fatal("root DACL/control was not restored exactly")
@@ -1129,6 +1206,7 @@ func TestWindowsAppContainerOrphanGrantCannotBecomeSupplemental(t *testing.T) {
 }
 
 func TestWindowsAppContainerRepeatedGrantDoesNotDuplicateACE(t *testing.T) {
+	requireHostFilesystem(t)
 	root, cleanup, _, err := createPrivateQualificationStaging(t.TempDir(), "repeat-")
 	if err != nil || cleanup == nil {
 		t.Fatalf("create repeated-grant fixture: path=%q cleanup=%v err=%v", root, cleanup != nil, err)
@@ -1180,6 +1258,109 @@ func TestWindowsAppContainerRepeatedGrantDoesNotDuplicateACE(t *testing.T) {
 		t.Fatalf("cleanup repeated-grant fixture: %v", err)
 	}
 	cleaned = true
+}
+
+func TestWindowsAppContainerNonPropagatingDirectoryGrantPreservesExistingChild(t *testing.T) {
+	requireHostFilesystem(t)
+	root := t.TempDir()
+	existingChild := filepath.Join(root, "existing-child")
+	if err := os.Mkdir(existingChild, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rootBaseline := windowsPathDACLState(t, root)
+	childBaseline := windowsPathDACLState(t, existingChild)
+	sid := testWindowsAppContainerSID(t)
+	session := newWindowsAppContainerTestSession(t, sid)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			_ = session.release()
+		}
+	})
+	access := windows.ACCESS_MASK(windows.GENERIC_READ | windows.GENERIC_EXECUTE)
+	if err := session.grantPath(root, access, false); err != nil {
+		t.Fatalf("grant non-propagating directory: %v", err)
+	}
+	want := map[windowsTestACEProfile]int{
+		{
+			mask:  windows.FILE_GENERIC_READ | windows.FILE_GENERIC_EXECUTE,
+			flags: uint8(windows.NO_INHERITANCE),
+		}: 1,
+	}
+	if got := windowsPathACEProfilesForSID(t, root, sid); !reflect.DeepEqual(got, want) {
+		t.Fatalf("non-propagating directory package ACEs = %#v, want %#v", got, want)
+	}
+	if got := windowsPathDACLState(t, existingChild); !sameWindowsTestDACLState(got, childBaseline) {
+		t.Fatal("non-propagating directory grant changed the pre-existing child DACL/control")
+	}
+	if got := windowsPathACEProfilesForSID(t, existingChild, sid); len(got) != 0 {
+		t.Fatalf("non-propagating directory grant reached pre-existing child: %#v", got)
+	}
+	if err := session.release(); err != nil {
+		t.Fatalf("release non-propagating directory grant: %v", err)
+	}
+	released = true
+	if got := windowsPathDACLState(t, root); !sameWindowsTestDACLState(got, rootBaseline) {
+		t.Fatal("non-propagating directory DACL/control was not restored exactly")
+	}
+	if got := windowsPathDACLState(t, existingChild); !sameWindowsTestDACLState(got, childBaseline) {
+		t.Fatal("non-propagating directory release changed the pre-existing child DACL/control")
+	}
+}
+
+func TestWindowsAppContainerPrivateAncestorGrantIsMinimalAndNonInheriting(t *testing.T) {
+	requireHostFilesystem(t)
+	if windowsAppContainerAncestorGrantHandleAccess != windows.MAXIMUM_ALLOWED {
+		t.Fatal("DACL mutation handle can propagate existing inheritable ACEs into unjournaled children")
+	}
+	ancestor := t.TempDir()
+	existingChild := filepath.Join(ancestor, "existing-child")
+	if err := os.Mkdir(existingChild, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	baseline := windowsPathDACLState(t, ancestor)
+	existingChildBaseline := windowsPathDACLState(t, existingChild)
+	sid := testWindowsAppContainerSID(t)
+	session := newWindowsAppContainerTestSession(t, sid)
+	released := false
+	t.Cleanup(func() {
+		if !released {
+			_ = session.release()
+		}
+	})
+	access := windowsAppContainerAncestorAccess
+	if err := session.grantAncestorPathWithAccess(ancestor, access); err != nil {
+		t.Fatalf("grant minimal private ancestor access: %v", err)
+	}
+	want := map[windowsTestACEProfile]int{
+		{mask: access, flags: uint8(windows.NO_INHERITANCE)}: 1,
+	}
+	if got := windowsPathACEProfilesForSID(t, ancestor, sid); !reflect.DeepEqual(got, want) {
+		t.Fatalf("private ancestor package ACEs = %#v, want %#v", got, want)
+	}
+	if got := windowsPathDACLState(t, existingChild); !sameWindowsTestDACLState(got, existingChildBaseline) {
+		t.Fatal("private ancestor grant propagated its existing inheritable ACEs into a pre-existing child")
+	}
+	if got := windowsPathACEProfilesForSID(t, existingChild, sid); len(got) != 0 {
+		t.Fatalf("private ancestor grant reached a pre-existing child: %#v", got)
+	}
+	child := filepath.Join(ancestor, "child")
+	if err := os.Mkdir(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := windowsPathACEProfilesForSID(t, child, sid); len(got) != 0 {
+		t.Fatalf("private ancestor grant inherited into child: %#v", got)
+	}
+	if err := session.release(); err != nil {
+		t.Fatalf("restore private ancestor grant: %v", err)
+	}
+	released = true
+	if got := windowsPathDACLState(t, ancestor); !sameWindowsTestDACLState(got, baseline) {
+		t.Fatal("private ancestor DACL/control was not restored exactly")
+	}
+	if got := windowsPathDACLState(t, existingChild); !sameWindowsTestDACLState(got, existingChildBaseline) {
+		t.Fatal("private ancestor release did not preserve the pre-existing child DACL/control")
+	}
 }
 
 func TestWindowsAppContainerRehomesWritableEnvironmentExactly(t *testing.T) {
@@ -1292,6 +1473,7 @@ func TestWindowsQualificationPrivateRootStaysOutsideCleanRepository(t *testing.T
 }
 
 func TestWindowsAppContainerWritableWorkspaceACLAndCleanup(t *testing.T) {
+	requireHostFilesystem(t)
 	parent := t.TempDir()
 	parentBefore := windowsPathDACLState(t, parent)
 	workspace, cleanup, _, err := createPrivateQualificationStaging(parent, windowsAppContainerWorkspacePrefix)
@@ -1659,7 +1841,7 @@ func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
 		}
 	}
 
-	attributeList, err := windows.NewProcThreadAttributeList(2)
+	attributeList, err := windows.NewProcThreadAttributeList(windowsAppContainerProcessAttributeSlots)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1673,14 +1855,8 @@ func TestWindowsAppContainerCreateProcessWithPipesAndEnvironment(t *testing.T) {
 	}
 	var pinner runtime.Pinner
 	defer pinner.Unpin()
-	pinner.Pin(session.sid)
-	pinner.Pin(&session.capabilities)
-	if err := attributeList.Update(
-		windowsProcThreadAttributeSecurityCapabilities,
-		unsafe.Pointer(&session.capabilities),
-		unsafe.Sizeof(session.capabilities),
-	); err != nil {
-		t.Fatalf("capabilities: %v", err)
+	if err := windowsUpdateAppContainerProcessAttributes(attributeList, session, &pinner); err != nil {
+		t.Fatalf("AppContainer attributes: %v", err)
 	}
 
 	applicationUTF16, err := windows.UTF16PtrFromString(application)
@@ -1796,7 +1972,7 @@ func requireTrustedWindowsGoApplication(t *testing.T) string {
 func requireBuiltSourceQualifyApplication(t *testing.T) string {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "repopass-source-qualify.exe")
-	command := exec.Command("go", "build", "-trimpath", "-o", out,
+	command := exec.Command("go", "build", "-buildvcs=false", "-trimpath", "-o", out,
 		"github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify")
 	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=local")
 	if output, err := command.CombinedOutput(); err != nil {
@@ -1811,7 +1987,7 @@ func requireBuiltSourceQualifyApplication(t *testing.T) string {
 
 func buildSourceQualifyApplicationAt(t *testing.T, out string) string {
 	t.Helper()
-	command := exec.Command("go", "build", "-trimpath", "-o", out,
+	command := exec.Command("go", "build", "-buildvcs=false", "-trimpath", "-o", out,
 		"github.com/taipei49314/RepoPassport/internal/sourcequalification/cmd/repopass-source-qualify")
 	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOTOOLCHAIN=local")
 	if output, err := command.CombinedOutput(); err != nil {

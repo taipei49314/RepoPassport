@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/taipei49314/RepoPassport/internal/pathsecurity"
+	"github.com/taipei49314/RepoPassport/internal/qualificationfixture"
 	"golang.org/x/sys/windows"
 )
 
@@ -23,6 +24,63 @@ func TestWindowsGateExecutorRejectsReservedQualificationDescriptor(t *testing.T)
 	if !errors.Is(err, errGateProcessBlocked) || !result.Blocked || result.ExitCode != nil ||
 		result.CleanupFailed {
 		t.Fatalf("reserved descriptor result = %#v err=%v", result, err)
+	}
+}
+
+func TestWindowsGateExecutorRejectsCallerReleaseFixtureEnvironment(t *testing.T) {
+	for _, name := range []string{
+		qualificationfixture.ImportRootEnv,
+		qualificationfixture.ManifestDigestEnv,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := gateExecutorRequest(t, "streams", time.Second, 1024, 1024)
+			request.Network = NetworkNone
+			request.Env = append(request.Env, name+"=caller-controlled")
+			result, err := newOSGateExecutor().Execute(context.Background(), request)
+			if !errors.Is(err, errGateProcessBlocked) || !result.Blocked ||
+				result.ExitCode != nil || result.CleanupFailed {
+				t.Fatalf("reserved release fixture result = %#v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestWindowsGateExecutorRejectsGitAddedToNetworkNonePath(t *testing.T) {
+	application, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateRoot := t.TempDir()
+	toolDirectory := t.TempDir()
+	environment := windowsNetworkNoneGoVersionEnvironment(t, application, privateRoot)
+	for index, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, "PATH") {
+			environment[index] = "PATH=" + toolDirectory
+		}
+	}
+	containsGit, scanErr := controllerRuntimeToolPathContainsGit(toolDirectory)
+	if scanErr != nil || containsGit {
+		t.Fatalf("clean NetworkNone PATH scan = (%t, %v), want (false, nil)", containsGit, scanErr)
+	}
+	if err := os.WriteFile(filepath.Join(toolDirectory, "git.cmd"), []byte("@exit /b 99\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, executeErr := newOSGateExecutor().Execute(context.Background(), gateProcessRequest{
+		Application:            application,
+		ContainmentApplication: application,
+		Args:                   []string{"-test.run=^TestOSGateExecutorHelperProcess$"},
+		Dir:                    t.TempDir(),
+		Env:                    environment,
+		Network:                NetworkNone,
+		Timeout:                time.Second,
+		StdoutLimit:            1024,
+		StderrLimit:            1024,
+	})
+	if !errors.Is(executeErr, errGateProcessBlocked) || !result.Blocked ||
+		result.ExitCode != nil || result.CleanupFailed {
+		t.Fatalf("NetworkNone PATH Git injection result = %#v err=%v", result, executeErr)
 	}
 }
 

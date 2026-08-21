@@ -62,7 +62,7 @@ func openPackageDirectory(path string) (*os.File, error) {
 func openPackageAncestorDirectory(path string) (*os.File, error) {
 	return openWindowsPackagePath(
 		path,
-		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.SYNCHRONIZE,
+		windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
 	)
 }

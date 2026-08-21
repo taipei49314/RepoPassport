@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,12 +17,21 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/taipei49314/RepoPassport/internal/qualificationfixture"
 )
 
 const (
 	testProductVersion = "0.1.0-alpha.33"
 	canonicalModule    = "github.com/taipei49314/RepoPassport"
 	legacyModule       = "github.com/repopass/repopass"
+
+	fullLinuxFixtureName       = "repopass-linux-amd64"
+	fullWindowsFixtureName     = "repopass-windows-amd64.exe"
+	verifierLinuxFixtureName   = "repopass-verify-linux-amd64"
+	verifierWindowsFixtureName = "repopass-verify-windows-amd64.exe"
+	helperFixtureName          = "repopass-kit-host.exe"
+	legacyVerifierFixtureName  = "legacy-repopass-verify-linux-amd64"
 )
 
 type qualificationFixture struct {
@@ -35,6 +45,7 @@ type qualificationFixture struct {
 	helper          string
 	legacyRevision  string
 	legacyVerifier  string
+	owned           bool
 }
 
 var (
@@ -44,9 +55,28 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	contained, err := qualificationFixtureImportRequired()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "detect release-qualification AppContainer: %v\n", err)
+		os.Exit(2)
+	}
+	if contained {
+		fixtureOnce.Do(func() {
+			fixtureValue, fixtureErr = loadQualificationFixtureFromEnvironment()
+		})
+		if fixtureErr != nil {
+			fmt.Fprintf(os.Stderr, "load release-qualification imported fixture: %v\n", fixtureErr)
+			os.Exit(2)
+		}
+	}
 	code := m.Run()
-	if fixtureValue != nil {
-		_ = os.RemoveAll(fixtureValue.root)
+	if fixtureValue != nil && fixtureValue.owned {
+		if err := os.RemoveAll(fixtureValue.root); err != nil {
+			fmt.Fprintf(os.Stderr, "clean release-qualification host fixture: %v\n", err)
+			if code == 0 {
+				code = 2
+			}
+		}
 	}
 	os.Exit(code)
 }
@@ -67,10 +97,9 @@ func buildQualificationFixture() (*qualificationFixture, error) {
 	if err != nil {
 		return nil, err
 	}
-	f := &qualificationFixture{root: root}
+	f := &qualificationFixture{root: root, owned: true}
 	fail := func(err error) (*qualificationFixture, error) {
-		_ = os.RemoveAll(root)
-		return nil, err
+		return nil, errors.Join(err, os.RemoveAll(root))
 	}
 
 	canonicalRepo := filepath.Join(root, "canonical-source")
@@ -103,11 +132,11 @@ func buildQualificationFixture() (*qualificationFixture, error) {
 	if err := os.Mkdir(outputRoot, 0o700); err != nil {
 		return fail(err)
 	}
-	f.fullLinux = filepath.Join(outputRoot, "repopass-linux-amd64")
-	f.fullWindows = filepath.Join(outputRoot, "repopass-windows-amd64.exe")
-	f.verifierLinux = filepath.Join(outputRoot, "repopass-verify-linux-amd64")
-	f.verifierWindows = filepath.Join(outputRoot, "repopass-verify-windows-amd64.exe")
-	f.helper = filepath.Join(outputRoot, "repopass-kit-host.exe")
+	f.fullLinux = filepath.Join(outputRoot, fullLinuxFixtureName)
+	f.fullWindows = filepath.Join(outputRoot, fullWindowsFixtureName)
+	f.verifierLinux = filepath.Join(outputRoot, verifierLinuxFixtureName)
+	f.verifierWindows = filepath.Join(outputRoot, verifierWindowsFixtureName)
+	f.helper = filepath.Join(outputRoot, helperFixtureName)
 	builds := []struct {
 		pkg, path, goos string
 	}{
@@ -145,11 +174,125 @@ func buildQualificationFixture() (*qualificationFixture, error) {
 	if f.legacyRevision, err = gitFixtureOutput(legacyRepo, "rev-parse", "HEAD"); err != nil {
 		return fail(err)
 	}
-	f.legacyVerifier = filepath.Join(outputRoot, "legacy-repopass-verify-linux-amd64")
+	f.legacyVerifier = filepath.Join(outputRoot, legacyVerifierFixtureName)
 	if err := goBuildFixture(legacyRepo, "./cmd/repopass-verify", f.legacyVerifier, "linux"); err != nil {
 		return fail(err)
 	}
 	return f, nil
+}
+
+func fixtureExportSpec(fixture *qualificationFixture) qualificationfixture.Spec {
+	return qualificationfixture.Spec{
+		Revision:       fixture.revision,
+		Tree:           fixture.tree,
+		LegacyRevision: fixture.legacyRevision,
+		Binaries: []qualificationfixture.BinaryInput{
+			{
+				SourcePath: fixture.fullLinux, RelativePath: fullLinuxFixtureName,
+				SourceRevision: fixture.revision, ExpectedMainPath: canonicalModule + "/cmd/repopass",
+				ExpectedMainModulePath: canonicalModule, ExpectedGOOS: "linux", ExpectedGOARCH: "amd64",
+			},
+			{
+				SourcePath: fixture.fullWindows, RelativePath: fullWindowsFixtureName,
+				SourceRevision: fixture.revision, ExpectedMainPath: canonicalModule + "/cmd/repopass",
+				ExpectedMainModulePath: canonicalModule, ExpectedGOOS: "windows", ExpectedGOARCH: "amd64",
+			},
+			{
+				SourcePath: fixture.verifierLinux, RelativePath: verifierLinuxFixtureName,
+				SourceRevision: fixture.revision, ExpectedMainPath: canonicalModule + "/cmd/repopass-verify",
+				ExpectedMainModulePath: canonicalModule, ExpectedGOOS: "linux", ExpectedGOARCH: "amd64",
+			},
+			{
+				SourcePath: fixture.verifierWindows, RelativePath: verifierWindowsFixtureName,
+				SourceRevision: fixture.revision, ExpectedMainPath: canonicalModule + "/cmd/repopass-verify",
+				ExpectedMainModulePath: canonicalModule, ExpectedGOOS: "windows", ExpectedGOARCH: "amd64",
+			},
+			{
+				SourcePath: fixture.helper, RelativePath: helperFixtureName,
+				SourceRevision: fixture.revision, ExpectedMainPath: canonicalModule + "/cmd/repopass-kit",
+				ExpectedMainModulePath: canonicalModule, ExpectedGOOS: runtime.GOOS, ExpectedGOARCH: "amd64",
+			},
+			{
+				SourcePath: fixture.legacyVerifier, RelativePath: legacyVerifierFixtureName,
+				SourceRevision: fixture.legacyRevision, ExpectedMainPath: legacyModule + "/cmd/repopass-verify",
+				ExpectedMainModulePath: legacyModule, ExpectedGOOS: "linux", ExpectedGOARCH: "amd64",
+			},
+		},
+	}
+}
+
+func loadQualificationFixtureFromEnvironment() (*qualificationFixture, error) {
+	root := os.Getenv(qualificationfixture.ImportRootEnv)
+	digest := os.Getenv(qualificationfixture.ManifestDigestEnv)
+	if root == "" || digest == "" {
+		return nil, fmt.Errorf("%s and %s are required", qualificationfixture.ImportRootEnv, qualificationfixture.ManifestDigestEnv)
+	}
+	loaded, err := qualificationfixture.Load(root, digest)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireQualificationFixtureReadOnly(loaded); err != nil {
+		return nil, err
+	}
+	paths := make(map[string]string, len(loaded.Files))
+	for _, file := range loaded.Files {
+		paths[file.RelativePath] = file.Path
+	}
+	required := []string{
+		fullLinuxFixtureName,
+		fullWindowsFixtureName,
+		verifierLinuxFixtureName,
+		verifierWindowsFixtureName,
+		helperFixtureName,
+		legacyVerifierFixtureName,
+	}
+	if len(paths) != len(required) {
+		return nil, fmt.Errorf("release-qualification fixture has %d binaries, want %d", len(paths), len(required))
+	}
+	for _, name := range required {
+		if paths[name] == "" {
+			return nil, fmt.Errorf("release-qualification fixture is missing %q", name)
+		}
+	}
+	return &qualificationFixture{
+		root:            loaded.Root,
+		revision:        loaded.Manifest.Revision,
+		tree:            loaded.Manifest.Tree,
+		fullLinux:       paths[fullLinuxFixtureName],
+		fullWindows:     paths[fullWindowsFixtureName],
+		verifierLinux:   paths[verifierLinuxFixtureName],
+		verifierWindows: paths[verifierWindowsFixtureName],
+		helper:          paths[helperFixtureName],
+		legacyRevision:  loaded.Manifest.LegacyRevision,
+		legacyVerifier:  paths[legacyVerifierFixtureName],
+		owned:           false,
+	}, nil
+}
+
+func requireQualificationFixtureReadOnly(fixture *qualificationfixture.Fixture) error {
+	probe := filepath.Join(fixture.Root, ".repopass-write-probe")
+	created, createErr := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if createErr == nil {
+		_ = created.Close()
+		_ = os.Remove(probe)
+		return fmt.Errorf("imported release-qualification fixture root is writable")
+	}
+	if _, err := os.Lstat(probe); !os.IsNotExist(err) {
+		return fmt.Errorf("imported release-qualification fixture write probe changed inventory")
+	}
+	paths := make([]string, 0, len(fixture.Files)+1)
+	paths = append(paths, filepath.Join(fixture.Root, qualificationfixture.ManifestName))
+	for _, file := range fixture.Files {
+		paths = append(paths, file.Path)
+	}
+	for _, path := range paths {
+		writable, err := os.OpenFile(path, os.O_WRONLY, 0)
+		if err == nil {
+			_ = writable.Close()
+			return fmt.Errorf("imported release-qualification fixture path %q is writable", path)
+		}
+	}
+	return nil
 }
 
 func createFixtureModule(root, module string) error {

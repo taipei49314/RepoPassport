@@ -260,6 +260,24 @@ func buildProductionLaneConfiguration(
 	if err != nil {
 		return productionLaneConfiguration{}, errQualificationLaneInvalidInput
 	}
+	windowsNetworkNoneToolPath := ""
+	if runtime.GOOS == "windows" {
+		windowsNetworkNoneToolPath = controllerRuntimeNetworkNoneToolPath(
+			RequiredGates(request.Lane),
+			applications,
+		)
+		containsGit, scanErr := controllerRuntimeToolPathContainsGit(
+			windowsNetworkNoneToolPath,
+		)
+		if windowsNetworkNoneToolPath == "" ||
+			scanErr != nil || containsGit ||
+			controllerRuntimeToolPathContainsApplication(
+				windowsNetworkNoneToolPath,
+				factApplications["git"],
+			) {
+			return productionLaneConfiguration{}, errQualificationLaneInvalidInput
+		}
+	}
 	systemRoot := ""
 	if runtime.GOOS == "windows" {
 		systemRoot, err = controllerRuntimeSystemRoot(request.RepoRoot)
@@ -268,15 +286,16 @@ func buildProductionLaneConfiguration(
 		}
 	}
 	environment := gateRunEnvironment{
-		ToolPath:                 toolPath,
-		HomeDir:                  directories["home"],
-		GoCacheDir:               directories["go-cache"],
-		GoModCacheDir:            directories["go-mod-cache"],
-		TempDir:                  directories["tmp"],
-		GoProxy:                  "https://proxy.golang.org",
-		GoSumDB:                  "sum.golang.org",
-		VulnerabilityDatabaseURL: "https://vuln.go.dev",
-		SystemRoot:               systemRoot,
+		ToolPath:                   toolPath,
+		WindowsNetworkNoneToolPath: windowsNetworkNoneToolPath,
+		HomeDir:                    directories["home"],
+		GoCacheDir:                 directories["go-cache"],
+		GoModCacheDir:              directories["go-mod-cache"],
+		TempDir:                    directories["tmp"],
+		GoProxy:                    "https://proxy.golang.org",
+		GoSumDB:                    "sum.golang.org",
+		VulnerabilityDatabaseURL:   "https://vuln.go.dev",
+		SystemRoot:                 systemRoot,
 	}
 	platform, err := collectControllerRuntimePlatform(
 		ctx,
@@ -409,8 +428,19 @@ func resolveControllerRuntimeApplications(
 		all[name] = path
 	}
 
-	directorySet := make(map[string]struct{}, len(all))
-	for _, path := range all {
+	toolPath := controllerRuntimeToolPath(all)
+	if toolPath == "" {
+		return nil, nil, "", "", errGateInvalidInput
+	}
+	return applications, all, toolPath, selfPath, nil
+}
+
+func controllerRuntimeToolPath(applications map[string]string) string {
+	directorySet := make(map[string]struct{}, len(applications))
+	for _, path := range applications {
+		if path == "" {
+			continue
+		}
 		directorySet[filepath.Dir(path)] = struct{}{}
 	}
 	directories := make([]string, 0, len(directorySet))
@@ -420,7 +450,61 @@ func resolveControllerRuntimeApplications(
 	sort.Slice(directories, func(left, right int) bool {
 		return strings.ToLower(directories[left]) < strings.ToLower(directories[right])
 	})
-	return applications, all, strings.Join(directories, string(os.PathListSeparator)), selfPath, nil
+	return strings.Join(directories, string(os.PathListSeparator))
+}
+
+func controllerRuntimeNetworkNoneToolPath(
+	registry []GateSpec,
+	applications map[string]string,
+) string {
+	selected := make(map[string]string)
+	for _, specification := range registry {
+		if specification.Network != NetworkNone || len(specification.Argv) == 0 {
+			continue
+		}
+		name := specification.Argv[0]
+		path, ok := applications[name]
+		if !ok || name == "" || path == "" {
+			return ""
+		}
+		selected[name] = path
+	}
+	return controllerRuntimeToolPath(selected)
+}
+
+func controllerRuntimeToolPathContainsGit(toolPath string) (bool, error) {
+	directories := filepath.SplitList(toolPath)
+	if toolPath == "" || len(directories) == 0 {
+		return false, errGateInvalidInput
+	}
+	for _, directory := range directories {
+		entries, err := controllerRuntimeToolPathEntries(directory)
+		if err != nil {
+			return false, err
+		}
+		for _, entry := range entries {
+			name := strings.ToLower(entry.Name())
+			// Windows executable discovery can use a host-controlled PATHEXT.
+			// Reject every possible one-suffix spelling, not just git.exe.
+			if name == "git" || strings.HasPrefix(name, "git.") {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func controllerRuntimeToolPathContainsApplication(toolPath, application string) bool {
+	if toolPath == "" || application == "" {
+		return false
+	}
+	directory := filepath.Dir(application)
+	for _, candidate := range filepath.SplitList(toolPath) {
+		if sameCanonicalPath(candidate, directory) {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveControllerRuntimeApplication(repositoryRoot, name string) (string, error) {

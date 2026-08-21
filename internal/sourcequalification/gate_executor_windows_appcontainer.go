@@ -16,19 +16,29 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/taipei49314/RepoPassport/internal/qualificationfixture"
 	"github.com/taipei49314/RepoPassport/internal/windowssecurity"
 	"golang.org/x/sys/windows"
 )
 
 const (
 	windowsProcThreadAttributeSecurityCapabilities = 0x00020009
+	windowsAppContainerProcessAttributeSlots       = 2
 	windowsHRESULTAlreadyExists                    = 0x800700B7
 	windowsAppContainerNullMutexName               = `Global\RepoPass.SourceQualification.AppContainer.NullDACL.v1`
 	windowsAppContainerWorkspacePrefix             = "w-"
 	windowsFileDeleteChild                         = 0x00000040
 	windowsAppContainerWritableRootAccess          = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE |
 		windows.FILE_GENERIC_EXECUTE | windowsFileDeleteChild
-	windowsAppContainerWritableChildAccess = windowsAppContainerWritableRootAccess | windows.DELETE
+	windowsAppContainerWritableChildAccess                     = windowsAppContainerWritableRootAccess | windows.DELETE
+	windowsAppContainerAncestorAccess      windows.ACCESS_MASK = windows.FILE_TRAVERSE | windows.FILE_READ_ATTRIBUTES | windows.SYNCHRONIZE
+	windowsAppContainerGrantHandleAccess                       = windows.READ_CONTROL | windows.WRITE_DAC |
+		windows.FILE_READ_ATTRIBUTES | windows.FILE_LIST_DIRECTORY
+	// Ancestors are not recursively journaled. SetSecurityInfo suppresses
+	// propagation of their existing inheritable ACEs only for a handle opened
+	// with MAXIMUM_ALLOWED. Tree grants use the narrower access above and journal
+	// every descendant before mutating a parent.
+	windowsAppContainerAncestorGrantHandleAccess = windows.MAXIMUM_ALLOWED
 )
 
 var windowsAppContainerWritableEnvironmentKeys = [...]string{
@@ -79,6 +89,23 @@ type windowsAppContainerSession struct {
 	daclRestores             []*windowsAppContainerDACLRestore
 	writableWorkspacePath    string
 	cleanupWritableWorkspace func() error
+}
+
+func windowsUpdateAppContainerProcessAttributes(
+	attributeList *windows.ProcThreadAttributeListContainer,
+	session *windowsAppContainerSession,
+	pinner *runtime.Pinner,
+) error {
+	if attributeList == nil || session == nil || session.sid == nil || pinner == nil {
+		return windows.ERROR_INVALID_PARAMETER
+	}
+	pinner.Pin(session.sid)
+	pinner.Pin(&session.capabilities)
+	return attributeList.Update(
+		windowsProcThreadAttributeSecurityCapabilities,
+		unsafe.Pointer(&session.capabilities),
+		unsafe.Sizeof(session.capabilities),
+	)
 }
 
 type windowsAppContainerDACLRestore struct {
@@ -440,7 +467,8 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, session *wind
 		return windows.ERROR_INVALID_SID
 	}
 	required, moduleCache, readable := windowsNetworkNoneAccessPaths(request)
-	if privateRoot := windowsQualificationPrivateRoot(request.Env); privateRoot != "" {
+	privateRoot := windowsQualificationPrivateRoot(request.Env)
+	if privateRoot != "" {
 		if err := session.grantPath(
 			privateRoot,
 			windows.FILE_LIST_DIRECTORY|windows.FILE_TRAVERSE|windows.FILE_READ_ATTRIBUTES|
@@ -472,10 +500,12 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, session *wind
 			return errors.Join(errWindowsAppContainerRequiredGrant, err)
 		}
 	}
+	fixtureRoot := windowsEnvironmentLookup(request.Env, qualificationfixture.ImportRootEnv)
 	for _, path := range readable {
-		propagate := windowsAppContainerReadableTree(path) &&
-			!strings.EqualFold(path, request.ContainmentApplication) &&
-			!strings.EqualFold(path, filepath.Dir(request.ContainmentApplication))
+		propagate := (fixtureRoot != "" && strings.EqualFold(path, fixtureRoot)) ||
+			windowsAppContainerReadableTree(path) &&
+				!strings.EqualFold(path, request.ContainmentApplication) &&
+				!strings.EqualFold(path, filepath.Dir(request.ContainmentApplication))
 		// External runtime trees can already be readable by AppContainer tokens.
 		// Skip a supplemental path only if it fails before the first mutation.
 		if err := session.grantPath(path, windows.GENERIC_READ|windows.GENERIC_EXECUTE, propagate); err != nil &&
@@ -485,10 +515,18 @@ func windowsGrantAppContainerGatePaths(request gateProcessRequest, session *wind
 	}
 	// AppContainer lacks SeChangeNotifyPrivilege. Schema JSON opens Dir and
 	// every ancestor except the volume root. Grant path-only traverse on Dir's
-	// ancestors. Do not grant Application/GOROOT ancestors: SetNamedSecurityInfo
-	// on C:\hostedtoolcache hangs CI. Do not inherit or TreeReset.
+	// ancestors and on the disjoint private workspace's non-root ancestors so
+	// direct language-runtime path checks can resolve without enumerating
+	// siblings. Do not grant Application/GOROOT ancestors:
+	// SetNamedSecurityInfo on C:\hostedtoolcache hangs CI. Do not inherit or
+	// TreeReset.
 	if err := session.grantAncestorChain(request.Dir); err != nil {
 		return errors.Join(errWindowsAppContainerAncestorGrant, err)
+	}
+	if privateRoot != "" {
+		if err := session.grantAncestorChain(privateRoot); err != nil {
+			return errors.Join(errWindowsAppContainerAncestorGrant, err)
+		}
 	}
 	return nil
 }
@@ -523,11 +561,21 @@ func windowsAppContainerAncestorPaths(path string) []string {
 }
 
 func (session *windowsAppContainerSession) grantAncestorChain(path string) error {
+	return session.grantAncestorChainWithAccess(
+		path,
+		windowsAppContainerAncestorAccess,
+	)
+}
+
+func (session *windowsAppContainerSession) grantAncestorChainWithAccess(
+	path string,
+	access windows.ACCESS_MASK,
+) error {
 	for _, ancestor := range windowsAppContainerAncestorPaths(path) {
 		if windowsAppContainerAncestorGrantForbidden(ancestor) {
 			continue
 		}
-		if err := session.grantAncestorPath(ancestor); err != nil {
+		if err := session.grantAncestorPathWithAccess(ancestor, access); err != nil {
 			return err
 		}
 	}
@@ -557,8 +605,11 @@ func windowsAppContainerAncestorGrantForbidden(path string) bool {
 	}
 }
 
-func (session *windowsAppContainerSession) grantAncestorPath(path string) error {
-	file, information, err := windowsOpenAppContainerGrantPath(path)
+func (session *windowsAppContainerSession) grantAncestorPathWithAccess(
+	path string,
+	access windows.ACCESS_MASK,
+) error {
+	file, information, err := windowsOpenAppContainerAncestorGrantPath(path)
 	if err != nil {
 		return err
 	}
@@ -568,7 +619,7 @@ func (session *windowsAppContainerSession) grantAncestorPath(path string) error 
 	}
 	return session.grantOpenHandle(
 		file,
-		windows.GENERIC_READ|windows.GENERIC_EXECUTE,
+		access,
 		uint32(windows.NO_INHERITANCE),
 		0,
 	)
@@ -720,6 +771,8 @@ func windowsNetworkNoneAccessPaths(request gateProcessRequest) (required, module
 			readPaths = append(readPaths, value)
 		case "PATH":
 			readPaths = append(readPaths, filepath.SplitList(value)...)
+		case qualificationfixture.ImportRootEnv:
+			readPaths = append(readPaths, value)
 		}
 	}
 	moduleCache = uniqueExistingWindowsPaths(modulePaths)
@@ -1098,7 +1151,25 @@ func (session *windowsAppContainerSession) grantPathLimited(
 	if err != nil {
 		return err
 	}
-	if !propagate || information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+	isDirectory := information.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	if !propagate && isDirectory {
+		// A non-recursive directory grant has no descendant journal to repair
+		// SetSecurityInfo's automatic propagation. Reopen it with
+		// MAXIMUM_ALLOWED, which suppresses that propagation, and reject a
+		// replacement raced into the close/reopen gap.
+		if err := file.Close(); err != nil {
+			return err
+		}
+		file, reopenedInformation, err := windowsOpenAppContainerAncestorGrantPath(path)
+		if err != nil {
+			return err
+		}
+		if !windowsSameAppContainerGrantObject(information, reopenedInformation) {
+			return windowsAppContainerPreMutationFailure(windows.ERROR_FILE_INVALID, file.Close())
+		}
+		return session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), 0)
+	}
+	if !propagate || !isDirectory {
 		return session.grantOpenHandle(file, access, uint32(windows.NO_INHERITANCE), 0)
 	}
 
@@ -1470,14 +1541,48 @@ func windowsVerifyAppContainerObjectIdentity(
 }
 
 func windowsOpenAppContainerGrantPath(path string) (*os.File, windows.ByHandleFileInformation, error) {
+	return windowsOpenAppContainerGrantPathWithAccess(
+		path,
+		windowsAppContainerGrantHandleAccess,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+	)
+}
+
+func windowsOpenAppContainerAncestorGrantPath(path string) (*os.File, windows.ByHandleFileInformation, error) {
+	return windowsOpenAppContainerGrantPathWithAccess(
+		path,
+		windowsAppContainerAncestorGrantHandleAccess,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+	)
+}
+
+func windowsSameAppContainerGrantObject(
+	left windows.ByHandleFileInformation,
+	right windows.ByHandleFileInformation,
+) bool {
+	return left.VolumeSerialNumber == right.VolumeSerialNumber &&
+		left.FileIndexHigh == right.FileIndexHigh &&
+		left.FileIndexLow == right.FileIndexLow &&
+		left.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY ==
+			right.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY
+}
+
+func windowsOpenAppContainerGrantPathWithAccess(
+	path string,
+	desiredAccess uint32,
+	shareMode uint32,
+) (*os.File, windows.ByHandleFileInformation, error) {
+	if windowsAppContainerTreeMutationForbidden(path) {
+		return nil, windows.ByHandleFileInformation{}, windows.ERROR_ACCESS_DENIED
+	}
 	pointer, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return nil, windows.ByHandleFileInformation{}, err
 	}
 	handle, err := windows.CreateFile(
 		pointer,
-		windows.READ_CONTROL|windows.WRITE_DAC|windows.FILE_READ_ATTRIBUTES|windows.FILE_LIST_DIRECTORY,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		desiredAccess,
+		shareMode,
 		nil,
 		windows.OPEN_EXISTING,
 		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -1505,6 +1610,12 @@ func windowsOpenAppContainerGrantPath(path string) (*os.File, windows.ByHandleFi
 
 func windowsAppContainerTreeMutationForbidden(path string) bool {
 	path = filepath.Clean(path)
+	// No AppContainer preparation path may ever rewrite a filesystem volume
+	// root. Ancestor grants and ordinary readable/writable grants both flow
+	// through this predicate, so keep the prohibition at the mutation boundary.
+	if filepath.Dir(path) == path {
+		return true
+	}
 	for _, root := range windowsSystemRootCandidates() {
 		if root == "" {
 			continue
